@@ -50,16 +50,19 @@ public class MessagingService {
     private final CommunityApi community;
     private final BusinessAccountsApi businesses;
     private final FeedApi feed;
+    private final MessagingProperties props;
 
     public MessagingService(JdbcTemplate jdbc, IdentityApi identity,
             SocialApi social, CommunityApi community,
-            BusinessAccountsApi businesses, FeedApi feed) {
+            BusinessAccountsApi businesses, FeedApi feed,
+            MessagingProperties props) {
         this.jdbc = jdbc;
         this.identity = identity;
         this.social = social;
         this.community = community;
         this.businesses = businesses;
         this.feed = feed;
+        this.props = props;
     }
 
     // =================== endpoints ===================
@@ -88,6 +91,88 @@ public class MessagingService {
 
     private static ResponseStatusException notFound(String code) {
         return new ResponseStatusException(HttpStatus.NOT_FOUND, code);
+    }
+
+    private static ResponseStatusException tooMany(String code) {
+        return new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, code);
+    }
+
+    // =================== abuse protection ===================
+
+    /**
+     * Transaction-scoped advisory lock serialising quota checks per acting
+     * user — concurrent creates/sends by the same actor are evaluated
+     * one-at-a-time so count-then-insert cannot overshoot a limit. Device and
+     * session independent, and identical for business acting since quotas key
+     * on the acting user id.
+     */
+    private void lockActor(UUID actor) {
+        jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended("
+                + "'diasporum.messaging.' || ?::text, 0))", Object.class, actor);
+    }
+
+    private void checkCreateQuota(UUID actor) {
+        int hourly = Optional.ofNullable(jdbc.queryForObject(
+                "SELECT count(*) FROM direct_conversations"
+                        + " WHERE created_by=?"
+                        + " AND created_at > now() - interval '1 hour'",
+                Integer.class, actor)).orElse(0);
+        if (hourly >= props.createPerHour()) {
+            throw tooMany("CONVERSATION_CREATE_RATE_LIMIT");
+        }
+        int daily = Optional.ofNullable(jdbc.queryForObject(
+                "SELECT count(*) FROM direct_conversations"
+                        + " WHERE created_by=?"
+                        + " AND created_at > now() - interval '1 day'",
+                Integer.class, actor)).orElse(0);
+        if (daily >= props.createPerDay()) {
+            throw tooMany("CONVERSATION_DAILY_QUOTA_EXCEEDED");
+        }
+    }
+
+    private void checkSendRate(UUID actor) {
+        int sent = Optional.ofNullable(jdbc.queryForObject(
+                "SELECT count(*) FROM direct_messages"
+                        + " WHERE sender_id=?"
+                        + " AND created_at > now() - interval '1 minute'",
+                Integer.class, actor)).orElse(0);
+        if (sent >= props.sendPerMinute()) {
+            throw tooMany("MESSAGE_SEND_RATE_LIMIT");
+        }
+    }
+
+    /** Caps outstanding outbound REQUESTED requests per acting user —
+     * request spam is bounded regardless of how many recipients are tried. */
+    private void checkPendingRequestCap(UUID actor) {
+        int pending = Optional.ofNullable(jdbc.queryForObject(
+                "SELECT count(*) FROM message_requests"
+                        + " WHERE sender_id=? AND status='REQUESTED'",
+                Integer.class, actor)).orElse(0);
+        if (pending >= props.maxPendingRequests()) {
+            throw tooMany("MESSAGE_REQUEST_LIMIT");
+        }
+    }
+
+    /**
+     * Maps trigger-level rejections to stable codes without leaking whether a
+     * resource exists — existence/publication/OPEN failures all surface as
+     * {@code CONTEXT_NOT_AVAILABLE} so unauthorized callers cannot probe ids.
+     */
+    private ResponseStatusException conversationRejected(
+            DataIntegrityViolationException e) {
+        String m = String.valueOf(e.getMostSpecificCause().getMessage());
+        if (m.contains("must be a conversation participant")
+                || m.contains("contact request participants")
+                || m.contains("customer/provider identities")) {
+            return bad("CONTEXT_RECIPIENT_MISMATCH");
+        }
+        if (m.contains("not authorised to act")) {
+            return forbidden("NOT_AUTHORIZED_ACTOR");
+        }
+        if (m.contains("message-request acceptance")) {
+            return bad("CONTEXT_REQUEST_UNSUPPORTED");
+        }
+        return forbidden("CONTEXT_NOT_AVAILABLE");
     }
 
     private void requireActiveUser(UUID userId, String code) {
@@ -448,9 +533,28 @@ public class MessagingService {
             return reuseConversation(existing.get(), actor, self, cmd);
         }
 
-        boolean accepted = !general || dmPolicy(self, other, actor).directAllowed();
-        if (general && !accepted && !dmPolicy(self, other, actor).requestAllowed()) {
-            throw forbidden("MESSAGE_REQUESTS_NOT_ALLOWED");
+        // Quota applies to genuinely new conversations only — retrieving an
+        // existing one is free. The advisory lock serialises this actor's
+        // creates so the count-then-insert below is race-safe.
+        lockActor(actor);
+        checkCreateQuota(actor);
+
+        boolean accepted;
+        if (general) {
+            var policy = dmPolicy(self, other, actor);
+            accepted = policy.directAllowed();
+            if (!accepted && !policy.requestAllowed()) {
+                throw forbidden("MESSAGE_REQUESTS_NOT_ALLOWED");
+            }
+        } else {
+            // Contextual contact: the resource owner opted in by publishing —
+            // dm_permission governs GENERAL only per v10.12. Deployments can
+            // tighten this via context-respects-dm-permission.
+            accepted = true;
+            if (props.contextRespectsDmPermission() && !other.business()
+                    && !dmPolicy(self, other, actor).directAllowed()) {
+                throw forbidden("CONTEXT_DM_NOT_PERMITTED");
+            }
         }
 
         UUID id = UUID.randomUUID();
@@ -472,8 +576,7 @@ public class MessagingService {
                     contextType, cmd.contextId(),
                     accepted ? "ACCEPTED" : "REQUESTED", actor);
         } catch (DataIntegrityViolationException e) {
-            throw bad("CONVERSATION_REJECTED:" + e.getMostSpecificCause()
-                    .getMessage());
+            throw conversationRejected(e);
         }
         if (convId == null) {
             // Concurrent create lost the race — reuse the winner's row.
@@ -484,6 +587,7 @@ public class MessagingService {
 
         UUID requestId = null;
         if (!accepted) {
+            checkPendingRequestCap(actor);
             requestId = insertMessageRequest(convId, actor, self, other);
         }
         if (cmd.initialMessage() != null && !cmd.initialMessage().isBlank()) {
@@ -519,11 +623,73 @@ public class MessagingService {
 
     private ConversationView reuseConversation(ConversationRow c, UUID actor,
             Endpoint self, CreateConversationCommand cmd) {
+        if ("DECLINED".equals(c.status()) && "GENERAL".equals(c.contextType())) {
+            return handleDeclinedReuse(c, actor, self, cmd);
+        }
         if (cmd.initialMessage() != null && !cmd.initialMessage().isBlank()) {
             sendInternal(actor, c, self, cmd.initialMessage(),
                     cmd.clientMessageId(), null, null);
         }
         return toView(c, actor, self);
+    }
+
+    /**
+     * Re-opening a declined GENERAL conversation. The declined requester may
+     * re-request only after {@code decline-cooldown} (re-evaluating privacy);
+     * the declined recipient re-engages freely — their own attempt is an
+     * implicit accept. Non-request declined rows (shouldn't exist) fall back
+     * to the plain view.
+     */
+    private ConversationView handleDeclinedReuse(ConversationRow c, UUID actor,
+            Endpoint self, CreateConversationCommand cmd) {
+        Endpoint other = self.key().equals(c.endpointA().key())
+                ? c.endpointB() : c.endpointA();
+        var req = jdbc.query("SELECT sender_id,sender_business_account_id,"
+                        + "responded_at FROM message_requests"
+                        + " WHERE conversation_id=? AND status='DECLINED'"
+                        + " ORDER BY responded_at DESC NULLS LAST LIMIT 1",
+                (rs, i) -> new Object[]{rs.getObject(1, UUID.class),
+                        rs.getObject(2, UUID.class),
+                        rs.getTimestamp(3)},
+                c.id()).stream().findFirst();
+        if (req.isEmpty()) {
+            return toView(c, actor, self);
+        }
+        boolean actorWasSender = req.get()[0].equals(actor)
+                && java.util.Objects.equals(req.get()[1],
+                self.businessAccountId());
+        UUID requestId = null;
+        if (actorWasSender) {
+            var respondedAt = (java.sql.Timestamp) req.get()[2];
+            if (respondedAt != null && Instant.now().isBefore(
+                    respondedAt.toInstant().plus(props.declineCooldown()))) {
+                throw forbidden("MESSAGE_REQUEST_COOLDOWN");
+            }
+            var policy = dmPolicy(self, other, actor);
+            if (!policy.directAllowed() && !policy.requestAllowed()) {
+                throw forbidden("MESSAGE_REQUESTS_NOT_ALLOWED");
+            }
+            lockActor(actor);
+            if (policy.directAllowed()) {
+                jdbc.update("UPDATE direct_conversations SET status='ACCEPTED',"
+                        + " updated_at=now() WHERE id=?", c.id());
+            } else {
+                checkPendingRequestCap(actor);
+                jdbc.update("UPDATE direct_conversations SET status='REQUESTED',"
+                        + " updated_at=now() WHERE id=?", c.id());
+                requestId = insertMessageRequest(c.id(), actor, self, other);
+            }
+        } else {
+            lockActor(actor);
+            jdbc.update("UPDATE direct_conversations SET status='ACCEPTED',"
+                    + " updated_at=now() WHERE id=?", c.id());
+        }
+        ConversationRow reloaded = requireConversation(c.id());
+        if (cmd.initialMessage() != null && !cmd.initialMessage().isBlank()) {
+            sendInternal(actor, reloaded, self, cmd.initialMessage(),
+                    cmd.clientMessageId(), null, requestId);
+        }
+        return toView(reloaded, actor, self);
     }
 
     private Optional<ConversationRow> findConversation(Endpoint a, Endpoint b,
@@ -999,6 +1165,8 @@ public class MessagingService {
             String body, String clientMessageId, UUID replyToMessageId) {
         var c = requireConversation(conversationId);
         Endpoint self = requireSide(c, actor);
+        lockActor(actor);
+        checkSendRate(actor);
         return sendInternal(actor, c, self, body, clientMessageId,
                 replyToMessageId, null);
     }

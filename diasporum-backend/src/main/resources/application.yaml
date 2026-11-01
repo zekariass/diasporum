@@ -56,6 +56,25 @@ diasporum:
     # access (native mobile clients are unaffected — CORS is not enforced on
     # non-browser requests).
     allowed-origins: ${DIASPORUM_CORS_ALLOWED_ORIGINS:}
+  # Direct-messaging policy limits (M2 abuse protection). Enforced
+  # server-side in MessagingService, keyed on the acting user so devices,
+  # sessions and business acting cannot bypass them. Values are rolling
+  # windows evaluated against existing rows — no separate counter store.
+  messaging:
+    # New conversations per acting user per rolling hour (reuses don't count).
+    create-per-hour: ${DIASPORUM_MSG_CREATE_PER_HOUR:30}
+    # New conversations per acting user per rolling 24 h (daily quota).
+    create-per-day: ${DIASPORUM_MSG_CREATE_PER_DAY:100}
+    # Messages per acting user per rolling minute across all conversations.
+    send-per-minute: ${DIASPORUM_MSG_SEND_PER_MINUTE:60}
+    # Outstanding outbound REQUESTED message requests per acting user.
+    max-pending-requests: ${DIASPORUM_MSG_MAX_PENDING_REQUESTS:25}
+    # Delay before a declined GENERAL request may be re-issued (ISO-8601).
+    decline-cooldown: ${DIASPORUM_MSG_DECLINE_COOLDOWN:P30D}
+    # true → contextual recipients' dm_permission must also allow contact.
+    # Default false per v10.12: published-resource owners are contactable;
+    # dm_permission governs GENERAL conversations only. Blocks/mutes always apply.
+    context-respects-dm-permission: ${DIASPORUM_MSG_CONTEXT_RESPECTS_DM:false}
   # Cloudflare R2 media storage — DISABLED by default. The storageClient bean is
   # only created when enabled=true AND endpoint/credentials/bucket are non-blank,
   # so empty placeholders can never activate it. Values via env (see .env.example).

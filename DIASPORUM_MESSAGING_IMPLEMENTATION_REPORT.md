@@ -1,7 +1,10 @@
-# Diasporum Messaging Module — M1 Implementation Report
+# Diasporum Messaging Module — M1+M2 Implementation Report
 
-Milestone: **M1 — direct messaging foundation** (text-only DMs, all v10.12 conversation
-contexts, message requests, business actors, read state, archive/mute, delete-own).
+Milestones: **M1 — direct messaging foundation** (text-only DMs, all v10.12
+conversation contexts, message requests, business actors, read state,
+archive/mute, delete-own) and **M2 — policies and hardening** (configurable
+rate limits, request-spam cap, decline cooldown, structured authorization
+errors, explicit contextual `dm_permission` policy).
 Branch: `feature/messaging`.
 
 ## 1. Implemented functionality
@@ -37,6 +40,12 @@ Branch: `feature/messaging`.
   `ACCEPTED` after context authorization; `COMMUNITY_HELP_POST` validates the post
   via the new `FeedApi.helpStatus` lookup; unsupported/missing resources produce
   clean 4xx errors (context FK + trigger validation also enforced at DB level).
+- **M2 abuse protection** — backend-enforced, database-backed quotas keyed on the
+  acting user id (device/session/business-acting cannot bypass): conversation
+  creation hourly + daily limits, message-send per-minute limit, outstanding
+  request cap, configurable decline cooldown, and an explicit configurable
+  policy for whether contextual recipients' `dm_permission` applies. All limits
+  configurable via `diasporum.messaging.*` with pinned defaults. See §4.
 
 ### Mobile (Expo / React Native)
 
@@ -133,42 +142,80 @@ V1–V3 migration chain via Testcontainers PostgreSQL on every test run.
 | `SPARE_BAG_CONTACT` | Contact request exists | Both participants must match the contact-request pair | — | Blocks, mutes | DB trigger |
 | `SERVICE_REQUEST` | `OPEN`/`PAUSED` | Customer + provider identities verified against active chat-enabled lead access | — | Blocks, mutes | DB trigger |
 
-Complete authorization for all nine context types. Two soft gaps remain for M2:
-the app layer does not pre-check actor *visibility* of listing/event/job/business
-resources before insert (violations surface as a 400 `CONVERSATION_REJECTED`
-from the trigger rather than a structured 403), and resource-owner recipients in
-context conversations are reachable regardless of their `dm_permission` — that
-is the intended v10.12 contextual-contact model (privacy governs GENERAL only),
-but should be confirmed per module milestone.
+Complete authorization for all nine context types. M2 closed both soft gaps
+identified in M1:
 
-### Abuse protection — current state and outstanding requirements
+- **Structured authorization errors (M2)** — trigger-level rejections are now
+  mapped to stable, non-leaking codes in `conversationRejected(...)`: owner/
+  participant binding failures → `400 CONTEXT_RECIPIENT_MISMATCH`; business
+  membership failures → `403 NOT_AUTHORIZED_ACTOR`; request-acceptance
+  violations → `400 CONTEXT_REQUEST_UNSUPPORTED`; all other existence/status/
+  visibility failures → `403 CONTEXT_NOT_AVAILABLE` — so unauthorized callers
+  cannot probe whether a private resource exists.
+- **Contextual recipients & `dm_permission` (M2)** — explicit policy, not an
+  accident of implementation: by default v10.12 treats publishing a public
+  resource as opting in to contact, so `dm_permission` governs GENERAL only.
+  Setting `diasporum.messaging.context-respects-dm-permission=true` tightens
+  this so a contextual recipient's `dm_permission` must also allow it
+  (business recipients exempt — business inboxes have no `dm_permission` row).
+  Blocks and moderation mutes always apply regardless.
 
-Enforced now: blocks on create+send, DM-scope moderation mutes, request
-conversations accept only the requester's initial message, declined
-conversations are permanently non-sendable (the unique pair key makes decline
-final — a strong anti-harassment posture), idempotent `client_message_id`
-dedupes retries, body length cap (`MAX_BODY`), and canonical pair uniqueness.
+### Abuse protection — implemented (M2)
 
-Outstanding for M2 (no rate limiting exists in M1):
-- Rate limit conversation creation and message sends (per-actor and
-  per-conversation token buckets).
-- Re-request cooldown/quota after `DECLINED` — decline currently permanently
-  locks the pair; policy should decide permanent block vs windowed retry.
-- Daily cap on *new* conversations opened toward distinct recipients (spam
-  vector: mass conversation creation is unthrottled).
-- Request-spam limits — a user can open unlimited `REQUESTED` conversations.
-- Structured 403 mapping for trigger-level context rejections.
+All controls are backend-enforced and database-backed — no in-memory state, so
+they survive restarts and multi-instance deployment; quotas key on the acting
+user id (`created_by`/`sender_id`), so switching devices/sessions or acting
+through a business account cannot bypass them (business sends record the
+acting member). A transaction-scoped PostgreSQL advisory lock
+(`pg_advisory_xact_lock` on `hashtextextended('diasporum.messaging.'||actor)`)
+serialises each actor's count-then-insert so concurrent requests cannot
+overshoot a limit.
+
+| Control | Property | Default |
+|---|---|---|
+| Conversation creation / rolling hour | `create-per-hour` | 30 |
+| Conversation creation / rolling 24 h (daily new-conversation quota) | `create-per-day` | 100 |
+| Message sends / rolling minute, all conversations | `send-per-minute` | 60 |
+| Outstanding outbound `REQUESTED` requests | `max-pending-requests` | 25 |
+| Decline cooldown before re-request | `decline-cooldown` | `PT720H` (30 days; `PT0S` disables) |
+| Context recipients honor `dm_permission` | `context-respects-dm-permission` | `false` |
+
+Semantics:
+
+- Create quotas apply to genuinely *new* conversations only — retrieving an
+  existing one never consumes quota (checked before the insert path).
+- `MESSAGE_REQUEST_COOLDOWN` (403): the declined requester may re-request the
+  same pair only after `decline-cooldown`, re-evaluating current privacy —
+  auto-accepted if now eligible, otherwise a fresh `REQUESTED` + request row.
+  The declined *recipient* re-engages freely (implicit accept). This replaces
+  M1's permanent lock with a configurable window.
+- `MESSAGE_REQUEST_LIMIT` (429) caps simultaneous pending outbound requests,
+  bounding request-spam regardless of how many recipients are tried.
+- `CONVERSATION_CREATE_RATE_LIMIT` / `CONVERSATION_DAILY_QUOTA_EXCEEDED` /
+  `MESSAGE_SEND_RATE_LIMIT` (429) on the respective windows.
+- Preserved from M1: blocks on create+send, DM-scope moderation mutes, request
+  conversations accept only the requester's initial message, idempotent
+  `client_message_id` dedupe, body length cap (10 000 chars at DTO `@Size` and
+  `MAX_BODY`), canonical pair uniqueness.
 
 ## 5. Tests executed and results
 
-### Backend — `./mvnw test` (Testcontainers PostgreSQL) — final run
+### Backend — `./mvnw test` (Testcontainers PostgreSQL) — final run (M2)
 
-- **Full suite: 174/174 tests pass — BUILD SUCCESS.**
+- **Full suite: 184/184 tests pass — BUILD SUCCESS.**
 - `MessagingModuleIntegrationTest` — **22/22 pass**: request/accept/decline
   lifecycle, uniqueness/reuse, privacy matrix, disabled requests, blocks,
   business acting side + revoked member, non-member rejection, help-post
   context, pagination, unread/read cursors, idempotent resend, archive/mute,
   delete-own, HTTP surface.
+- `MessagingPolicyIntegrationTest` — **9/9 pass** (tight limits via
+  `TestPropertySource`): create-rate limit (429), retrieve-existing never
+  consumes quota, send-rate limit, pending-request cap, decline cooldown blocks
+  then permits after expiry, context recipient-mismatch error (job listing
+  binds recipient to `employer_user_id`), structured `CONTEXT_NOT_AVAILABLE`
+  for a draft resource, business acting still subject to user-keyed quotas.
+- `MessagingDailyQuotaIntegrationTest` — **1/1 pass**: daily quota enforced
+  independently of the hourly window.
 - `ModuleBoundaryTest` (ArchUnit) — **26/26 pass**, no module-boundary violations.
 - Identity, business accounts, feed, social, taxonomy, security suites — all pass.
 
@@ -210,21 +257,23 @@ none required production changes:
   active-filtering behavior (insert an inactive country, assert exclusion)
   rather than an exact count that assumed an empty table.
 - Delivery is server-confirmed only — no push notifications, realtime (Ably),
-  or presence (out of scope for M1).
+  or presence (explicitly out of scope).
 - Media attachments table exists but is unused (text-only milestone).
-- Trigger-level context rejections surface as `400 CONVERSATION_REJECTED` with
-  the DB message rather than a structured 403 (see §4 matrix).
-- Decline is permanent for the conversation pair — no re-request cooldown
-  window yet (see §4 abuse-protection notes).
-- No rate limiting on conversation creation, sends, or request volume (see §4).
+- No app-level actor-*visibility* pre-check for listing/event/job/business
+  resources — invisible or non-existent resources return the same
+  `403 CONTEXT_NOT_AVAILABLE`, which is the intended non-leaking behavior;
+  richer per-context visibility messages would need module-specific lookups.
+- Rate limits are rolling-window counts over `created_at` — simple and
+  auditable, but a client can burst to the edge of each window; token-bucket
+  smoothing is possible future tuning if needed.
 
-## 7. Remaining work for M2+
+## 7. Remaining work for M3+
 
 - Realtime delivery (Ably wiring to `outbox_events`), push notifications.
 - Media attachments (`direct_message_media`), message editing UI (`edited_at`
   already surfaced), reactions.
 - Community General Chat, Voice Rooms/LiveKit (explicitly out of scope).
-- Rate limiting and spam controls itemised in §4; re-request
-  cooldown/decline-window policy.
-- Actor-visibility pre-checks for listing/event/job/business context resources.
+- Actor-visibility pre-checks for listing/event/job/business context resources
+  (currently safe-but-generic `CONTEXT_NOT_AVAILABLE`).
+- Optional token-bucket smoothing for rate limits; per-conversation send caps.
 - Messaging observability (metrics on send latency, request accept rates).
