@@ -24,6 +24,7 @@ public class MediaService {
     private static final Map<String, List<String>> ALLOWED = Map.of(
             "AVATAR", List.of("image/jpeg", "image/png", "image/webp"),
             "FEED_IMAGE", List.of("image/jpeg", "image/png", "image/webp"),
+            "EVENT", List.of("image/jpeg", "image/png", "image/webp"),
             "FEED_VIDEO", List.of("video/mp4", "video/quicktime"),
             "MESSAGE_AUDIO", List.of("audio/mpeg", "audio/ogg", "audio/mp4"),
             "DOCUMENT", List.of("application/pdf", "application/msword",

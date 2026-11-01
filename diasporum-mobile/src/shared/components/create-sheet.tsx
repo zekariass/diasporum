@@ -79,6 +79,7 @@ const OPTIONS: CreateOption[] = [
     description: "Bring your community together",
     icon: "calendar-outline",
     color: "#D97706",
+    route: "/(app)/events/create",
   },
   {
     key: "job",
