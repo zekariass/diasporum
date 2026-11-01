@@ -1,0 +1,444 @@
+openapi: 3.0.3
+info:
+  title: Diasporum Authentication API
+  version: "1.0"
+  description: |
+    First-party authentication endpoints for the Diasporum backend (v10.12).
+    Verified against `diasporum_dev_v10_12` during Phase 1 validation.
+
+    Authentication model:
+    - Access tokens: Diasporum-issued RS256 JWT (15 min TTL). Claims:
+      `sub` = users.id, `sid` = user_sessions.id, `iss`, `aud`, `exp`, `kid`.
+    - Refresh tokens: opaque 32-byte values, stored as SHA-256 digests,
+      single-use with rotation and replay/family-revocation detection (30 d TTL).
+    - Sessions are device-scoped (`user_sessions`); absolute TTL 90 d.
+    - `profiles` are optional 1:0..1 extensions of `users`; an account can
+      authenticate before a profile exists (`/api/v1/me` then returns 404 and
+      the client is directed to onboarding).
+
+    Errors use the platform error shape:
+    `{ "status": int, "code": string, "message": string, "path": string,
+       "timestamp": string, "fieldErrors": object }`
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: auth-public
+    description: Unauthenticated endpoints
+  - name: auth-session
+    description: Endpoints requiring a Bearer access token
+  - name: discovery
+    description: Public key discovery
+
+paths:
+  /.well-known/jwks.json:
+    get:
+      tags: [discovery]
+      summary: RSA public keys used to verify Diasporum access tokens
+      security: []
+      responses:
+        "200":
+          description: JWKS document — `keys` is an array of JWK objects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kty: { type: string, example: RSA }
+                        kid: { type: string, example: local-1 }
+                        use: { type: string, example: sig }
+                        alg: { type: string, example: RS256 }
+                        n: { type: string }
+                        e: { type: string }
+
+  /api/v1/auth/register:
+    post:
+      tags: [auth-public]
+      summary: Register with email + password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Account created in PENDING_VERIFICATION; verification link logged/sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId: { type: string, format: uuid }
+                  message: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: Email already registered (EMAIL_TAKEN)
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth-public]
+      summary: Password login — issues access + refresh tokens and a session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/AuthResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Invalid credentials (INVALID_CREDENTIALS)
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+        "403":
+          description: Account suspended/restricted (ACCOUNT_SUSPENDED / ACCOUNT_RESTRICTED)
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+
+  /api/v1/auth/google:
+    post:
+      tags: [auth-public]
+      summary: Google sign-in — verifies the Google ID token against Google JWKS
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExternalLoginRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/AuthResponse" }
+        "401":
+          description: Invalid/expired external token or unverified provider email
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+        "403":
+          description: Linked account suspended/restricted
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+
+  /api/v1/auth/apple:
+    post:
+      tags: [auth-public]
+      summary: Apple sign-in — verifies the Apple identity token against Apple JWKS
+      security: []
+      description: |
+        Apple private-relay emails (`*@privaterelay.appleid.com`) are accepted
+        as account emails. `email_verified` may arrive as a JSON boolean or the
+        string "true"/"false" — both are accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExternalLoginRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/AuthResponse" }
+        "401":
+          description: Invalid/expired external token or unverified provider email
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+        "403":
+          description: Linked account suspended/restricted
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [auth-public]
+      summary: Rotate a refresh token — issues a new access + refresh pair
+      security: []
+      description: |
+        Single-use rotation: the presented token is consumed and replaced.
+        Replaying a consumed token revokes the entire token family (theft
+        detection). Concurrent refreshes with the same token produce at most
+        one successful rotation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/AuthResponse" }
+        "401": { description: Token invalid, expired, revoked, or replayed }
+
+  /api/v1/auth/verify-email:
+    post:
+      tags: [auth-public]
+      summary: Consume an email-verification token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TokenRequest" }
+      responses:
+        "204": { description: Email verified; PENDING_VERIFICATION accounts become ACTIVE }
+        "400": { description: Token invalid, expired, or already used }
+
+  /api/v1/auth/resend-verification:
+    post:
+      tags: [auth-public]
+      summary: Issue a new verification token for an unverified account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailRequest" }
+      responses:
+        "204": { description: Always 204 — does not reveal whether the email exists }
+
+  /api/v1/auth/forgot-password:
+    post:
+      tags: [auth-public]
+      summary: Request a password-reset link
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailRequest" }
+      responses:
+        "204": { description: Always 204 — does not reveal whether the email exists }
+
+  /api/v1/auth/reset-password:
+    post:
+      tags: [auth-public]
+      summary: Consume a password-reset token and set a new password
+      security: []
+      description: |
+        Resets (or creates, for OAuth-only accounts) the credential and revokes
+        all existing sessions and refresh tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResetPasswordRequest" }
+      responses:
+        "204": { description: Password updated }
+        "400": { description: Token invalid, expired, or already used }
+
+  /api/v1/auth/me:
+    get:
+      tags: [auth-session]
+      summary: Current account identity (works without a profile)
+      responses:
+        "200":
+          description: Account row — emailVerifiedAt may be null
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/auth/sessions:
+    get:
+      tags: [auth-session]
+      summary: List active sessions for the current account
+      responses:
+        "200":
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SessionView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/auth/sessions/{sessionId}:
+    delete:
+      tags: [auth-session]
+      summary: Revoke one of the current account's sessions
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Revoked (or did not belong to the caller — never reveals existence) }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth-session]
+      summary: Revoke the current session and its refresh tokens
+      responses:
+        "204": { description: Logged out }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/auth/logout-all:
+    post:
+      tags: [auth-session]
+      summary: Revoke all sessions and refresh tokens for the account
+      responses:
+        "204": { description: All sessions revoked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/auth/change-password:
+    post:
+      tags: [auth-session]
+      summary: Change password — revokes all sessions including the current one
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+      responses:
+        "204": { description: Password changed; re-login required }
+        "401": { description: Current password incorrect, or unauthenticated }
+
+  /api/v1/auth/link/google:
+    post:
+      tags: [auth-session]
+      summary: Link a Google identity to the current account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExternalLoginRequest" }
+      responses:
+        "204": { description: Linked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Provider identity already linked to a different account
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+
+  /api/v1/auth/link/apple:
+    post:
+      tags: [auth-session]
+      summary: Link an Apple identity to the current account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExternalLoginRequest" }
+      responses:
+        "204": { description: Linked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Provider identity already linked to a different account
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+
+  /api/v1/auth/link/{externalIdentityId}:
+    delete:
+      tags: [auth-session]
+      summary: Unlink an external identity from the current account
+      description: |
+        Refuses to remove the last sign-in method when the account has no
+        password credential and no other linked identity (409 AUTH_METHOD_REQUIRED).
+      parameters:
+        - { name: externalIdentityId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Unlinked (or identity did not belong to the caller) }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Would remove the account's only sign-in method
+          content: { application/json: { schema: { $ref: "#/components/schemas/ApiError" } } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT (RS256, Diasporum-issued)
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, maxLength: 128 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    ExternalLoginRequest:
+      type: object
+      required: [idToken]
+      properties:
+        idToken: { type: string, description: Provider-issued ID token (JWT) }
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    TokenRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+    EmailRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+    ResetPasswordRequest:
+      type: object
+      required: [token, password]
+      properties:
+        token: { type: string }
+        password: { type: string, minLength: 8, maxLength: 128 }
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string }
+        newPassword: { type: string, minLength: 8, maxLength: 128 }
+    AuthResponse:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        tokenType: { type: string, example: Bearer }
+        expiresIn: { type: integer, format: int64, description: Seconds until access-token expiry }
+        userId: { type: string, format: uuid }
+        sessionId: { type: string, format: uuid }
+    MeResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        accountStatus:
+          type: string
+          enum: [PENDING_VERIFICATION, ACTIVE, SUSPENDED, DELETION_PENDING, DELETED]
+        emailVerifiedAt: { type: string, format: date-time, nullable: true }
+    SessionView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        clientType: { type: string, enum: [WEB, IOS, ANDROID, OTHER] }
+        authMethod: { type: string }
+        deviceName: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, format: date-time }
+    ApiError:
+      type: object
+      properties:
+        status: { type: integer }
+        code: { type: string }
+        message: { type: string }
+        path: { type: string }
+        timestamp: { type: string, format: date-time }
+        fieldErrors: { type: object }
+
+  responses:
+    AuthResponse:
+      description: Token pair
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AuthResponse" }
+    BadRequest:
+      description: Validation failure (VALIDATION_FAILED)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
+    Unauthorized:
+      description: Missing/invalid/expired access token or revoked session (UNAUTHENTICATED)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
+
+security:
+  - bearerAuth: []

@@ -1,0 +1,73 @@
+spring:
+  application:
+    name: diasporum-backend
+  profiles:
+    # Local dev fallback only — overridden whenever a profile is set explicitly
+    # (-Dspring.profiles.active, SPRING_PROFILES_ACTIVE, or run config).
+    default: local
+  security:
+    # First-party authentication — Diasporum issues and validates its own RS256 JWTs.
+    # Google and Apple are external identity-verification providers only.
+  mail:
+    host: ${DIASPORUM_SMTP_HOST:}
+    port: ${DIASPORUM_SMTP_PORT:587}
+    username: ${DIASPORUM_SMTP_USERNAME:}
+    password: ${DIASPORUM_SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${DIASPORUM_SMTP_AUTH:true}
+          starttls:
+            enable: ${DIASPORUM_SMTP_STARTTLS:true}
+            required: ${DIASPORUM_SMTP_STARTTLS_REQUIRED:true}
+          ssl:
+            enable: ${DIASPORUM_SMTP_SSL:false}
+
+diasporum:
+  auth:
+    jwt:
+      issuer: ${DIASPORUM_JWT_ISSUER:https://api.diasporum.local}
+      audience: ${DIASPORUM_JWT_AUDIENCE:diasporum-api}
+      access-token-ttl: ${DIASPORUM_ACCESS_TOKEN_TTL:PT15M}
+      refresh-token-ttl: ${DIASPORUM_REFRESH_TOKEN_TTL:P30D}
+      absolute-session-ttl: ${DIASPORUM_SESSION_TTL:P90D}
+      private-key: ${DIASPORUM_JWT_PRIVATE_KEY:}
+      public-key: ${DIASPORUM_JWT_PUBLIC_KEY:}
+      kid: ${DIASPORUM_JWT_KID:local-1}
+      # Ephemeral (per-boot) signing keys. Only enabled by the local profile and
+      # tests — any staging/production deployment MUST leave this false so a
+      # missing-key deployment fails at startup instead of signing with
+      # disposable keys.
+      allow-ephemeral-keys: ${DIASPORUM_JWT_ALLOW_EPHEMERAL_KEYS:false}
+    google:
+      client-ids: ${DIASPORUM_GOOGLE_CLIENT_IDS:}
+    apple:
+      client-id: ${DIASPORUM_APPLE_CLIENT_ID:}
+  mail:
+    # Delivery provider: "local" (log-only, dev/tests) or "smtp". Empty → no
+    # EmailService bean exists → startup fails rather than silently logging
+    # verification/reset links in production.
+    provider: ${DIASPORUM_MAIL_PROVIDER:}
+    from: ${DIASPORUM_MAIL_FROM:no-reply@diasporum.local}
+    # Public base URL used to build verification/reset links in emails.
+    app-base-url: ${DIASPORUM_APP_BASE_URL:https://app.diasporum.local}
+  cors:
+    # Comma-separated allowed browser origins. Empty = no cross-origin browser
+    # access (native mobile clients are unaffected — CORS is not enforced on
+    # non-browser requests).
+    allowed-origins: ${DIASPORUM_CORS_ALLOWED_ORIGINS:}
+  # Cloudflare R2 media storage — DISABLED by default. The storageClient bean is
+  # only created when enabled=true AND endpoint/credentials/bucket are non-blank,
+  # so empty placeholders can never activate it. Values via env (see .env.example).
+  media:
+    r2:
+      enabled: ${R2_ENABLED:false}
+      endpoint: ${CLOUDFLARE_R2_ENDPOINT:}
+      region: ${CLOUDFLARE_R2_REGION:auto}
+      bucket: ${CLOUDFLARE_R2_BUCKET:}
+      access-key-id: ${CLOUDFLARE_R2_ACCESS_KEY_ID:}
+      secret-access-key: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:}
+      upload-url-ttl: ${R2_UPLOAD_URL_TTL:PT15M}
+      download-url-ttl: ${R2_DOWNLOAD_URL_TTL:PT2M}
+      session-ttl: ${R2_UPLOAD_SESSION_TTL:PT15M}
+      max-upload-bytes: ${R2_MAX_UPLOAD_BYTES:26214400}

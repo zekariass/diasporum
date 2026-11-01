@@ -1,0 +1,5 @@
+# Configuration for tests run with the "test" profile.
+# Integration tests are expected to use Testcontainers PostgreSQL/PostGIS —
+# see DIASPORUM_IMPLEMENTATION_PLAN.md. H2 is not a valid substitute for
+# PostGIS and PostgreSQL trigger behaviour.
+# Placeholder only: wiring is added with the secured-foundation milestone.

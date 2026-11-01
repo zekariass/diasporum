@@ -1,0 +1,86 @@
+# =============================================================================
+# Diasporum — unified repository .gitignore
+# Per-project .gitignore files in diasporum-backend/, diasporum-mobile/ and
+# diasporum-web/ remain in effect for paths inside those directories.
+# =============================================================================
+
+# ---- Secrets and environment ------------------------------------------------
+# Never commit credentials. Safe templates (*.example) are explicitly kept.
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p8
+*.p12
+*.jks
+*.mobileprovision
+secrets.*
+*.keystore
+
+# ---- Dependencies ------------------------------------------------------------
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# ---- Java / Maven ------------------------------------------------------------
+target/
+*.class
+maven-wrapper.jar
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings/
+.sts4-cache
+.springBeans
+*.iml
+*.iws
+*.ipr
+nbproject/private/
+HELP.md
+
+# ---- Build outputs -----------------------------------------------------------
+.next/
+out/
+dist/
+build/
+web-build/
+.expo/
+.kotlin/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+expo-env.d.ts
+
+# ---- Expo / React Native -----------------------------------------------------
+# Generated native projects (Continuous Native Generation) — do not commit.
+.metro-health-check*
+
+# ---- Logs --------------------------------------------------------------------
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.pnpm-debug.*
+
+# ---- IDE / editor ------------------------------------------------------------
+.idea/
+.vscode/
+.claude/
+*.code-workspace
+
+# ---- OS ----------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ---- Vercel / deployment artifacts --------------------------------------------
+.vercel

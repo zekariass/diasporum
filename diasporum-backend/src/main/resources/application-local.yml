@@ -1,0 +1,44 @@
+# Local development profile. Activate with:
+#   ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+# All values resolve from environment variables (see .env.example).
+# This file must never contain real credentials.
+
+spring:
+  datasource:
+    url: ${DIASPORUM_DB_URL:jdbc:postgresql://localhost:5433/diasporum_dev}
+    username: ${DIASPORUM_DB_USERNAME:diasporum}
+    password: ${DIASPORUM_DB_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: validate # Flyway owns the schema; entities only validated against it
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # The dev database was provisioned directly from the approved v10.12 schema
+    # SQL, so there is no schema history table. Baseline at V1 (the consolidated
+    # baseline migration) — Flyway records it as applied and only runs newer
+    # migrations. On an empty schema (e.g. Testcontainers) V1 applies normally.
+    baseline-on-migrate: true
+    baseline-version: 1
+
+management:
+  health:
+    mail:
+      # Local mail delivery is log-only (diasporum.mail.provider=local) — no
+      # SMTP server exists, so JavaMailSender.testConnection() always fails.
+      # Keep this enabled wherever provider=smtp so the probe stays meaningful.
+      enabled: false
+
+diasporum:
+  auth:
+    jwt:
+      # Local dev may generate an ephemeral keypair when DIASPORUM_JWT_* keys are
+      # unset — tokens then die on restart. Staging/prod never enables this.
+      allow-ephemeral-keys: ${DIASPORUM_JWT_ALLOW_EPHEMERAL_KEYS:true}
+  mail:
+    # Log-only delivery for local development (no SMTP server required).
+    provider: ${DIASPORUM_MAIL_PROVIDER:local}
+  cors:
+    # Browser origins for local web/dev tooling (Expo web, local admin/web).
+    allowed-origins: ${DIASPORUM_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:8081,http://localhost:19006}

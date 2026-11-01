@@ -1,0 +1,49 @@
+# Diasporum — local development infrastructure
+#
+# Persistent PostgreSQL/PostGIS development database.
+# Credentials/ports resolve from diasporum-backend/.env via --env-file:
+#
+#   docker compose --env-file .\diasporum-backend\.env up -d
+#   docker compose --env-file .\diasporum-backend\.env ps
+#   docker compose --env-file .\diasporum-backend\.env logs -f postgres
+#   docker compose --env-file .\diasporum-backend\.env stop
+#   docker compose --env-file .\diasporum-backend\.env start
+#
+# DATA SAFETY: `stop`/`start`/`down` preserve data. `down -v` DELETES the named
+# volume diasporum-postgres-data — never use it for routine shutdown.
+#
+# Scope: PostgreSQL/PostGIS + Keycloak (dev OIDC). No Redis, Ably, LiveKit or
+# other services until individually approved. The approved clean-install SQL is
+# NOT executed against this database automatically.
+
+name: diasporum
+
+services:
+  postgres:
+    image: postgis/postgis:17-3.5
+    container_name: diasporum-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DIASPORUM_DB_NAME:-diasporum_dev}
+      POSTGRES_USER: ${DIASPORUM_DB_USERNAME:-diasporum}
+      POSTGRES_PASSWORD: ${DIASPORUM_DB_PASSWORD:?Set DIASPORUM_DB_PASSWORD in diasporum-backend/.env}
+    # Host port is configurable; default 5433 avoids the native PostgreSQL
+    # service already listening on 0.0.0.0:5432 on this machine.
+    ports:
+      - "127.0.0.1:${DIASPORUM_DB_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  # Keycloak removed — first-party authentication per v10.12.
+  # Google and Apple are external identity-verification providers only;
+  # neither is the application session authority.
+
+volumes:
+  postgres-data:
+    name: diasporum-postgres-data
