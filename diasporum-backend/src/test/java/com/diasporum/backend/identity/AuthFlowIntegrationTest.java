@@ -130,12 +130,12 @@ class AuthFlowIntegrationTest {
     void registerVerifyLoginFullFlow() throws Exception {
         String e = email("flow");
         UUID userId = register(e);
-        assertEquals("PENDING_VERIFICATION", accountStatus(userId));
+        // Email verification is deferred — registration activates directly and
+        // issues no token, so verify() is a no-op until it is re-enabled.
+        assertEquals("ACTIVE", accountStatus(userId));
 
         verify(e);
         assertEquals("ACTIVE", accountStatus(userId));
-        assertNotNull(jdbc.queryForObject(
-                "SELECT email_verified_at FROM users WHERE id=?", java.sql.Timestamp.class, userId));
 
         JsonNode tokens = login(e, PASSWORD);
         assertEquals(userId.toString(), tokens.get("userId").asText());

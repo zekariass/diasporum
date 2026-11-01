@@ -230,6 +230,8 @@ class ExternalIdentityIntegrationTest {
     void googleVerifiedEmailMatchingPendingAccountLinksAndActivates() throws Exception {
         String e = "pending@diasporum.test";
         UUID userId = registerPasswordUser(e);
+        // Registration activates directly now — simulate a legacy pending account.
+        jdbc.update("UPDATE users SET account_status='PENDING_VERIFICATION' WHERE id=?", userId);
         assertEquals("PENDING_VERIFICATION", statusOf(userId));
 
         // provider-verified email proves ownership → link + activate instead of

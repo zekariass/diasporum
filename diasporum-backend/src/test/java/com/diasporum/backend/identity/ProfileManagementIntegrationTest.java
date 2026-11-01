@@ -65,8 +65,9 @@ class ProfileManagementIntegrationTest {
     void setup() {
         jdbc.update("DELETE FROM external_identities");
         jdbc.update("DELETE FROM profiles");
-        jdbc.update("DELETE FROM countries");
-        jdbc.update("INSERT INTO countries(name, iso2) VALUES ('Testland','TT')");
+        // Seeded dev communities reference countries — upsert the test country
+        // instead of wiping the reference table.
+        jdbc.update("INSERT INTO countries(name, iso2) VALUES ('Testland','ZZ') ON CONFLICT (iso2) DO NOTHING");
         country = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='TT'",
                 UUID.class);
     }
@@ -91,7 +92,7 @@ class ProfileManagementIntegrationTest {
         UUID id = user("sub-patch");
         var req = new com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest(
                 "Traveler_One", "Traveler One", "bio here", "Lisbon",
-                java.time.LocalDate.of(1990, 5, 1), country, country);
+                java.time.LocalDate.of(1990, 5, 1), country, country, null);
         var p = profiles.updateProfile(id, req);
         assertEquals("traveler_one", p.username());   // normalised lowercase
         assertEquals("Traveler One", p.displayName());
@@ -99,7 +100,7 @@ class ProfileManagementIntegrationTest {
         assertEquals(true, p.profileCompleted());
         // second update must not reset the completion timestamp
         var req2 = new com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest(
-                null, null, "new bio", null, null, null, null);
+                null, null, "new bio", null, null, null, null, null);
         profiles.updateProfile(id, req2);
         var ts = jdbc.queryForObject(
                 "SELECT profile_completed_at FROM profiles WHERE id=?",
@@ -121,7 +122,7 @@ class ProfileManagementIntegrationTest {
     void invalidCountryRejected() {
         UUID id = user("sub-badcountry");
         var req = new com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest(
-                null, null, null, null, null, UUID.randomUUID(), null);
+                null, null, null, null, null, UUID.randomUUID(), null, null);
         var ex = assertThrows(org.springframework.web.server.ResponseStatusException.class,
                 () -> profiles.updateProfile(id, req));
         assertEquals(400, ex.getStatusCode().value());
@@ -135,7 +136,7 @@ class ProfileManagementIntegrationTest {
         assertEquals("RESERVED", availability("admin").get("reason"));
         var p = profiles.updateProfile(id,
                 new com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest(
-                        "Free_Name", null, null, null, null, null, null));
+                        "Free_Name", null, null, null, null, null, null, null));
         assertEquals("free_name", p.username());
         assertEquals("TAKEN", availability("FREE_name").get("reason"));   // case-insensitive
     }
@@ -158,7 +159,8 @@ class ProfileManagementIntegrationTest {
     void failedTransactionRollsBackPartialUpdates() {
         UUID id = user("sub-rollback");
         var bad = new com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest(
-                "ok_name", "Display", null, null, null, UUID.randomUUID(), null);
+                "ok_name", "Display", null, null, null, UUID.randomUUID(),
+                null, null);
         assertThrows(org.springframework.web.server.ResponseStatusException.class,
                 () -> profiles.updateProfile(id, bad));
         // username must not have been persisted by the rolled-back TX;
@@ -199,9 +201,11 @@ class ProfileManagementIntegrationTest {
 
     @Test
     void countriesEndpointListsActiveOnly() {
+        jdbc.update("INSERT INTO countries(name, iso2, is_active) VALUES ('InactiveLand','ZX',false)"
+                + " ON CONFLICT (iso2) DO UPDATE SET is_active=false");
         var list = taxonomy.activeCountries();
-        assertEquals(1, list.size());
-        assertEquals("Testland", list.get(0).name());
+        assertTrue(list.stream().anyMatch(c -> "Testland".equals(c.name())));
+        assertTrue(list.stream().noneMatch(c -> "InactiveLand".equals(c.name())));
     }
 
     private java.util.Map<String, Object> availability(String u) {
@@ -211,6 +215,6 @@ class ProfileManagementIntegrationTest {
     private com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest req(
             String username, String display) {
         return new com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest(
-                username, display, null, null, null, null, null);
+                username, display, null, null, null, null, null, null);
     }
 }

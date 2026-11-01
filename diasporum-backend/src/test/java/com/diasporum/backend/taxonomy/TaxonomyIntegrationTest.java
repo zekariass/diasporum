@@ -145,7 +145,7 @@ class TaxonomyIntegrationTest {
         UUID pt = api.findCountryByIso2("PT").orElseThrow().id();
         var uid = IdentityTestSupport.provision(ctx, ISSUER, "tax-ident");
         var req = new com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest(
-                null, null, null, null, null, pt, null);
+                null, null, null, null, null, pt, null, null);
         var p = new com.diasporum.backend.identity.internal.application.ProfileService(
                 jdbc, api).updateProfile(uid, req);
         assertEquals(pt, p.originCountryId());

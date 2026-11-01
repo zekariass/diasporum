@@ -220,7 +220,7 @@ class FeedModuleIntegrationTest {
         UUID a = makePost(u1, "GENERAL");
         UUID b = makePost(u1, "GENERAL");
         service.recordView(u2, "FEED_POST", a);           // a viewed
-        var page = service.communityFeed(u2, community, null, 10);
+        var page = service.communityFeed(u2, community, null, null, null, 10);
         assertEquals(2, page.items().size());
         assertEquals("FEED_POST:" + b, page.items().get(0).itemId());  // unviewed 1st
         assertEquals("FEED_POST:" + a, page.items().get(1).itemId());
@@ -242,7 +242,8 @@ class FeedModuleIntegrationTest {
     void communityFeedRequiresMembership() {
         UUID outsider = user("f3");
         assertThrows(ResponseStatusException.class,
-                () -> service.communityFeed(outsider, community, null, 10));
+                () -> service.communityFeed(outsider, community, null, null,
+                        null, 10));
     }
 
     @Test
@@ -293,9 +294,10 @@ class FeedModuleIntegrationTest {
         makePost(u1, "GENERAL");
         makePost(u1, "GENERAL");
         makePost(u1, "GENERAL");
-        var p1 = service.communityFeed(u2, community, null, 2);
+        var p1 = service.communityFeed(u2, community, null, null, null, 2);
         assertEquals(2, p1.items().size());
-        var p2 = service.communityFeed(u2, community, p1.nextCursor(), 2);
+        var p2 = service.communityFeed(u2, community, null, null,
+                p1.nextCursor(), 2);
         assertEquals(1, p2.items().size());                  // no dupes/no skip
         var ids = new java.util.HashSet<String>();
         p1.items().forEach(i -> ids.add(i.itemId()));

@@ -116,33 +116,33 @@ class IdentityApiAndSettingsTest {
     void httpEndpointsServeOwnSettingsOnly() throws Exception {
         String sub = "sub-http-set";
         UUID id = user(sub);
-        mvc.perform(get("/api/v1/me/settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null))))
+        mvc.perform(get("/api/v1/me/settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of()))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.theme").value("SYSTEM"));
-        mvc.perform(patch("/api/v1/me/settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null)))
+        mvc.perform(patch("/api/v1/me/settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of())))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"theme\":\"DARK\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.theme").value("DARK"));
-        mvc.perform(get("/api/v1/me/privacy-settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null))))
+        mvc.perform(get("/api/v1/me/privacy-settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of()))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.dmPermission").value("INTERACTED_USERS"));
         // invalid enum rejected
-        mvc.perform(patch("/api/v1/me/privacy-settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null)))
+        mvc.perform(patch("/api/v1/me/privacy-settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of())))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"dmPermission\":\"HACKED\"}"))
                 .andExpect(status().isBadRequest());
         // unknown/protected field rejected
-        mvc.perform(patch("/api/v1/me/settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null)))
+        mvc.perform(patch("/api/v1/me/settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of())))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"x\"}"))
                 .andExpect(status().isBadRequest());
         // malformed value for a whitelisted key → 400, not 500
-        mvc.perform(patch("/api/v1/me/settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null)))
+        mvc.perform(patch("/api/v1/me/settings").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of())))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"activeCommunityId\":\"not-a-uuid\"}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(patch("/api/v1/me/profile").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null)))
+        mvc.perform(patch("/api/v1/me/profile").with(authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of())))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"dateOfBirth\":\"not-a-date\"}"))
                 .andExpect(status().isBadRequest());
