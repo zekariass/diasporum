@@ -40,4 +40,14 @@ public class FeedApiImpl implements FeedApi {
     public int reactionCount(UUID postId) {
         return service.reactionCount(postId);
     }
+
+    @Override
+    public java.util.Optional<String> helpStatus(UUID postId) {
+        try {
+            return java.util.Optional.ofNullable(
+                    (String) service.helpStatus(postId).get("helpStatus"));
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return java.util.Optional.empty();
+        }
+    }
 }

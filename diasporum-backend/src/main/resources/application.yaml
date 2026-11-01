@@ -56,6 +56,53 @@ diasporum:
     # access (native mobile clients are unaffected — CORS is not enforced on
     # non-browser requests).
     allowed-origins: ${DIASPORUM_CORS_ALLOWED_ORIGINS:}
+  # Direct-messaging policy limits (M2 abuse protection). Enforced
+  # server-side in MessagingService, keyed on the acting user so devices,
+  # sessions and business acting cannot bypass them. Values are rolling
+  # windows evaluated against existing rows — no separate counter store.
+  messaging:
+    # New conversations per acting user per rolling hour (reuses don't count).
+    create-per-hour: ${DIASPORUM_MSG_CREATE_PER_HOUR:30}
+    # New conversations per acting user per rolling 24 h (daily quota).
+    create-per-day: ${DIASPORUM_MSG_CREATE_PER_DAY:100}
+    # Messages per acting user per rolling minute across all conversations.
+    send-per-minute: ${DIASPORUM_MSG_SEND_PER_MINUTE:60}
+    # Outstanding outbound REQUESTED message requests per acting user.
+    max-pending-requests: ${DIASPORUM_MSG_MAX_PENDING_REQUESTS:25}
+    # Delay before a declined GENERAL request may be re-issued (ISO-8601).
+    decline-cooldown: ${DIASPORUM_MSG_DECLINE_COOLDOWN:P30D}
+    # true → contextual recipients' dm_permission must also allow contact.
+    # Default false per v10.12: published-resource owners are contactable;
+    # dm_permission governs GENERAL conversations only. Blocks/mutes always apply.
+    context-respects-dm-permission: ${DIASPORUM_MSG_CONTEXT_RESPECTS_DM:false}
+    # Transactional-outbox dispatcher (M3) — polls outbox_events for
+    # destination='ABLY' rows and publishes one Ably message per participant
+    # channel (user:{id}; business side → all active members). Claimed rows
+    # use FOR UPDATE SKIP LOCKED + a stale lock timeout, so multiple backend
+    # instances can run the dispatcher safely.
+    outbox:
+      # Master switch for the scheduled polling loop (the dispatcher bean
+      # itself always exists — tests invoke it directly). Default on.
+      scheduling-enabled: ${DIASPORUM_MSG_OUTBOX_SCHEDULING_ENABLED:true}
+      # Delay between dispatch cycles.
+      poll-interval: ${DIASPORUM_MSG_OUTBOX_POLL_INTERVAL:PT2S}
+      # Max events claimed per cycle.
+      batch-size: ${DIASPORUM_MSG_OUTBOX_BATCH_SIZE:50}
+      # Attempts before an event is parked unpublished (ops re-drive).
+      max-attempts: ${DIASPORUM_MSG_OUTBOX_MAX_ATTEMPTS:8}
+      # Base retry delay; grows linearly with attempt count.
+      retry-backoff: ${DIASPORUM_MSG_OUTBOX_RETRY_BACKOFF:PT10S}
+      # A claim older than this is treated as stale and reclaimed.
+      lock-timeout: ${DIASPORUM_MSG_OUTBOX_LOCK_TIMEOUT:PT2M}
+  # Ably realtime transport (M3) — DISABLED unless a key is configured.
+  # The key is server-side only: clients receive short-lived signed token
+  # requests from POST /api/v1/realtime/token, scoped to subscribe on their
+  # own user:{id} channel — never the raw key and never arbitrary channels.
+  ably:
+    enabled: ${ABLY_ENABLED:false}
+    api-key: ${ABLY_API_KEY:}
+    # Lifetime of issued tokens; clients renew automatically via authCallback.
+    token-ttl: ${ABLY_TOKEN_TTL:PT1H}
   # Cloudflare R2 media storage — DISABLED by default. The storageClient bean is
   # only created when enabled=true AND endpoint/credentials/bucket are non-blank,
   # so empty placeholders can never activate it. Values via env (see .env.example).

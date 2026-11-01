@@ -84,3 +84,4 @@ $RECYCLE.BIN/
 
 # ---- Vercel / deployment artifacts --------------------------------------------
 .vercel
+.qoder/
