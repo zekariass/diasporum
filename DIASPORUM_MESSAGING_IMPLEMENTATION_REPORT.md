@@ -253,7 +253,7 @@ Reuses the existing `outbox_events` table — no new broker or schema:
   server-side to each participant's personal channel — recipients never need
   to know or subscribe to a channel they shouldn't. Business-account sends
   additionally fan out to all *currently active* members
-  (`BusinessAccountsApi.activeMemberUserIds`), so a revoked member stops
+  (`BusinessAccountsApi.activeMemberIds`), so a revoked member stops
   receiving events immediately.
 - Channel names are derived from the authenticated identity, never from a
   client-supplied conversation ID. Conversation IDs ride inside the event
@@ -261,15 +261,22 @@ Reuses the existing `outbox_events` table — no new broker or schema:
 
 ### 5.4 Events
 
+Payloads are **metadata-only** — the dispatcher also stamps each delivery with
+`eventId` (the outbox row id) and `type` (the event name) at publish time.
+
 | Event | Trigger | Payload |
 |---|---|---|
-| `MESSAGE_CREATED` | `sendInternal` commit | `messageId`, `conversationId`, `sequenceNo`, `senderId`, `senderBusinessAccountId?`, `createdAt`, `body`, `messageType`, `replyToMessageId` |
-| `MESSAGE_READ` | `markRead` advancing a read cursor | `conversationId`, `readerId`, `readThroughSeq` |
-| `CONVERSATION_UPDATED` | create, request accept/decline, declined re-engage | `conversationId`, `status`, `actorId` |
+| `MESSAGE_CREATED` | `sendInternal` commit | `messageId`, `conversationId`, `sequenceNo`, `senderId`, `senderBusinessAccountId?`, `createdAt` |
+| `MESSAGE_READ` | `markRead` advancing a read cursor | `conversationId`, `readerId`, `readerBusinessAccountId?`, `lastReadSeq` |
+| `CONVERSATION_UPDATED` | create, request accept/decline, declined re-engage | `conversationId`, `status` |
 
-Ordering is by `sequenceNo`; dedupe by `messageId`/`event_dedupe_key`. Payloads
-deliberately carry only what the UI needs to render or refetch — no participant
-lists, emails, or context bodies.
+Ordering is by `sequenceNo`; dedupe by `messageId`/`event_dedupe_key`. Events
+deliberately carry **no message body or other content** — the client always
+fetches the canonical record through the existing REST endpoints. This keeps
+message content off the realtime transport entirely (a channel compromise or
+verbose SDK log can't leak bodies), keeps payloads tiny, and gives the UI a
+single canonical render path — realtime only ever says "something changed,
+reconcile."
 
 ### 5.5 Mobile integration
 
@@ -285,8 +292,9 @@ lists, emails, or context bodies.
   `connected` transition after any previous disconnect triggers a full REST
   reload to cover missed events. Optimistic send/`clientMessageId` retry are
   unchanged.
-- `useConversations` — realtime bumps the affected conversation preview and
-  unread badge in place, falling back to a page refetch when needed.
+- `useConversations` — `MESSAGE_CREATED`/`CONVERSATION_UPDATED` (and reconnect)
+  schedule a 400 ms-debounced refetch of the first inbox page + request inbox,
+  so bursts coalesce into a single REST reconcile.
 - Reconnect → REST reconcile means out-of-order, duplicated, and missed events
   cannot corrupt the UI; the app remains fully usable over REST when Ably is
   down.
