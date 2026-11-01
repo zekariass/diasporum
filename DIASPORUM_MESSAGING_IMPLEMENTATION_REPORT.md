@@ -1,10 +1,12 @@
-# Diasporum Messaging Module — M1+M2 Implementation Report
+# Diasporum Messaging Module — M1+M2+M3 Implementation Report
 
 Milestones: **M1 — direct messaging foundation** (text-only DMs, all v10.12
 conversation contexts, message requests, business actors, read state,
-archive/mute, delete-own) and **M2 — policies and hardening** (configurable
+archive/mute, delete-own), **M2 — policies and hardening** (configurable
 rate limits, request-spam cap, decline cooldown, structured authorization
-errors, explicit contextual `dm_permission` policy).
+errors, explicit contextual `dm_permission` policy), and **M3 — Ably
+realtime integration** (transactional-outbox publishing, user-scoped token
+authentication, per-user channel fan-out, mobile realtime UX).
 Branch: `feature/messaging`.
 
 ## 1. Implemented functionality
@@ -198,7 +200,125 @@ Semantics:
   `client_message_id` dedupe, body length cap (10 000 chars at DTO `@Size` and
   `MAX_BODY`), canonical pair uniqueness.
 
-## 5. Tests executed and results
+## 5. Realtime delivery — Ably integration (M3)
+
+### 5.1 Architecture and responsibilities
+
+```
+sendMessage REST ──► MessagingService (auth + policy + persist message
+                    + enqueue outbox_events)   ── same DB transaction ──► COMMIT
+                                                          │
+            @Scheduled OutboxDispatcher (post-commit)     ▼
+            claim FOR UPDATE SKIP LOCKED ──► AblyRestGateway.publish
+            fan-out to user:{participantId} channels      │
+                                          success ──► published_at set
+                                          failure ──► retry w/ backoff,
+                                                      parked after maxAttempts
+Mobile: Ably Realtime ── authCallback ──► POST /api/v1/realtime/token
+        subscribe user:{me.id} ──► merge into useThread / useConversations
+```
+
+- **PostgreSQL is the source of truth** — messages land in `direct_messages`
+  before any publish; Ably failure never loses a persisted message.
+- **Ably is transport only** — clients reconcile authoritative state via the
+  existing REST endpoints (`/messages`, `/conversations`) on reconnect.
+- `ABLY_ENABLED=false` (the default, no key) leaves REST messaging fully
+  functional; events simply stay queued in `outbox_events`.
+
+### 5.2 Transactional outbox
+
+Reuses the existing `outbox_events` table — no new broker or schema:
+
+| Concern | Mechanism |
+|---|---|
+| Atomicity | `enqueueOutbox` runs inside the same `@Transactional` as the message write |
+| Post-commit only | `@Scheduled` dispatcher polls committed rows (`available_at`, `published_at IS NULL`) |
+| Concurrent workers | `SELECT … FOR UPDATE SKIP LOCKED` + `locked_at` lease; a stuck lock re-expires after `lock-timeout` (default 2 min) |
+| Retries | `attempt_count`++ with `retry-backoff` (default 10 s) via `available_at` |
+| Bounded | row parked (`published_at` left NULL, `last_error` set) after `max-attempts` (default 8) |
+| Dedupe | `event_dedupe_key` (unique) — `INSERT … ON CONFLICT DO NOTHING`; re-publishing a parked row is idempotent |
+
+### 5.3 Ably authentication and channel security
+
+- **Secret never leaves the server.** `ABLY_API_KEY` is used only in
+  `RealtimeTokenService` to sign a *token request*; mobile never sees it.
+- `POST /api/v1/realtime/token` authenticates via the existing JWT principal,
+  verifies the user is `ACTIVE`, and issues an Ably token request whose
+  **capability grants `subscribe` on exactly one channel** —
+  `user:{authenticatedUserId}`. Clients cannot pick channels or capabilities;
+  there is no arbitrary-channel token.
+- Token TTL configurable (`ably.token-ttl`, default 1 h); the mobile SDK
+  renews automatically through `authCallback`.
+- **Channel strategy:** `user:{userId}` per-user channels. Publishing fans out
+  server-side to each participant's personal channel — recipients never need
+  to know or subscribe to a channel they shouldn't. Business-account sends
+  additionally fan out to all *currently active* members
+  (`BusinessAccountsApi.activeMemberUserIds`), so a revoked member stops
+  receiving events immediately.
+- Channel names are derived from the authenticated identity, never from a
+  client-supplied conversation ID. Conversation IDs ride inside the event
+  payload only, for client-side filtering.
+
+### 5.4 Events
+
+| Event | Trigger | Payload |
+|---|---|---|
+| `MESSAGE_CREATED` | `sendInternal` commit | `messageId`, `conversationId`, `sequenceNo`, `senderId`, `senderBusinessAccountId?`, `createdAt`, `body`, `messageType`, `replyToMessageId` |
+| `MESSAGE_READ` | `markRead` advancing a read cursor | `conversationId`, `readerId`, `readThroughSeq` |
+| `CONVERSATION_UPDATED` | create, request accept/decline, declined re-engage | `conversationId`, `status`, `actorId` |
+
+Ordering is by `sequenceNo`; dedupe by `messageId`/`event_dedupe_key`. Payloads
+deliberately carry only what the UI needs to render or refetch — no participant
+lists, emails, or context bodies.
+
+### 5.5 Mobile integration
+
+- `realtime-service.ts` — a ref-counted singleton around `Ably.Realtime`:
+  `authCallback` hits the backend token endpoint, subscribes `user:{me.id}`,
+  exposes `subscribe(type, handler)` + `onConnection(handler)`. Multiple
+  screens share one connection; the last unsubscriber closes it.
+- `use-realtime.ts` — `useMessagingRealtime()` wires the service to the
+  session and auto-disconnects on logout/account switch.
+- `useThread` — incoming `MESSAGE_CREATED` merges into the message map by ID
+  (dedupes the REST-echo of the sender's own optimistic send), sorted by
+  `sequenceNo`; `MESSAGE_READ` refreshes the conversation detail; a
+  `connected` transition after any previous disconnect triggers a full REST
+  reload to cover missed events. Optimistic send/`clientMessageId` retry are
+  unchanged.
+- `useConversations` — realtime bumps the affected conversation preview and
+  unread badge in place, falling back to a page refetch when needed.
+- Reconnect → REST reconcile means out-of-order, duplicated, and missed events
+  cannot corrupt the UI; the app remains fully usable over REST when Ably is
+  down.
+
+### 5.6 Failure handling
+
+| Failure | Behavior |
+|---|---|
+| Ably down / publish throws | row stays unpublished, retried with backoff, parked after `max-attempts`; message still persisted |
+| Backend crash mid-publish | `locked_at` lease expires → another worker re-claims; event may be re-sent (dedupe-safe) |
+| Token expired | `authCallback` re-invoked by the SDK, new token request issued |
+| Network loss / reconnect | SDK auto-retries; on `connected` the UI reloads REST history |
+| Parked rows | inspect via `outbox_events WHERE published_at IS NULL AND attempt_count >= max`; replay by resetting `attempt_count`/`available_at` |
+
+### 5.7 Configuration
+
+Backend (`application.yaml` / `.env.example`): `ABLY_ENABLED`,
+`ABLY_API_KEY`, `ABLY_TOKEN_TTL`, and the `diasporum.messaging.outbox.*`
+block (`scheduling-enabled` master switch, `poll-interval`, `batch-size`,
+`max-attempts`, `retry-backoff`, `lock-timeout`). The scheduled polling
+loop lives in `OutboxScheduler` (a `@ConditionalOnProperty` bean) so tests
+disable it via `application-test.yml` and invoke `OutboxDispatcher`
+directly — a polling thread against a torn-down Testcontainers DB would
+stall JVM shutdown. Mobile needs **no** new env var — see `.env.example`
+note; realtime derives entirely from `EXPO_PUBLIC_API_BASE_URL` + session.
+
+**Local Ably setup:** create a free app at https://ably.com → app *Settings →
+API keys* → copy the root key (or a key with `publish` + `token-request`
+capabilities) → set `ABLY_ENABLED=true` + `ABLY_API_KEY=<key>` in the
+backend `.env`. Never commit the key.
+
+## 6. Tests executed and results
 
 ### Backend — `./mvnw test` (Testcontainers PostgreSQL) — final run (M2)
 
@@ -216,16 +336,28 @@ Semantics:
   for a draft resource, business acting still subject to user-keyed quotas.
 - `MessagingDailyQuotaIntegrationTest` — **1/1 pass**: daily quota enforced
   independently of the hourly window.
+- `MessagingRealtimeIntegrationTest` — **14/14 pass** (Ably mocked via
+  `AblyGateway` fake — no real account): durable outbox row on send,
+  message survives publish failure, success marks `published_at`, retry
+  re-claims after failure, `ON CONFLICT` dedupe on identical dedupe key,
+  two workers can't double-claim (`SKIP LOCKED`), token endpoint issues a
+  `user:{id}`-only capability, token endpoint 403 for suspended user,
+  `MESSAGE_READ` + `CONVERSATION_UPDATED` enqueued on read/accept/decline,
+  business send fans out to active member channels.
 - `ModuleBoundaryTest` (ArchUnit) — **26/26 pass**, no module-boundary violations.
 - Identity, business accounts, feed, social, taxonomy, security suites — all pass.
 
-### Mobile — `npx jest`, `tsc`, `expo lint` — final run
+### Mobile — `npx jest`, `tsc`, `expo lint` — final run (M3)
 
-- Full mobile suite — **111/111 pass**, 11 suites, no regressions (one
-  intermittent timing flake in `messaging-ui` observed once during parallel
-  suite execution; green on isolated and full reruns).
+- Full mobile suite — **120/120 pass**, 12 suites, no regressions.
+- `messaging-realtime.test.tsx` — **9/9 pass** (`__mocks__/ably.ts` manual
+  mock — no real sockets): connection init via `authCallback` → backend
+  token, `user:{u1}` channel subscription, `MESSAGE_CREATED` merge through
+  the REST page, duplicate-event dedupe, `sequenceNo` ordering, reconnect →
+  full REST reload, unmount/logout cleanup, optimistic-send echo dedupe,
+  foreign-conversation event ignored.
 - `npx tsc --noEmit` — **clean**.
-- `npx expo lint` — **0 problems in new messaging code**; 11 errors + 10 warnings
+- `npx expo lint` — **0 problems in new messaging code**; 11 errors + 11 warnings
   remain, all pre-existing in unrelated files (`community-drawer.tsx`
   `react-hooks/refs` errors, `provider-signin.ts` require-import warnings, etc.).
 
@@ -256,8 +388,8 @@ none required production changes:
   `countriesEndpointListsActiveOnly` test was also updated to assert
   active-filtering behavior (insert an inactive country, assert exclusion)
   rather than an exact count that assumed an empty table.
-- Delivery is server-confirmed only — no push notifications, realtime (Ably),
-  or presence (explicitly out of scope).
+- Delivery is realtime over Ably plus REST reconcile — no push notifications
+  or presence yet (out of scope).
 - Media attachments table exists but is unused (text-only milestone).
 - No app-level actor-*visibility* pre-check for listing/event/job/business
   resources — invisible or non-existent resources return the same
@@ -267,13 +399,16 @@ none required production changes:
   auditable, but a client can burst to the edge of each window; token-bucket
   smoothing is possible future tuning if needed.
 
-## 7. Remaining work for M3+
+## 7. Remaining work for M4+
 
-- Realtime delivery (Ably wiring to `outbox_events`), push notifications.
+- Push notifications (Expo push + a `NOTIFICATION_CREATED` outbox consumer);
+  presence/typing indicators if desired.
 - Media attachments (`direct_message_media`), message editing UI (`edited_at`
   already surfaced), reactions.
 - Community General Chat, Voice Rooms/LiveKit (explicitly out of scope).
 - Actor-visibility pre-checks for listing/event/job/business context resources
   (currently safe-but-generic `CONTEXT_NOT_AVAILABLE`).
 - Optional token-bucket smoothing for rate limits; per-conversation send caps.
-- Messaging observability (metrics on send latency, request accept rates).
+- Messaging observability (metrics on send latency, request accept rates,
+  outbox depth / publish lag, parked-event alerting).
+- Outbox operational tooling: replay parked rows, dashboard for `last_error`.

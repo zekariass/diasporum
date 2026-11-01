@@ -81,6 +81,11 @@
 			<artifactId>s3</artifactId>
 			<version>2.29.52</version>
 		</dependency>
+		<dependency>
+			<groupId>io.ably</groupId>
+			<artifactId>ably-java</artifactId>
+			<version>1.7.2</version>
+		</dependency>
 
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

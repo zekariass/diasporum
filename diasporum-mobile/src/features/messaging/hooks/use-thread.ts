@@ -10,6 +10,7 @@ import * as Crypto from 'expo-crypto';
 import { ApiError } from '@/core/api/api-error';
 import { useSession } from '@/core/session/session-provider';
 import { createMessagingApi } from '../services/messaging-api';
+import { useMessagingRealtime } from './use-realtime';
 import type {
   ConversationView,
   MessageView,
@@ -50,6 +51,7 @@ function message(err: unknown, fallback: string): string {
 
 export function useThread(conversationId: string, viewerUserId: string) {
   const { apiClient } = useSession();
+  const realtime = useMessagingRealtime();
   const api = useMemo(() => createMessagingApi(apiClient), [apiClient]);
   const [state, setState] = useState<ThreadState>(initial);
   const requestRef = useRef(false);
@@ -168,6 +170,58 @@ export function useThread(conversationId: string, viewerUserId: string) {
     }));
     await postMessage(local);
   }, [postMessage, state.pending, state.sending]);
+
+  /**
+   * Merge the newest REST page into history — dedupes by message id and
+   * keeps sequence order, so a realtime event and the REST history can
+   * never surface the same message twice.
+   */
+  const mergeLatest = useCallback(async () => {
+    try {
+      const page = await api.messages(conversationId);
+      if (!mountedRef.current) return;
+      setState(s => {
+        const byId = new Map(s.items.map(m => [m.id, m]));
+        for (const m of page.items) byId.set(m.id, m);
+        return {
+          ...s,
+          items: [...byId.values()]
+            .sort((a, b) => b.sequenceNo - a.sequenceNo),
+        };
+      });
+      markRead();
+    } catch {
+      // REST stays authoritative — the next reconcile catches up.
+    }
+  }, [api, conversationId, markRead]);
+
+  /** Refresh conversation detail (read cursors / status transitions). */
+  const refreshDetail = useCallback(async () => {
+    try {
+      const detail = await api.conversationDetail(conversationId);
+      if (!mountedRef.current) return;
+      setState(s => ({ ...s, conversation: detail.conversation }));
+    } catch { /* non-fatal */ }
+  }, [api, conversationId]);
+
+  useEffect(() => {
+    const offs = [
+      realtime.on('MESSAGE_CREATED', e => {
+        if (e.conversationId === conversationId) void mergeLatest();
+      }),
+      realtime.on('MESSAGE_READ', e => {
+        if (e.conversationId === conversationId) void refreshDetail();
+      }),
+      realtime.on('CONVERSATION_UPDATED', e => {
+        if (e.conversationId === conversationId) void refreshDetail();
+      }),
+      // Reconnected after a drop — events may have been missed; reconcile.
+      realtime.onConnection((connected, recovered) => {
+        if (connected && recovered) void load();
+      }),
+    ];
+    return () => offs.forEach(off => off());
+  }, [realtime, conversationId, mergeLatest, refreshDetail, load]);
 
   /** Newest-first list for an inverted FlatList: pending first, then server items. */
   const items: ThreadItem[] = useMemo(() => [

@@ -589,6 +589,8 @@ public class MessagingService {
         if (!accepted) {
             checkPendingRequestCap(actor);
             requestId = insertMessageRequest(convId, actor, self, other);
+            enqueueConversationStatus(convId, "REQUESTED",
+                    "conv-requested:" + convId + ":" + requestId);
         }
         if (cmd.initialMessage() != null && !cmd.initialMessage().isBlank()) {
             sendInternal(actor, requireConversation(convId), self,
@@ -673,16 +675,22 @@ public class MessagingService {
             if (policy.directAllowed()) {
                 jdbc.update("UPDATE direct_conversations SET status='ACCEPTED',"
                         + " updated_at=now() WHERE id=?", c.id());
+                enqueueConversationStatus(c.id(), "ACCEPTED",
+                        "conv-reopened-accepted:" + c.id() + ":" + actor);
             } else {
                 checkPendingRequestCap(actor);
                 jdbc.update("UPDATE direct_conversations SET status='REQUESTED',"
                         + " updated_at=now() WHERE id=?", c.id());
                 requestId = insertMessageRequest(c.id(), actor, self, other);
+                enqueueConversationStatus(c.id(), "REQUESTED",
+                        "conv-requested:" + c.id() + ":" + requestId);
             }
         } else {
             lockActor(actor);
             jdbc.update("UPDATE direct_conversations SET status='ACCEPTED',"
                     + " updated_at=now() WHERE id=?", c.id());
+            enqueueConversationStatus(c.id(), "ACCEPTED",
+                    "conv-reopened-accepted:" + c.id() + ":" + actor);
         }
         ConversationRow reloaded = requireConversation(c.id());
         if (cmd.initialMessage() != null && !cmd.initialMessage().isBlank()) {
@@ -1124,7 +1132,15 @@ public class MessagingService {
             long seq = ((Number) row.get("sequence_no")).longValue();
             Instant createdAt = ((java.sql.Timestamp) row.get("created_at"))
                     .toInstant();
-            enqueueOutbox(c, id, actor, self, seq, text);
+            enqueueOutbox(c, "MESSAGE_CREATED",
+                    "{\"messageId\":\"" + id + "\",\"conversationId\":\""
+                            + c.id() + "\",\"sequenceNo\":" + seq
+                            + ",\"senderId\":\"" + actor + "\""
+                            + (self.businessAccountId() == null ? ""
+                            : ",\"senderBusinessAccountId\":\""
+                            + self.businessAccountId() + "\"")
+                            + ",\"createdAt\":\"" + createdAt + "\"}",
+                    "dm-created:" + id);
             return new MessageView(id, c.id(), seq, actor,
                     self.businessAccountId(), text, "TEXT", replyToMessageId,
                     createdAt, null);
@@ -1139,25 +1155,36 @@ public class MessagingService {
         }
     }
 
-    /** Transactional outbox event for realtime fan-out (schema §7.2 — the
-     * server persists the event atomically with the durable message; a later
-     * publisher ships it to Ably). */
-    private void enqueueOutbox(ConversationRow c, UUID messageId, UUID actor,
-            Endpoint self, long seq, String body) {
+    /**
+     * Transactional outbox event for realtime fan-out (schema §7.2 — the
+     * event is persisted atomically with the durable change; the
+     * {@code OutboxDispatcher} ships it to Ably after commit). Idempotent:
+     * a repeated dedupe key is ignored rather than failing the transaction.
+     */
+    private void enqueueOutbox(ConversationRow c, String eventType,
+            String payloadJson, String dedupeKey) {
         jdbc.update("INSERT INTO outbox_events(aggregate_type,aggregate_id,"
                         + "event_type,destination,destination_key,payload,"
                         + "event_dedupe_key)"
-                        + " VALUES('DIRECT_MESSAGE',?,'DIRECT_MESSAGE_CREATED',"
-                        + "'ABLY',?,?::jsonb,?)",
-                c.id(), "conversation:" + c.id(),
-                "{\"messageId\":\"" + messageId + "\",\"conversationId\":\""
-                        + c.id() + "\",\"sequenceNo\":" + seq
-                        + ",\"senderId\":\"" + actor + "\""
-                        + (self.businessAccountId() == null ? ""
-                        : ",\"senderBusinessAccountId\":\""
-                        + self.businessAccountId() + "\"")
-                        + "}",
-                "dm-created:" + messageId);
+                        + " VALUES('DIRECT_MESSAGE',?,?,'ABLY',?,?::jsonb,?)"
+                        + " ON CONFLICT (event_dedupe_key) DO NOTHING",
+                c.id(), eventType, "conversation:" + c.id(), payloadJson,
+                dedupeKey);
+    }
+
+    /** Participant-visible conversation status transition. */
+    private void enqueueConversationStatus(UUID conversationId, String status,
+            String dedupeKey) {
+        jdbc.update("INSERT INTO outbox_events(aggregate_type,aggregate_id,"
+                        + "event_type,destination,destination_key,payload,"
+                        + "event_dedupe_key)"
+                        + " VALUES('DIRECT_CONVERSATION',?,"
+                        + "'CONVERSATION_UPDATED','ABLY',?,?::jsonb,?)"
+                        + " ON CONFLICT (event_dedupe_key) DO NOTHING",
+                conversationId, "conversation:" + conversationId,
+                "{\"conversationId\":\"" + conversationId
+                        + "\",\"status\":\"" + status + "\"}",
+                dedupeKey);
     }
 
     @Transactional
@@ -1239,6 +1266,19 @@ public class MessagingService {
         } catch (DataIntegrityViolationException e) {
             throw bad("READ_CURSOR_REJECTED");
         }
+        // Realtime read-receipt fan-out — the counterparty renders "read"
+        // ticks from this; dedupe key makes a repeated mark idempotent.
+        enqueueOutbox(c, "MESSAGE_READ",
+                "{\"conversationId\":\"" + c.id() + "\",\"readerId\":\""
+                        + actor + "\""
+                        + (self.businessAccountId() == null ? ""
+                        : ",\"readerBusinessAccountId\":\""
+                        + self.businessAccountId() + "\"")
+                        + ",\"lastReadSeq\":" + target + "}",
+                "dm-read:" + c.id() + ":" + actor + ":"
+                        + (self.businessAccountId() == null ? "p"
+                        : self.businessAccountId())
+                        + ":" + target);
         return Map.of("conversationId", c.id(), "lastReadSeq", target);
     }
 
@@ -1388,5 +1428,8 @@ public class MessagingService {
             jdbc.update("UPDATE direct_conversations SET status='DECLINED',"
                     + " updated_at=now() WHERE id=?", convId);
         }
+        enqueueConversationStatus(convId, accept ? "ACCEPTED" : "DECLINED",
+                "conv-" + (accept ? "accepted" : "declined") + ":" + convId
+                        + ":" + requestId);
     }
 }

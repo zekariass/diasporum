@@ -28,6 +28,14 @@ public interface BusinessAccountsApi {
      */
     Optional<UUID> representativeUserId(UUID businessAccountId);
 
+    /**
+     * User ids of all accepted, non-revoked members of an {@code ACTIVE}
+     * account — realtime fan-out targets every current member of a business
+     * participant, so live membership (not a stale participant row) decides
+     * who may receive conversation events.
+     */
+    List<UUID> activeMemberIds(UUID businessAccountId);
+
     /** Cross-module-safe business account projection. */
     record BusinessAccountSummary(UUID id, String accountName, String status) {
     }

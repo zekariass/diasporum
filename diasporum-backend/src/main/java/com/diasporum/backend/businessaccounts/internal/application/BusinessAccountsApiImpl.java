@@ -61,4 +61,16 @@ public class BusinessAccountsApiImpl implements BusinessAccountsApi {
                 (rs, i) -> rs.getObject("rep", UUID.class),
                 businessAccountId).stream().findFirst();
     }
+
+    @Override
+    public List<UUID> activeMemberIds(UUID businessAccountId) {
+        return jdbc.queryForList("SELECT m.user_id"
+                        + " FROM business_account_members m"
+                        + " JOIN business_accounts a"
+                        + " ON a.id=m.business_account_id AND a.status='ACTIVE'"
+                        + " WHERE m.business_account_id=?"
+                        + " AND m.accepted_at IS NOT NULL"
+                        + " AND m.revoked_at IS NULL",
+                UUID.class, businessAccountId);
+    }
 }

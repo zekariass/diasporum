@@ -3,3 +3,11 @@
 # see DIASPORUM_IMPLEMENTATION_PLAN.md. H2 is not a valid substitute for
 # PostGIS and PostgreSQL trigger behaviour.
 # Placeholder only: wiring is added with the secured-foundation milestone.
+
+diasporum:
+  messaging:
+    outbox:
+      # Never run the polling loop in tests — MessagingRealtimeIntegrationTest
+      # invokes OutboxDispatcher#dispatch() directly, and a scheduled thread
+      # polling a torn-down Testcontainers DB stalls JVM shutdown.
+      scheduling-enabled: false

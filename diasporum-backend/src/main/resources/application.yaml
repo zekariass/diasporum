@@ -75,6 +75,34 @@ diasporum:
     # Default false per v10.12: published-resource owners are contactable;
     # dm_permission governs GENERAL conversations only. Blocks/mutes always apply.
     context-respects-dm-permission: ${DIASPORUM_MSG_CONTEXT_RESPECTS_DM:false}
+    # Transactional-outbox dispatcher (M3) — polls outbox_events for
+    # destination='ABLY' rows and publishes one Ably message per participant
+    # channel (user:{id}; business side → all active members). Claimed rows
+    # use FOR UPDATE SKIP LOCKED + a stale lock timeout, so multiple backend
+    # instances can run the dispatcher safely.
+    outbox:
+      # Master switch for the scheduled polling loop (the dispatcher bean
+      # itself always exists — tests invoke it directly). Default on.
+      scheduling-enabled: ${DIASPORUM_MSG_OUTBOX_SCHEDULING_ENABLED:true}
+      # Delay between dispatch cycles.
+      poll-interval: ${DIASPORUM_MSG_OUTBOX_POLL_INTERVAL:PT2S}
+      # Max events claimed per cycle.
+      batch-size: ${DIASPORUM_MSG_OUTBOX_BATCH_SIZE:50}
+      # Attempts before an event is parked unpublished (ops re-drive).
+      max-attempts: ${DIASPORUM_MSG_OUTBOX_MAX_ATTEMPTS:8}
+      # Base retry delay; grows linearly with attempt count.
+      retry-backoff: ${DIASPORUM_MSG_OUTBOX_RETRY_BACKOFF:PT10S}
+      # A claim older than this is treated as stale and reclaimed.
+      lock-timeout: ${DIASPORUM_MSG_OUTBOX_LOCK_TIMEOUT:PT2M}
+  # Ably realtime transport (M3) — DISABLED unless a key is configured.
+  # The key is server-side only: clients receive short-lived signed token
+  # requests from POST /api/v1/realtime/token, scoped to subscribe on their
+  # own user:{id} channel — never the raw key and never arbitrary channels.
+  ably:
+    enabled: ${ABLY_ENABLED:false}
+    api-key: ${ABLY_API_KEY:}
+    # Lifetime of issued tokens; clients renew automatically via authCallback.
+    token-ttl: ${ABLY_TOKEN_TTL:PT1H}
   # Cloudflare R2 media storage — DISABLED by default. The storageClient bean is
   # only created when enabled=true AND endpoint/credentials/bucket are non-blank,
   # so empty placeholders can never activate it. Values via env (see .env.example).

@@ -20,6 +20,7 @@ jest.mock('@/global.css', () => ({}));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'client-msg-1' }));
+jest.mock('ably');
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
