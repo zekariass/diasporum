@@ -135,6 +135,31 @@ export default function ProfileTabScreen() {
             <Ionicons name="chevron-forward" size={21} color={theme.primary} />
           </Pressable>
 
+          <Pressable
+            onPress={() => router.push("/(app)/vehicles" as never)}
+            accessibilityRole="button"
+            accessibilityLabel="Explore vehicles"
+            style={({ pressed }) => [
+              styles.businessCard,
+              { backgroundColor: theme.backgroundElement },
+              pressed && styles.pressed,
+            ]}
+          >
+            <View style={[styles.businessIcon, { backgroundColor: theme.primarySurface }]}>
+              <Ionicons name="car-outline" size={25} color={theme.primary} />
+            </View>
+            <View style={styles.businessCopy}>
+              <ThemedText style={styles.businessTitle}>Vehicles</ThemedText>
+              <ThemedText style={styles.businessDescription} themeColor="textSecondary">
+                Discover vehicles and manage your listings.
+              </ThemedText>
+              <ThemedText style={[styles.businessAction, { color: theme.primary }]}>
+                Explore vehicles
+              </ThemedText>
+            </View>
+            <Ionicons name="chevron-forward" size={21} color={theme.primary} />
+          </Pressable>
+
           {/* Details */}
           <View
             style={[

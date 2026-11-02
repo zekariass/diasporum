@@ -58,6 +58,7 @@ const OPTIONS: CreateOption[] = [
     description: "Offer a car or other vehicle",
     icon: "car-outline",
     color: "#0891B2",
+    route: "/(app)/vehicles/create",
   },
   {
     key: "spare-bag",

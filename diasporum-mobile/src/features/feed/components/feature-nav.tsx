@@ -50,6 +50,9 @@ export function FeatureNav() {
       case "event":
         router.push("/(app)/events" as never);
         return;
+      case "vehicle":
+        router.push("/(app)/vehicles" as never);
+        return;
       default:
         Alert.alert("Coming soon", `${label} isn't available yet.`);
     }
