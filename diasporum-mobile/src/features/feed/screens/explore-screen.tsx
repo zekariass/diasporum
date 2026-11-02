@@ -9,6 +9,7 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, TextInput, View } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -222,7 +223,13 @@ export default function ExploreScreen() {
         {/* Header */}
         <View style={[s.header, { borderBottomColor: theme.border }]}>
           <ThemedText type="title">Explore</ThemedText>
-          <ThemedText style={s.communityLabel} themeColor="textSecondary">{communityName}</ThemedText>
+          <View style={s.headerActions}>
+            <ThemedText style={s.communityLabel} themeColor="textSecondary">{communityName}</ThemedText>
+            <Pressable onPress={() => router.push('/(app)/jobs' as never)}
+              accessibilityRole="button" accessibilityLabel="Explore jobs" hitSlop={8}>
+              <Ionicons name="briefcase-outline" size={24} color={BrandColors.primary} />
+            </Pressable>
+          </View>
         </View>
         {/* Search */}
         <View style={[s.searchBar, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
@@ -272,6 +279,7 @@ const s = StyleSheet.create({
   root: { flex: 1 }, safeArea: { flex: 1 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingHorizontal: Spacing.four, paddingVertical: Spacing.two, borderBottomWidth: StyleSheet.hairlineWidth },
   communityLabel: { fontSize: 12 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   searchBar: { flexDirection: 'row', alignItems: 'center', margin: Spacing.four, borderWidth: 1, borderRadius: 10, paddingHorizontal: Spacing.three, height: 44 },
   searchIcon: { fontSize: 16, marginRight: Spacing.two },
   searchInput: { flex: 1, fontSize: 15, height: '100%' },

@@ -87,6 +87,7 @@ const OPTIONS: CreateOption[] = [
     description: "Share a new work opportunity",
     icon: "briefcase-outline",
     color: "#16A34A",
+    route: "/(app)/jobs/create",
   },
   {
     key: "community-help",
