@@ -99,7 +99,7 @@ class JobsModuleIntegrationTest {
         jdbc.update("DELETE FROM business_accounts");
         jdbc.update("DELETE FROM addresses");
         for (String table : new String[]{"community_memberships", "external_identities",
-                "profiles", "communities", "countries"}) {
+                "profiles", "communities", "airports", "countries"}) {
             jdbc.update("DELETE FROM " + table);
         }
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES"

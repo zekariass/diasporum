@@ -70,7 +70,7 @@ class FeedModuleIntegrationTest {
         for (String t : new String[]{"user_follows", "user_blocks",
                 "feed_posts", "media_objects", "user_content_views",
                 "community_memberships", "external_identities", "profiles",
-                "communities", "country_categories", "countries"}) {
+                "communities", "country_categories", "airports", "countries"}) {
             jdbc.update("DELETE FROM " + t);
         }
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES"

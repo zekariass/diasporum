@@ -153,12 +153,14 @@ class MediaModuleIntegrationTest {
     }
 
     @Test
-    void messagingJobsAndBusinessMediaLifecycleRemainsEnabled() {
+    void sharedMediaLifecycleRemainsEnabledForAllConsumerPurposes() {
         var purposes = Map.of(
                 "MESSAGE_IMAGE", "image/webp",
                 "MESSAGE_DOCUMENT", "application/pdf",
                 "JOB", "image/jpeg",
-                "BUSINESS", "image/png");
+                "BUSINESS", "image/png",
+                "PROPERTY", "image/jpeg",
+                "SPARE_BAG_LISTING", "image/webp");
 
         for (var entry : purposes.entrySet()) {
             String purpose = entry.getKey();
