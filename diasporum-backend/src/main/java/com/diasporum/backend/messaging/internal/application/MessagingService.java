@@ -456,7 +456,8 @@ public class MessagingService {
         boolean direct = switch (permission) {
             case "EVERYONE" -> true;
             case "MUTUAL_FOLLOWERS" -> !actor.business()
-                    && social.isFriend(actorUser, recipient.userId());
+                    && social.isFollowing(actorUser, recipient.userId())
+                    && social.isFollowing(recipient.userId(), actorUser);
             case "COMMUNITY_MEMBERS" -> !actor.business()
                     && shareCommunity(actorUser, recipient.userId());
             case "INTERACTED_USERS" -> !actor.business()
@@ -477,13 +478,14 @@ public class MessagingService {
     }
 
     /**
-     * INTERACTED_USERS approximation: mutual follow, or an already-accepted
+     * INTERACTED_USERS approximation: mutual follow, durable friendship, or an already-accepted
      * prior conversation between the same personal users. Shared community
      * membership is deliberately NOT counted - that is the separate
      * {@code COMMUNITY_MEMBERS} permission.
      */
     private boolean interacted(UUID a, UUID b) {
-        if (social.isFriend(a, b)) {
+        if ((social.isFollowing(a, b) && social.isFollowing(b, a))
+                || social.isFriend(a, b)) {
             return true;
         }
         UUID lo = a.compareTo(b) < 0 ? a : b;

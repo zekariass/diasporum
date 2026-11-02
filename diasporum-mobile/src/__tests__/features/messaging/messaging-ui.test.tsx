@@ -11,7 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
 import MessagesScreen from '@/features/messaging/screens/messages-screen';
-import ConversationScreen from '@/features/messaging/screens/conversation-screen';
+import ConversationScreen from '@/features/messaging/screens/conversation-thread-screen';
 import { ApiError } from '@/core/api/api-error';
 
 const mockClient = { get: jest.fn(), post: jest.fn(), put: jest.fn(), patch: jest.fn(), delete: jest.fn() };
@@ -39,7 +39,7 @@ const participant = (id: string, name: string, side: 'A' | 'B' = 'A') => ({
 });
 
 const conversation = (over: Partial<Record<string, unknown>> = {}) => ({
-  id: 'conv-1', contextType: 'GENERAL', contextId: null, status: 'ACCEPTED',
+  id: 'conv-1', contextType: 'GENERAL', contextId: null, status: 'ACCEPTED', matched: false,
   self: participant('u1', 'Me', 'A'), other: participant('u2', 'Ada Lovelace', 'B'),
   lastMessageSeq: 2, lastMessageAt: '2026-11-01T10:00:00Z',
   lastMessagePreview: 'See you then', unreadCount: 3,
@@ -78,6 +78,16 @@ describe('MessagesScreen', () => {
     expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
     expect(screen.getByText('See you then')).toBeTruthy();
     expect(screen.getByText('3')).toBeTruthy();       // unread badge
+  });
+
+  it('renders the derived Matched badge for an active match', async () => {
+    mockClient.get.mockImplementation((path: string) =>
+      path === '/api/v1/message-requests'
+        ? Promise.resolve([])
+        : Promise.resolve({ items: [conversation({ matched: true })], nextCursor: null }));
+    await mount(<MessagesScreen />);
+    expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
+    expect(screen.getByTestId('matched-badge')).toBeTruthy();
   });
 
   it('renders empty state with no conversations or requests', async () => {

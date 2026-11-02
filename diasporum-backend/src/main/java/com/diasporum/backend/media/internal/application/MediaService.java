@@ -29,6 +29,8 @@ public class MediaService {
             Map.entry("FEED_IMAGE", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("EVENT", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("JOB", List.of("image/jpeg", "image/png", "image/webp")),
+            Map.entry("MATCHMAKING_PROFILE_PHOTO", List.of("image/jpeg", "image/png", "image/webp")),
+            Map.entry("MATCHMAKING_PROFILE_BLURRED", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("BUSINESS", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("PROPERTY", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("SPARE_BAG_LISTING", List.of("image/jpeg", "image/png", "image/webp")),

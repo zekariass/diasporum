@@ -93,11 +93,6 @@ public class SocialApiImpl implements SocialApi {
         service.establishMatchmakingFriendship(a, b);
     }
 
-    @Override
-    public void dissolveMatchmakingFriendship(UUID a, UUID b) {
-        service.dissolveMatchmakingFriendship(a, b);
-    }
-
     private static int clamp(int limit) {
         return limit <= 0 ? MAX_ID_LIST : Math.min(limit, MAX_ID_LIST);
     }

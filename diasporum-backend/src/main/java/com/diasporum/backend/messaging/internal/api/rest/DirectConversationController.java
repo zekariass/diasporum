@@ -3,8 +3,8 @@ package com.diasporum.backend.messaging.internal.api.rest;
 import com.diasporum.backend.messaging.internal.api.rest.Requests.CreateConversationRequest;
 import com.diasporum.backend.messaging.internal.api.rest.Requests.MarkReadRequest;
 import com.diasporum.backend.messaging.internal.api.rest.Requests.MuteRequest;
+import com.diasporum.backend.messaging.internal.application.ConversationMatchProjection;
 import com.diasporum.backend.messaging.internal.application.MessagingService;
-import com.diasporum.backend.messaging.internal.application.MessagingService.ConversationPage;
 import com.diasporum.backend.messaging.internal.application.MessagingService.ConversationView;
 import com.diasporum.backend.messaging.internal.application.MessagingService.CreateConversationCommand;
 import com.diasporum.backend.messaging.internal.application.MessagingService.UnreadCountView;
@@ -31,32 +31,41 @@ import org.springframework.web.bind.annotation.RestController;
 public class DirectConversationController {
 
     private final MessagingService service;
+    private final ConversationMatchProjection matches;
 
-    public DirectConversationController(MessagingService service) {
+    public DirectConversationController(MessagingService service,
+            ConversationMatchProjection matches) {
         this.service = service;
+        this.matches = matches;
     }
 
     /** Create or reuse a conversation (GENERAL request/direct or context). */
     @PostMapping
-    public ConversationView create(
+    public ConversationResponse create(
             @AuthenticationPrincipal DiasporumUserPrincipal principal,
             @Valid @RequestBody CreateConversationRequest req) {
-        return service.createConversation(principal.userId(),
+        ConversationView value = service.createConversation(principal.userId(),
                 new CreateConversationCommand(req.contextType(), req.contextId(),
                         req.recipientUserId(), req.recipientBusinessAccountId(),
                         req.actingBusinessAccountId(), req.initialMessage(),
                         req.clientMessageId()));
+        return ConversationResponse.from(value, matches.isMatched(value.id()));
     }
 
     /** Inbox page — keyset cursor on (last activity, id). */
     @GetMapping
-    public ConversationPage conversations(
+    public ConversationResponse.Page conversations(
             @AuthenticationPrincipal DiasporumUserPrincipal principal,
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(defaultValue = "false") boolean archived) {
-        return service.conversations(principal.userId(), cursor, size,
-                archived);
+        var page = service.conversations(principal.userId(), cursor, size, archived);
+        var ids = page.items().stream().map(ConversationView::id).toList();
+        var matched = matches.matchedFor(ids);
+        return new ConversationResponse.Page(page.items().stream()
+                .map(value -> ConversationResponse.from(value,
+                        matched.getOrDefault(value.id(), false)))
+                .toList(), page.nextCursor());
     }
 
     /** Aggregate unread: unread messages + incoming pending requests. */
@@ -71,7 +80,10 @@ public class DirectConversationController {
     public Map<String, Object> conversation(
             @AuthenticationPrincipal DiasporumUserPrincipal principal,
             @PathVariable UUID id) {
-        return service.conversationDetail(principal.userId(), id);
+        var detail = service.conversationDetail(principal.userId(), id);
+        var value = (ConversationView) detail.get("conversation");
+        return ConversationResponse.detail(value, matches.isMatched(id),
+                detail.get("participants"));
     }
 
     /** Advance the caller's read cursor (monotonic, clamped at last seq). */

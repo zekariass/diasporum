@@ -23,6 +23,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
 import { BorderRadius, Spacing } from '@/shared/theme/spacing';
+import { MatchedBadge } from '@/shared/components/matched-badge';
 import { useConversations } from '../hooks/use-conversations';
 import { timeAgo } from '@/features/feed/utils/time-ago';
 import type {
@@ -70,6 +71,7 @@ function ConversationRow({ item }: { item: ConversationView }) {
           <ThemedText style={styles.rowName} numberOfLines={1}>
             {item.other.displayName}
           </ThemedText>
+          {item.matched ? <MatchedBadge compact /> : null}
           <ThemedText style={styles.rowTime} themeColor="textSecondary">
             {timeAgo(when)}
           </ThemedText>

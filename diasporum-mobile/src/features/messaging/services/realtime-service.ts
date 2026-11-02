@@ -16,10 +16,14 @@ export type MessagingEventType =
   | 'TYPING_STARTED'
   | 'TYPING_STOPPED'
   | 'PRESENCE_ONLINE'
-  | 'PRESENCE_OFFLINE';
+  | 'PRESENCE_OFFLINE'
+  | 'MATCHMAKING_MATCHED'
+  | 'MATCHMAKING_UNMATCHED';
 
 export interface MessagingEvent {
   type: MessagingEventType;
+  eventId?: string;
+  matchId?: string;
   conversationId?: string;
   messageId?: string;
   sequenceNo?: number;
@@ -46,6 +50,7 @@ class MessagingRealtime {
   private consumers = 0;
   private handlers = new Map<MessagingEventType, Set<EventHandler>>();
   private connHandlers = new Set<ConnectionHandler>();
+  private seenEventIds = new Set<string>();
   private everConnected = false;
 
   async acquire(apiClient: ApiClient, userId: string): Promise<void> {
@@ -79,6 +84,7 @@ class MessagingRealtime {
     this.everConnected = false;
     this.handlers.clear();
     this.connHandlers.clear();
+    this.seenEventIds.clear();
   }
 
   isConnected(): boolean {
@@ -126,6 +132,14 @@ class MessagingRealtime {
         const data = typeof msg.data === 'string'
           ? JSON.parse(msg.data) : (msg.data ?? {});
         const type = (msg.name ?? data.type) as MessagingEventType;
+        const eventId = typeof data.eventId === 'string' ? data.eventId : null;
+        if (eventId && this.seenEventIds.has(eventId)) return;
+        if (eventId) {
+          this.seenEventIds.add(eventId);
+          if (this.seenEventIds.size > 500) {
+            this.seenEventIds.delete(this.seenEventIds.values().next().value!);
+          }
+        }
         this.handlers.get(type)?.forEach(h => h(data as MessagingEvent));
       } catch { /* malformed — ignore */ }
     });

@@ -121,6 +121,8 @@ export function useConversations() {
     const offs = [
       realtime.on('MESSAGE_CREATED', schedule),
       realtime.on('CONVERSATION_UPDATED', schedule),
+      realtime.on('MATCHMAKING_MATCHED', schedule),
+      realtime.on('MATCHMAKING_UNMATCHED', schedule),
       realtime.onConnection((connected, recovered) => {
         if (connected && recovered) schedule();
       }),

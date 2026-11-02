@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Minimal durable notification writer; delivery remains existing outbox work. */
+/** Durable notification writer; existing outbox work handles delivery. */
 @Service
 public class NotificationService implements NotificationsApi {
 
@@ -15,6 +15,13 @@ public class NotificationService implements NotificationsApi {
 
     public NotificationService(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    @Override
+    @Transactional
+    public void create(NotificationCommand command) {
+        notify(command.recipientUserId(), command.type(), command.title(), command.body(),
+                command.targetType(), command.targetId(), command.dedupeKey());
     }
 
     @Override

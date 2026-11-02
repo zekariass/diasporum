@@ -22,6 +22,12 @@ public interface MessagingApi {
      */
     UUID ensureAcceptedGeneralConversation(UUID userAId, UUID userBId);
 
+    /** Match-aware variant that also maintains the unique conversation/match link. */
+    UUID ensureAcceptedGeneralConversation(UUID userAId, UUID userBId, UUID matchId);
+
+    /** Returns the GENERAL conversation linked to a match, if one exists. */
+    java.util.Optional<UUID> conversationIdForMatch(UUID matchId);
+
     /**
      * Creates or reuses the conversation for {@code contextType}/{@code contextId}
      * between the acting endpoint and the recipient endpoint. The acting

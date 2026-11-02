@@ -2,8 +2,11 @@ package com.diasporum.backend.billing;
 
 import java.util.UUID;
 
-/** Public provider-neutral entitlement operations for consumer modules. */
+/** Public provider-neutral entitlement and idempotent usage operations. */
 public interface BillingApi {
+
+    /** Consumes one configured feature unit or throws an entitlement/quota error. */
+    void consumePersonalFeature(UUID userId, String featureKey, String idempotencyKey);
 
     /**
      * Atomically consumes one personal-plan quota unit. Missing, disabled or

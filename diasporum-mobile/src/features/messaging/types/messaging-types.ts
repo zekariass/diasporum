@@ -24,6 +24,7 @@ export interface ConversationView {
   contextType: ConversationContextType;
   contextId: string | null;
   status: ConversationStatus;
+  matched: boolean;
   self: ParticipantView;
   other: ParticipantView;
   lastMessageSeq: number;
@@ -130,7 +131,8 @@ export interface PendingAttachment {
 export type MessagingEventType =
   | 'MESSAGE_CREATED' | 'MESSAGE_READ' | 'CONVERSATION_UPDATED'
   | 'TYPING_STARTED' | 'TYPING_STOPPED'
-  | 'PRESENCE_ONLINE' | 'PRESENCE_OFFLINE';
+  | 'PRESENCE_ONLINE' | 'PRESENCE_OFFLINE'
+  | 'MATCHMAKING_MATCHED' | 'MATCHMAKING_UNMATCHED';
 
 export interface TypingEvent {
   type: 'TYPING_STARTED' | 'TYPING_STOPPED';

@@ -4,7 +4,7 @@
  * Sections: current community · communities to join (origin match) ·
  * manage footer with safe-area padding.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator, Animated, Modal, Pressable, ScrollView,
   StyleSheet, View,
@@ -33,7 +33,7 @@ export function CommunityDrawer({ visible, onClose }: Props) {
   const activeId = session?.activeCommunityId;
 
   const [mounted, setMounted] = useState(visible);
-  const slide = useRef(new Animated.Value(PANEL_WIDTH)).current;
+  const [slide] = useState(() => new Animated.Value(PANEL_WIDTH));
 
   const [current, setCurrent] = useState<CommunityDetail | null>(null);
   const [currentCount, setCurrentCount] = useState<number | null>(null);
@@ -44,6 +44,7 @@ export function CommunityDrawer({ visible, onClose }: Props) {
   // Slide in / out
   useEffect(() => {
     if (visible) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMounted(true);
       Animated.timing(slide, { toValue: 0, duration: 260, useNativeDriver: true }).start();
     } else {
@@ -56,6 +57,7 @@ export function CommunityDrawer({ visible, onClose }: Props) {
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     void (async () => {
       const joined = new Set((session?.memberships ?? []).map(m => m.communityId));

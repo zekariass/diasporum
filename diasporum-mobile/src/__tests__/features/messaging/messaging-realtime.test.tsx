@@ -10,7 +10,7 @@ import { Text, Pressable } from 'react-native';
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import ConversationScreen from '@/features/messaging/screens/conversation-screen';
+import ConversationScreen from '@/features/messaging/screens/conversation-thread-screen';
 import { useMessagingRealtime } from '@/features/messaging/hooks/use-realtime';
 import { useThread } from '@/features/messaging/hooks/use-thread';
 import { messagingRealtime } from '@/features/messaging/services/realtime-service';
@@ -53,7 +53,7 @@ const participant = (id: string, name: string, side: 'A' | 'B' = 'A') => ({
 });
 
 const conversation = (over: Record<string, unknown> = {}) => ({
-  id: 'conv-1', contextType: 'GENERAL', contextId: null, status: 'ACCEPTED',
+  id: 'conv-1', contextType: 'GENERAL', contextId: null, status: 'ACCEPTED', matched: false,
   self: participant('u1', 'Me', 'A'), other: participant('u2', 'Ada Lovelace', 'B'),
   lastMessageSeq: 2, lastMessageAt: '2026-11-01T10:00:00Z',
   lastMessagePreview: 'See you then', unreadCount: 0,
@@ -238,6 +238,27 @@ describe('realtime events in the thread', () => {
     }));
     await waitFor(() => expect(
       mockClient.get.mock.calls.some(c => c[0] === '/api/v1/conversations/conv-1')).toBe(true));
+  });
+
+  it('removes the Matched badge after unmatch without closing the composer', async () => {
+    let matched = true;
+    mockClient.get.mockImplementation((path: string) => {
+      if (path === '/api/v1/conversations/conv-1') {
+        return Promise.resolve({ conversation: conversation({ matched }), participants: [] });
+      }
+      if (path.startsWith('/api/v1/conversations/conv-1/messages')) {
+        return Promise.resolve({ items: [message(1)], nextCursor: null });
+      }
+      return Promise.reject(new Error('unexpected ' + path));
+    });
+    mockClient.post.mockResolvedValue({});
+    await mount(<ConversationScreen />);
+    expect(await screen.findByTestId('matched-badge')).toBeTruthy();
+
+    matched = false;
+    await act(async () => emitEvent('MATCHMAKING_UNMATCHED', { matchId: 'match-1' }));
+    await waitFor(() => expect(screen.queryByTestId('matched-badge')).toBeNull());
+    expect(screen.getByLabelText('Message input')).toBeTruthy();
   });
 
   it('REST send + realtime echo of the same message show once', async () => {

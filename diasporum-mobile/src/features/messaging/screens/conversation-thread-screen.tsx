@@ -16,6 +16,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
 import { BorderRadius, Spacing } from '@/shared/theme/spacing';
+import { MatchedBadge } from '@/shared/components/matched-badge';
 import { useSession } from '@/core/session/session-provider';
 import { createMessagingApi } from '../services/messaging-api';
 import { createMediaApi } from '../services/media-api';
@@ -29,13 +30,10 @@ import { DocumentBubble } from '../components/document-bubble';
 import { AttachmentPreviewBar } from '../components/attachment-preview-bar';
 import type { AttachmentView, MessageView } from '../types/messaging-types';
 
-// ─── Bubble ──────────────────────────────────────────────────────────────────
-
 interface BubbleProps {
   item: ThreadItem;
   mine: boolean;
   fetchAttachmentUrl: (messageId: string, assetId: string) => Promise<string>;
-  /** sequenceNo up to which the partner has read (for read ticks). */
   partnerReadSeq: number;
 }
 
@@ -73,8 +71,6 @@ function Bubble({ item, mine, fetchAttachmentUrl, partnerReadSeq }: BubbleProps)
             {m.body}
           </ThemedText>
         ) : null}
-
-        {/* M4: render attachments */}
         {m.attachments?.map((att: AttachmentView) =>
           att.purpose === 'MESSAGE_IMAGE' ? (
             <ImageBubble
@@ -90,12 +86,10 @@ function Bubble({ item, mine, fetchAttachmentUrl, partnerReadSeq }: BubbleProps)
             />
           )
         )}
-
         <View style={styles.metaRow}>
           <ThemedText style={[styles.bubbleMeta, { color: mine ? '#fff' : theme.textSecondary }]}>
             {timeAgo(m.createdAt)}
           </ThemedText>
-          {/* M4: read ticks — only shown on sender's own messages */}
           {mine && (
             <ThemedText style={[styles.readTick, { color: isRead ? '#a5f3fc' : 'rgba(255,255,255,0.5)' }]}>
               {isRead ? '✓✓' : '✓'}
@@ -106,8 +100,6 @@ function Bubble({ item, mine, fetchAttachmentUrl, partnerReadSeq }: BubbleProps)
     </View>
   );
 }
-
-// ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function ConversationScreen() {
   const theme = useTheme();
@@ -126,7 +118,6 @@ export default function ConversationScreen() {
   } = useThread(conversationId, viewerId);
 
   const atts = useAttachments(mediaApiObj);
-
   const [draft, setDraft] = useState('');
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -153,7 +144,6 @@ export default function ConversationScreen() {
 
   const onDraftChange = (text: string) => {
     setDraft(text);
-    // M4: typing indicator — throttled
     if (typingTimer.current) clearTimeout(typingTimer.current);
     if (text.length > 0) {
       notifyTyping(true);
@@ -179,7 +169,6 @@ export default function ConversationScreen() {
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-        {/* Header */}
         <View style={[styles.header, { borderBottomColor: theme.border }]}>
           <Pressable onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Back">
             <Ionicons name="chevron-back" size={24} color={theme.text} />
@@ -187,7 +176,7 @@ export default function ConversationScreen() {
           <View style={styles.headerBody}>
             <View style={styles.headerNameRow}>
               <ThemedText style={styles.headerTitle} numberOfLines={1}>{title}</ThemedText>
-              {/* M4: presence dot */}
+              {conversation?.matched ? <MatchedBadge compact /> : null}
               <PresenceDot online={partnerOnline} size={9} />
             </View>
             {conversation?.other.business && (
@@ -256,7 +245,7 @@ export default function ConversationScreen() {
               </Pressable>
               <TextInput
                 style={[styles.input, { backgroundColor: theme.backgroundElement, color: theme.text }]}
-                placeholder="Message�"
+                placeholder="Message…"
                 placeholderTextColor={theme.textSecondary}
                 value={draft}
                 onChangeText={onDraftChange}
