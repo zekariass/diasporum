@@ -13,13 +13,13 @@ Scope: Events module only, plus the minimal integration points required by it (m
 
 Implemented in the existing modular-monolith layout under `com.diasporum.backend.events`:
 
-| File | Responsibility |
-| --- | --- |
-| `events/internal/api/rest/EventController.java` | All REST endpoints, request DTOs + validation, HTTP status codes |
-| `events/internal/application/EventService.java` | Lifecycle, discovery, RSVP, saves, reports, participants (JdbcTemplate) |
-| `events/internal/application/EventAuthorization.java` | Ownership / management / membership / visibility policy |
-| `businessaccounts/BusinessAccountApi.java` + `internal/application/BusinessAccountApiImpl.java` | New public read API consumed by the events module |
-| `media/internal/application/MediaService.java` | `EVENT` media purpose added to the upload allowlist (1 line) |
+| File                                                                                            | Responsibility                                                          |
+| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `events/internal/api/rest/EventController.java`                                                 | All REST endpoints, request DTOs + validation, HTTP status codes        |
+| `events/internal/application/EventService.java`                                                 | Lifecycle, discovery, RSVP, saves, reports, participants (JdbcTemplate) |
+| `events/internal/application/EventAuthorization.java`                                           | Ownership / management / membership / visibility policy                 |
+| `businessaccounts/BusinessAccountsApi.java` (+ `internal/application/BusinessAccountsApiImpl.java`) | Public read API consumed by the events module — after the Messaging merge, the events-introduced workspace membership views (`membership`/`membershipsOf` + `AccountMembershipView`) were consolidated into the single `BusinessAccountsApi`; the duplicate singular `BusinessAccountApi` was removed |
+| `media/internal/application/MediaService.java`                                                  | `EVENT` media purpose added to the upload allowlist (1 line)            |
 
 Feature coverage:
 
@@ -40,25 +40,25 @@ Feature coverage:
 
 All under `/api/v1`, bearer-token authenticated (except where noted), consistent with the existing controller conventions:
 
-| Method & path | Purpose |
-| --- | --- |
-| `GET /events/categories` | Event categories (taxonomy) |
-| `POST /events` | Create event (201; validation errors 400) |
-| `GET /events/{eventId}` | Event detail |
-| `PATCH /events/{eventId}` | Partial update (whitelist keys) |
-| `POST /events/{eventId}/publish` | Publish a draft |
-| `POST /events/{eventId}/cancel` | Cancel with optional reason |
-| `DELETE /events/{eventId}` | Soft delete |
-| `GET /events/{eventId}/cover/download-url` | Signed cover URL (visibility-checked) |
-| `GET /events` | Discovery: `scope`, `mode`, `categoryId`, `search`, `cursor`, `limit` |
-| `GET /communities/{communityId}/events` | Community event listing |
-| `PUT /events/{eventId}/rsvp` | Set RSVP status |
-| `DELETE /events/{eventId}/rsvp` | Remove RSVP |
-| `GET /events/{eventId}/participants` | Participant page (visibility-filtered) |
-| `PUT /events/{eventId}/save` / `DELETE .../save` | Save / unsave |
-| `GET /me/events/saved` | Saved events listing |
-| `GET /me/events?role=organized\|participating` | My events |
-| `POST /events/{eventId}/report` | Report event |
+| Method & path                                    | Purpose                                                               |
+| ------------------------------------------------ | --------------------------------------------------------------------- |
+| `GET /events/categories`                         | Event categories (taxonomy)                                           |
+| `POST /events`                                   | Create event (201; validation errors 400)                             |
+| `GET /events/{eventId}`                          | Event detail                                                          |
+| `PATCH /events/{eventId}`                        | Partial update (whitelist keys)                                       |
+| `POST /events/{eventId}/publish`                 | Publish a draft                                                       |
+| `POST /events/{eventId}/cancel`                  | Cancel with optional reason                                           |
+| `DELETE /events/{eventId}`                       | Soft delete                                                           |
+| `GET /events/{eventId}/cover/download-url`       | Signed cover URL (visibility-checked)                                 |
+| `GET /events`                                    | Discovery: `scope`, `mode`, `categoryId`, `search`, `cursor`, `limit` |
+| `GET /communities/{communityId}/events`          | Community event listing                                               |
+| `PUT /events/{eventId}/rsvp`                     | Set RSVP status                                                       |
+| `DELETE /events/{eventId}/rsvp`                  | Remove RSVP                                                           |
+| `GET /events/{eventId}/participants`             | Participant page (visibility-filtered)                                |
+| `PUT /events/{eventId}/save` / `DELETE .../save` | Save / unsave                                                         |
+| `GET /me/events/saved`                           | Saved events listing                                                  |
+| `GET /me/events?role=organized\|participating`   | My events                                                             |
+| `POST /events/{eventId}/report`                  | Report event                                                          |
 
 Error handling follows the module conventions: `ApiError`-style problem responses, 401 unauthenticated, 403 forbidden, 404 not found/not visible, 409 lifecycle/state conflicts, 400 validation.
 
@@ -69,7 +69,7 @@ Error handling follows the module conventions: `ApiError`-style problem response
   - Partial index `ix_events_discovery (starts_at, id) WHERE status='PUBLISHED' AND cancelled_at IS NULL`.
   - Partial index `ix_events_owner_user (owner_user_id, starts_at) WHERE status <> 'DELETED' AND owner_user_id IS NOT NULL`.
 - **`V5__events_voice_room_boundary.sql`** (forward-only; V4 was left untouched):
-  - `events.voice_room_id uuid` + column comment — the prepared ONLINE_VOICE integration boundary. An event references a *Diasporum* voice room by platform-owned ID only; provider credentials, room URLs and tokens are never stored on `events` (the future voice-rooms module owns all LiveKit specifics and mints short-lived join grants). No FK is declared because the voice-rooms table does not exist yet; it will be added with the Voice Rooms milestone.
+  - `events.voice_room_id uuid` + column comment — the prepared ONLINE_VOICE integration boundary. An event references a _Diasporum_ voice room by platform-owned ID only; provider credentials, room URLs and tokens are never stored on `events` (the future voice-rooms module owns all LiveKit specifics and mints short-lived join grants). No FK is declared because the voice-rooms table does not exist yet; it will be added with the Voice Rooms milestone.
 - The v10.12 baseline already provides the core `events`, `event_participants`, `event_saves`, `event_reports`, `event_categories` (taxonomy) and location/capacity/visibility columns; V4 only adds the publish/cancel lifecycle the design requires.
 - `MediaService` allowlist gains the `EVENT` purpose (image/jpeg, image/png, image/webp).
 
@@ -77,9 +77,9 @@ Error handling follows the module conventions: `ApiError`-style problem response
 
 - **Authentication**: every endpoint requires a valid Diasporum JWT with an active session (existing `JwtAuthenticationFilter`).
 - **Community visibility**: `COMMUNITY`-scoped events are readable only by accepted members; discovery excludes them for outsiders. `COUNTRY`-scoped events are readable by users whose current country matches the event's country.
-- **Ownership/management**: edit, cancel, delete, publish are restricted to the organizer (owner user) or an authorized manager of a business-account-owned event. `EventAuthorization` resolves manager permission through the new `BusinessAccountApi` (accepted, active workspace membership; role capabilities defined by the events policy).
+- **Ownership/management**: edit, cancel, delete, publish are restricted to the organizer (owner user) or an authorized manager of a business-account-owned event. `EventAuthorization` resolves manager permission through `BusinessAccountsApi` (accepted, active workspace membership; role capabilities defined by the events policy).
 - **Business accounts**: events can be owned by a business account; managers manage them like the organizer. Tested by `businessAccountEventManagement`.
-- **Lifecycle restrictions**: RSVP is blocked for drafts, cancelled and already-started events; editing is blocked after start and after cancellation (capacity *increases* are the one deliberate exception — they only add seats and promote the waitlist); deletion is permitted only before start.
+- **Lifecycle restrictions**: RSVP is blocked for drafts, cancelled and already-started events; editing is blocked after start and after cancellation (capacity _increases_ are the one deliberate exception — they only add seats and promote the waitlist); deletion is permitted only before start.
 - **Visibility switching (COMMUNITY ↔ COUNTRY)**: organizer/manager only, before start only. Widening to `COUNTRY` exposes the event only to users whose current country matches the event's country (which is fixed by the community's destination country — no arbitrary country pick). Narrowing back to `COMMUNITY` requires the organizer to still be an active member of the event's community; otherwise 403. Drafts remain organizer-only regardless of scope, and non-members/non-country users continue to receive 404 (not 403) so existence is never disclosed. Tested by `visibilityChangeBetweenCommunityAndCountry` plus HTTP PATCH assertions (member → 403, organizer → 200 both directions).
 - **Participant privacy**: participants are listed only to viewers who can already see the event; counts (going/interested/waitlisted) are exposed on the detail payload.
 
@@ -101,26 +101,26 @@ Routes (`src/app/(app)/events/`): `index.tsx` (discovery), `[id].tsx` (detail), 
 
 Feature sources (`src/features/events/`):
 
-| File | Purpose |
-| --- | --- |
-| `screens/events-screen.tsx` | Discovery hub: search (debounced), scope/mode/category filter chips, cursor pagination, pull-to-refresh |
-| `screens/event-detail-screen.tsx` | Cover, dates in the event timezone, location/online link, counts, participant preview + "View all participants" link into the browser, RSVP controls, save toggle, manager actions (edit/cancel/delete/publish), report |
-| `screens/event-participants-screen.tsx` | Paginated participant browser: RSVP-status filter chips (All/Going/Interested/Waitlisted), page-based "Load more" pagination, pull-to-refresh. Every request goes through the authorized participants endpoint — the backend only returns data for events the viewer can access, so no participant information is exposed to users who cannot see the event |
-| `screens/create-event-screen.tsx` + `components/event-form.tsx` | Validated create form: title/description/category, mode (incl. external online link), native date & time pickers + timezone, capacity, visibility, location, cover upload via media module. Submit-time lifecycle validation (start must be in the future for published events; end after start) |
-| `screens/edit-event-screen.tsx` | Reuses `EventForm` for partial PATCH updates (including visibility switching); submit-time lifecycle guard mirrors the backend (after start only title/description/cover/capacity-increases may change); blocked after cancellation |
-| `screens/my-events-screen.tsx` | Organized vs participating tabs |
-| `screens/saved-events-screen.tsx` | Saved events listing |
-| `components/event-card.tsx` | Discovery card (badge, date, community, counts) |
-| `components/event-cover.tsx` | Cover via the visibility-checked download URL, one retry on expiry |
-| `components/event-states.tsx` | Loading skeleton, empty, error states |
-| `services/event-api.ts` | Typed wrappers for every endpoint |
-| `types/event-types.ts` | API DTO types |
-| `utils/event-time.ts` | Timezone conversion (`zonedToUtc`, DST-safe), formatting, validation (rejects calendar overflow such as Feb 30) |
+| File                                                            | Purpose                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `screens/events-screen.tsx`                                     | Discovery hub: search (debounced), scope/mode/category filter chips, cursor pagination, pull-to-refresh                                                                                                                                                                                                                                                     |
+| `screens/event-detail-screen.tsx`                               | Cover, dates in the event timezone, location/online link, counts, participant preview + "View all participants" link into the browser, RSVP controls, save toggle, manager actions (edit/cancel/delete/publish), report                                                                                                                                     |
+| `screens/event-participants-screen.tsx`                         | Paginated participant browser: RSVP-status filter chips (All/Going/Interested/Waitlisted), page-based "Load more" pagination, pull-to-refresh. Every request goes through the authorized participants endpoint — the backend only returns data for events the viewer can access, so no participant information is exposed to users who cannot see the event |
+| `screens/create-event-screen.tsx` + `components/event-form.tsx` | Validated create form: title/description/category, mode (incl. external online link), native date & time pickers + timezone, capacity, visibility, location, cover upload via media module. Submit-time lifecycle validation (start must be in the future for published events; end after start)                                                            |
+| `screens/edit-event-screen.tsx`                                 | Reuses `EventForm` for partial PATCH updates (including visibility switching); submit-time lifecycle guard mirrors the backend (after start only title/description/cover/capacity-increases may change); blocked after cancellation                                                                                                                         |
+| `screens/my-events-screen.tsx`                                  | Organized vs participating tabs                                                                                                                                                                                                                                                                                                                             |
+| `screens/saved-events-screen.tsx`                               | Saved events listing                                                                                                                                                                                                                                                                                                                                        |
+| `components/event-card.tsx`                                     | Discovery card (badge, date, community, counts)                                                                                                                                                                                                                                                                                                             |
+| `components/event-cover.tsx`                                    | Cover via the visibility-checked download URL, one retry on expiry                                                                                                                                                                                                                                                                                          |
+| `components/event-states.tsx`                                   | Loading skeleton, empty, error states                                                                                                                                                                                                                                                                                                                       |
+| `services/event-api.ts`                                         | Typed wrappers for every endpoint                                                                                                                                                                                                                                                                                                                           |
+| `types/event-types.ts`                                          | API DTO types                                                                                                                                                                                                                                                                                                                                               |
+| `utils/event-time.ts`                                           | Timezone conversion (`zonedToUtc`, DST-safe), formatting, validation (rejects calendar overflow such as Feb 30)                                                                                                                                                                                                                                             |
 
 Date/time UX details (gap review):
 
 - Start/end date and time use the native `@react-native-community/datetimepicker` (date + time modes) instead of free-text inputs; date fields carry a midday carrier time to stay clear of DST midnight edges.
-- The pickers render wall-clock values in the *device* timezone while the form stores wall-clock strings interpreted in the *event's* IANA timezone — the mapping goes through the device zone so the stored value always equals what the user actually saw and picked, and `zonedToUtc` interprets it in the event's timezone at submit time. A dedicated test asserts `18:30 Europe/Berlin` is submitted as `17:30Z`.
+- The pickers render wall-clock values in the _device_ timezone while the form stores wall-clock strings interpreted in the _event's_ IANA timezone — the mapping goes through the device zone so the stored value always equals what the user actually saw and picked, and `zonedToUtc` interprets it in the event's timezone at submit time. A dedicated test asserts `18:30 Europe/Berlin` is submitted as `17:30Z`.
 - Validation remains mirrored client-side: format, calendar overflow, end-after-start, and submit-time lifecycle checks (future start for publish; on edit, the started-event guard above).
 
 Integration points:

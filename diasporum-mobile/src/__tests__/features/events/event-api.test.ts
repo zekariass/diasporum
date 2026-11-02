@@ -91,7 +91,12 @@ describe("eventApi", () => {
 
   it("builds the discovery query from filters and cursor", async () => {
     await api.discover(
-      { scope: "COUNTRY", mode: "IN_PERSON", categoryId: "category-1", search: "coffee" },
+      {
+        scope: "COUNTRY",
+        mode: "IN_PERSON",
+        categoryId: "category-1",
+        search: "coffee",
+      },
       "abc123",
       10,
     );

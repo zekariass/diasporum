@@ -3,12 +3,12 @@
  * Verified against EventService.java records and EventController.java.
  */
 
-export type RsvpStatus = 'GOING' | 'INTERESTED' | 'NOT_GOING' | 'WAITLISTED';
+export type RsvpStatus = "GOING" | "INTERESTED" | "NOT_GOING" | "WAITLISTED";
 /** v10.12 also defines ONLINE_VOICE, but the backend rejects it with
  * ONLINE_VOICE_NOT_SUPPORTED until the Voice Rooms milestone ships; the form
  * therefore only offers the two modes below. */
-export type EventMode = 'IN_PERSON' | 'ONLINE_EXTERNAL';
-export type VisibilityScope = 'COMMUNITY' | 'COUNTRY';
+export type EventMode = "IN_PERSON" | "ONLINE_EXTERNAL";
+export type VisibilityScope = "COMMUNITY" | "COUNTRY";
 
 /** Single event row as serialized by the backend EventRow record. */
 export interface EventRow {
@@ -31,7 +31,7 @@ export interface EventRow {
   locationName: string | null;
   externalUrl: string | null;
   capacity: number | null;
-  status: 'DRAFT' | 'PUBLISHED' | 'DELETED';
+  status: "DRAFT" | "PUBLISHED" | "DELETED";
   publishedAt: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;

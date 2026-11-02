@@ -1,13 +1,13 @@
 package com.diasporum.backend.events.internal.application;
 
-import com.diasporum.backend.businessaccounts.BusinessAccountApi.AccountMembershipView;
+import com.diasporum.backend.businessaccounts.BusinessAccountsApi.AccountMembershipView;
 
 /**
  * Fixed event-management capabilities per business role, defined by the events
  * module (v10.12 rule: role capabilities live in the owning module's policy
  * classes, not in generic permission tables). Frontend role labels are never
  * authorization; callers must first validate accepted, active membership via
- * {@code BusinessAccountApi}.
+ * {@code BusinessAccountsApi}.
  */
 public final class EventAuthorization {
 

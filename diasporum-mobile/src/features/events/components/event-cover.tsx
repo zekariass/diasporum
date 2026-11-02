@@ -5,14 +5,14 @@
  * Retries once when the signed URL expires mid-display.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Image, StyleSheet, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Image, StyleSheet, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
-import { useSession } from '@/core/session/session-provider';
-import { BrandColors } from '@/shared/theme/colors';
-import { useTheme } from '@/hooks/use-theme';
-import { createEventApi } from '../services/event-api';
+import { useSession } from "@/core/session/session-provider";
+import { BrandColors } from "@/shared/theme/colors";
+import { useTheme } from "@/hooks/use-theme";
+import { createEventApi } from "../services/event-api";
 
 interface Props {
   eventId: string;
@@ -35,8 +35,9 @@ export function EventCover({ eventId, coverMediaId, style }: Props) {
     // no-cover case, and `loading || !uri` covers the pre-fetch state.
     if (!coverMediaId) return;
     const eventApi = createEventApi(apiClient);
-    eventApi.coverDownloadUrl(eventId)
-      .then(r => {
+    eventApi
+      .coverDownloadUrl(eventId)
+      .then((r) => {
         if (!cancelled) {
           setUri(r.downloadUrl);
           setFailed(false);
@@ -49,7 +50,9 @@ export function EventCover({ eventId, coverMediaId, style }: Props) {
           setLoading(false);
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [apiClient, eventId, coverMediaId]);
 
   const handleError = useCallback(() => {
@@ -59,25 +62,44 @@ export function EventCover({ eventId, coverMediaId, style }: Props) {
     }
     setRetried(true);
     setLoading(true);
-    createEventApi(apiClient).coverDownloadUrl(eventId)
-      .then(r => { setUri(r.downloadUrl); setLoading(false); })
-      .catch(() => { setFailed(true); setLoading(false); });
+    createEventApi(apiClient)
+      .coverDownloadUrl(eventId)
+      .then((r) => {
+        setUri(r.downloadUrl);
+        setLoading(false);
+      })
+      .catch(() => {
+        setFailed(true);
+        setLoading(false);
+      });
   }, [retried, apiClient, eventId]);
 
   if (!coverMediaId || failed) {
     return (
       <View
-        style={[styles.placeholder, style, { backgroundColor: theme.backgroundElement }]}
+        style={[
+          styles.placeholder,
+          style,
+          { backgroundColor: theme.backgroundElement },
+        ]}
         accessibilityLabel="No event cover"
       >
-        <Ionicons name="calendar-outline" size={26} color={theme.textSecondary} />
+        <Ionicons
+          name="calendar-outline"
+          size={26}
+          color={theme.textSecondary}
+        />
       </View>
     );
   }
   if (loading || !uri) {
     return (
       <View
-        style={[styles.placeholder, style, { backgroundColor: theme.backgroundElement }]}
+        style={[
+          styles.placeholder,
+          style,
+          { backgroundColor: theme.backgroundElement },
+        ]}
         accessibilityLabel="Loading event cover"
       >
         <ActivityIndicator size="small" color={BrandColors.primary} />
@@ -96,12 +118,12 @@ export function EventCover({ eventId, coverMediaId, style }: Props) {
 }
 
 const styles = StyleSheet.create({
-  image: { width: '100%', aspectRatio: 16 / 9, borderRadius: 10 },
+  image: { width: "100%", aspectRatio: 16 / 9, borderRadius: 10 },
   placeholder: {
-    width: '100%',
+    width: "100%",
     aspectRatio: 16 / 9,
     borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

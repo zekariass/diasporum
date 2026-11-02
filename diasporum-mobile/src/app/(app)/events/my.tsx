@@ -1,1 +1,1 @@
-export { default } from '@/features/events/screens/my-events-screen';
+export { default } from "@/features/events/screens/my-events-screen";

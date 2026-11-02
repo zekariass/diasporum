@@ -3,22 +3,26 @@
  * participant counts and viewer's RSVP state. Tapping opens the detail screen.
  */
 
-import React from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React from "react";
+import { Pressable, StyleSheet, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
-import { ThemedText } from '@/components/themed-text';
-import { useTheme } from '@/hooks/use-theme';
-import { BrandColors } from '@/shared/theme/colors';
-import { BorderRadius, Spacing } from '@/shared/theme/spacing';
-import type { EventItem, RsvpStatus } from '../types/event-types';
-import { countsSummary, eventDayBadge, formatEventDate } from '../utils/event-time';
+import { ThemedText } from "@/components/themed-text";
+import { useTheme } from "@/hooks/use-theme";
+import { BrandColors } from "@/shared/theme/colors";
+import { BorderRadius, Spacing } from "@/shared/theme/spacing";
+import type { EventItem, RsvpStatus } from "../types/event-types";
+import {
+  countsSummary,
+  eventDayBadge,
+  formatEventDate,
+} from "../utils/event-time";
 
 const RSVP_LABEL: Record<RsvpStatus, string> = {
-  GOING: 'Going',
-  INTERESTED: 'Interested',
-  NOT_GOING: 'Not going',
-  WAITLISTED: 'Waitlisted',
+  GOING: "Going",
+  INTERESTED: "Interested",
+  NOT_GOING: "Not going",
+  WAITLISTED: "Waitlisted",
 };
 
 interface Props {
@@ -31,7 +35,7 @@ export function EventCard({ item, onPress }: Props) {
   const e = item.event;
   const badge = eventDayBadge(e.startsAt, e.timezone);
   const cancelled = e.cancelledAt !== null;
-  const isDraft = e.status === 'DRAFT';
+  const isDraft = e.status === "DRAFT";
 
   return (
     <Pressable
@@ -47,7 +51,11 @@ export function EventCard({ item, onPress }: Props) {
       <View
         style={[
           styles.dateBadge,
-          { backgroundColor: cancelled ? theme.backgroundElement : BrandColors.primarySurface },
+          {
+            backgroundColor: cancelled
+              ? theme.backgroundElement
+              : BrandColors.primarySurface,
+          },
         ]}
         accessibilityLabel={`Starts ${badge.month} ${badge.day}`}
       >
@@ -68,21 +76,37 @@ export function EventCard({ item, onPress }: Props) {
             <Ionicons name="bookmark" size={14} color={BrandColors.primary} />
           )}
         </View>
-        <ThemedText style={styles.meta} themeColor="textSecondary" numberOfLines={1}>
+        <ThemedText
+          style={styles.meta}
+          themeColor="textSecondary"
+          numberOfLines={1}
+        >
           {formatEventDate(e.startsAt, e.timezone)}
-          {e.eventMode === 'ONLINE_EXTERNAL' ? ' · Online' : e.locationName ? ` · ${e.locationName}` : ''}
+          {e.eventMode === "ONLINE_EXTERNAL"
+            ? " · Online"
+            : e.locationName
+              ? ` · ${e.locationName}`
+              : ""}
         </ThemedText>
         <View style={styles.tagRow}>
           {item.category && (
-            <View style={[styles.tag, { backgroundColor: theme.backgroundElement }]}>
+            <View
+              style={[styles.tag, { backgroundColor: theme.backgroundElement }]}
+            >
               <ThemedText style={styles.tagText} themeColor="textSecondary">
                 {item.category.displayName}
               </ThemedText>
             </View>
           )}
-          {e.visibilityScope === 'COUNTRY' && (
-            <View style={[styles.tag, { backgroundColor: theme.backgroundElement }]}>
-              <Ionicons name="globe-outline" size={11} color={theme.textSecondary} />
+          {e.visibilityScope === "COUNTRY" && (
+            <View
+              style={[styles.tag, { backgroundColor: theme.backgroundElement }]}
+            >
+              <Ionicons
+                name="globe-outline"
+                size={11}
+                color={theme.textSecondary}
+              />
               <ThemedText style={styles.tagText} themeColor="textSecondary">
                 Country-wide
               </ThemedText>
@@ -90,13 +114,17 @@ export function EventCard({ item, onPress }: Props) {
           )}
           {cancelled && (
             <View style={[styles.tag, styles.cancelTag]}>
-              <ThemedText style={[styles.tagText, { color: BrandColors.error }]}>
+              <ThemedText
+                style={[styles.tagText, { color: BrandColors.error }]}
+              >
                 Cancelled
               </ThemedText>
             </View>
           )}
           {isDraft && (
-            <View style={[styles.tag, { backgroundColor: theme.backgroundElement }]}>
+            <View
+              style={[styles.tag, { backgroundColor: theme.backgroundElement }]}
+            >
               <ThemedText style={styles.tagText} themeColor="textSecondary">
                 Draft
               </ThemedText>
@@ -104,15 +132,25 @@ export function EventCard({ item, onPress }: Props) {
           )}
           {item.myRsvp && (
             <View style={[styles.tag, styles.rsvpTag]}>
-              <ThemedText style={[styles.tagText, { color: BrandColors.primary }]}>
+              <ThemedText
+                style={[styles.tagText, { color: BrandColors.primary }]}
+              >
                 {RSVP_LABEL[item.myRsvp]}
               </ThemedText>
             </View>
           )}
         </View>
-        <ThemedText style={styles.counts} themeColor="textSecondary" numberOfLines={1}>
-          {countsSummary(item.counts.going, item.counts.interested, item.counts.waitlisted)}
-          {e.capacity !== null ? ` · ${e.capacity} spots` : ''}
+        <ThemedText
+          style={styles.counts}
+          themeColor="textSecondary"
+          numberOfLines={1}
+        >
+          {countsSummary(
+            item.counts.going,
+            item.counts.interested,
+            item.counts.waitlisted,
+          )}
+          {e.capacity !== null ? ` · ${e.capacity} spots` : ""}
         </ThemedText>
       </View>
     </Pressable>
@@ -121,7 +159,7 @@ export function EventCard({ item, onPress }: Props) {
 
 const styles = StyleSheet.create({
   card: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: Spacing.three,
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.lg,
@@ -133,26 +171,26 @@ const styles = StyleSheet.create({
   dateBadge: {
     width: 52,
     borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     paddingVertical: Spacing.one + Spacing.half,
   },
-  dateMonth: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
-  dateDay: { fontSize: 20, fontWeight: '800', marginTop: -2 },
+  dateMonth: { fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
+  dateDay: { fontSize: 20, fontWeight: "800", marginTop: -2 },
   info: { flex: 1, gap: 3 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
-  title: { flex: 1, fontSize: 16, fontWeight: '700', lineHeight: 21 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: Spacing.one },
+  title: { flex: 1, fontSize: 16, fontWeight: "700", lineHeight: 21 },
   meta: { fontSize: 13, lineHeight: 18 },
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 },
+  tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 2 },
   tag: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 4,
     borderRadius: BorderRadius.full,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
-  tagText: { fontSize: 11, fontWeight: '600' },
+  tagText: { fontSize: 11, fontWeight: "600" },
   cancelTag: { backgroundColor: BrandColors.errorSurface },
   rsvpTag: { backgroundColor: BrandColors.primarySurface },
   counts: { fontSize: 12, lineHeight: 16, marginTop: 2 },

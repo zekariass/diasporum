@@ -4,7 +4,12 @@
  */
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import EventsScreen from "@/features/events/screens/events-screen";
@@ -46,7 +51,8 @@ jest.mock("expo-image-picker", () => ({
 // mockPickerDate through the component's onChange callback.
 jest.mock("@react-native-community/datetimepicker", () => {
   const ReactActual = jest.requireActual<typeof import("react")>("react");
-  const { Pressable } = jest.requireActual<typeof import("react-native")>("react-native");
+  const { Pressable } =
+    jest.requireActual<typeof import("react-native")>("react-native");
   return {
     __esModule: true,
     default: ({
@@ -155,7 +161,12 @@ const DETAIL: EventDetail = {
 const PARTICIPANTS = {
   items: [
     {
-      profile: { id: "p2", username: "abe", displayName: "Abe B.", avatarMediaId: null },
+      profile: {
+        id: "p2",
+        username: "abe",
+        displayName: "Abe B.",
+        avatarMediaId: null,
+      },
       rsvpStatus: "GOING",
     },
   ],
@@ -186,18 +197,20 @@ beforeEach(() => {
     }
     return Promise.resolve({ items: [] });
   });
-  mockClient.put.mockImplementation((url: string, body: { status?: string }) => {
-    if (url === "/api/v1/events/event-1/rsvp" && body?.status) {
-      currentDetail = { ...currentDetail, myRsvp: body.status as never };
-      return Promise.resolve({
-        status: body.status,
-        counts: { going: 4, interested: 5, waitlisted: 0 },
-        capacity: 30,
-        promotedUserId: null,
-      });
-    }
-    return Promise.resolve({});
-  });
+  mockClient.put.mockImplementation(
+    (url: string, body: { status?: string }) => {
+      if (url === "/api/v1/events/event-1/rsvp" && body?.status) {
+        currentDetail = { ...currentDetail, myRsvp: body.status as never };
+        return Promise.resolve({
+          status: body.status,
+          counts: { going: 4, interested: 5, waitlisted: 0 },
+          capacity: 30,
+          promotedUserId: null,
+        });
+      }
+      return Promise.resolve({});
+    },
+  );
   mockClient.post.mockResolvedValue({});
 });
 
@@ -288,7 +301,9 @@ describe("Event detail screen", () => {
   it("opens the participant browser from the detail screen", async () => {
     await renderScreen(<EventDetailScreen />);
 
-    await fireEvent.press(await screen.findByLabelText("View all participants"));
+    await fireEvent.press(
+      await screen.findByLabelText("View all participants"),
+    );
 
     await waitFor(() => {
       expect(mockRouter.push).toHaveBeenCalledWith(
@@ -326,7 +341,9 @@ describe("Event detail screen", () => {
         { authenticated: true },
       );
     });
-    expect(await screen.findByLabelText("Remove from saved events")).toBeTruthy();
+    expect(
+      await screen.findByLabelText("Remove from saved events"),
+    ).toBeTruthy();
 
     fireEvent.press(screen.getByLabelText("Remove from saved events"));
     await waitFor(() => {
@@ -369,7 +386,8 @@ describe("Create event screen", () => {
     );
     await fireEvent.press(screen.getByLabelText("Social"));
     // native pickers: open the field, confirm the mocked picker value
-    mockPickerDate = zonedToUtc("2027-11-20", "18:30", deviceTimezone()) ?? new Date();
+    mockPickerDate =
+      zonedToUtc("2027-11-20", "18:30", deviceTimezone()) ?? new Date();
     await fireEvent.press(screen.getByLabelText("Start date"));
     await fireEvent.press(screen.getByLabelText("Confirm picker"));
     await fireEvent.press(screen.getByLabelText("Start time"));
@@ -400,7 +418,8 @@ describe("Create event screen", () => {
       "An evening together",
     );
     await fireEvent.press(screen.getByLabelText("Social"));
-    mockPickerDate = zonedToUtc("2027-11-20", "18:30", deviceTimezone()) ?? new Date();
+    mockPickerDate =
+      zonedToUtc("2027-11-20", "18:30", deviceTimezone()) ?? new Date();
     await fireEvent.press(screen.getByLabelText("Start date"));
     await fireEvent.press(screen.getByLabelText("Confirm picker"));
     await fireEvent.press(screen.getByLabelText("Start time"));
@@ -453,7 +472,12 @@ describe("Event participants screen", () => {
     const page1 = {
       items: [
         {
-          profile: { id: "p20", username: "kebede", displayName: "Kebede T.", avatarMediaId: null },
+          profile: {
+            id: "p20",
+            username: "kebede",
+            displayName: "Kebede T.",
+            avatarMediaId: null,
+          },
           rsvpStatus: "WAITLISTED",
         },
       ],

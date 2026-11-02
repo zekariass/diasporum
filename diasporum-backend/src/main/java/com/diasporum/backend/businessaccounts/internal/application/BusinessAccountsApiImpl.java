@@ -1,13 +1,17 @@
 package com.diasporum.backend.businessaccounts.internal.application;
 
 import com.diasporum.backend.businessaccounts.BusinessAccountsApi;
+import com.diasporum.backend.businessaccounts.BusinessAccountsApi.AccountMembershipView;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-/** Delegating implementation of {@link BusinessAccountsApi}. */
+/** Single implementation of {@link BusinessAccountsApi}: account lookups,
+ * active membership checks and workspace membership projections for
+ * cross-module consumers. */
 @Service
 public class BusinessAccountsApiImpl implements BusinessAccountsApi {
 
@@ -16,6 +20,15 @@ public class BusinessAccountsApiImpl implements BusinessAccountsApi {
             + " ON a.id=m.business_account_id AND a.status='ACTIVE'"
             + " WHERE m.user_id=?"
             + " AND m.accepted_at IS NOT NULL AND m.revoked_at IS NULL";
+
+    /** Accepted, non-revoked memberships in ACTIVE or SUSPENDED accounts —
+     * the workspace-endpoint revalidation rule used by the events module. */
+    private static final String MEMBERSHIP_SELECT =
+            "SELECT a.id,a.account_name,a.status::text,"
+            + "m.role_key FROM business_accounts a JOIN business_account_members m"
+            + " ON m.business_account_id=a.id"
+            + " WHERE m.user_id=? AND m.accepted_at IS NOT NULL AND m.revoked_at IS NULL"
+            + " AND a.status IN ('ACTIVE','SUSPENDED')";
 
     private final JdbcTemplate jdbc;
 
@@ -72,5 +85,29 @@ public class BusinessAccountsApiImpl implements BusinessAccountsApi {
                         + " AND m.accepted_at IS NOT NULL"
                         + " AND m.revoked_at IS NULL",
                 UUID.class, businessAccountId);
+    }
+
+    private static AccountMembershipView membershipRow(java.sql.ResultSet rs,
+            int i) throws java.sql.SQLException {
+        return new AccountMembershipView(rs.getObject("id", UUID.class),
+                rs.getString("account_name"), rs.getString("status"),
+                rs.getString("role_key"));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<AccountMembershipView> membership(UUID userId,
+            UUID accountId) {
+        return jdbc.query(MEMBERSHIP_SELECT + " AND a.id=?",
+                        BusinessAccountsApiImpl::membershipRow,
+                        userId, accountId).stream().findFirst();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AccountMembershipView> membershipsOf(UUID userId) {
+        return jdbc.query(
+                MEMBERSHIP_SELECT + " ORDER BY a.account_name COLLATE \"C\",a.id",
+                BusinessAccountsApiImpl::membershipRow, userId);
     }
 }

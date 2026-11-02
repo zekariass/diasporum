@@ -4,31 +4,39 @@
  * Verified against EventController.java.
  */
 
-import type { ApiClient } from '@/core/api/api-client';
+import type { ApiClient } from "@/core/api/api-client";
 import type {
-  CreateEventRequest, DiscoveryFilters, EventCategory, EventDetail, EventPage,
-  EventParticipant, ParticipantPage, RsvpResult, RsvpStatus, UpdateEventRequest,
-} from '../types/event-types';
+  CreateEventRequest,
+  DiscoveryFilters,
+  EventCategory,
+  EventDetail,
+  EventPage,
+  EventParticipant,
+  ParticipantPage,
+  RsvpResult,
+  RsvpStatus,
+  UpdateEventRequest,
+} from "../types/event-types";
 
 function buildQuery(params: [string, string | undefined][]): string {
   const q = params
-    .filter(([, v]) => v !== undefined && v !== '')
+    .filter(([, v]) => v !== undefined && v !== "")
     .map(([k, v]) => `${k}=${encodeURIComponent(v as string)}`)
-    .join('&');
-  return q ? `?${q}` : '';
+    .join("&");
+  return q ? `?${q}` : "";
 }
 
 export function createEventApi(client: ApiClient) {
   return {
     // ---- categories ----
     categories: () =>
-      client.get<{ items: EventCategory[] }>('/api/v1/events/categories', {
+      client.get<{ items: EventCategory[] }>("/api/v1/events/categories", {
         authenticated: true,
       }),
 
     // ---- lifecycle ----
     createEvent: (req: CreateEventRequest) =>
-      client.post<EventDetail>('/api/v1/events', req, { authenticated: true }),
+      client.post<EventDetail>("/api/v1/events", req, { authenticated: true }),
 
     eventDetail: (eventId: string) =>
       client.get<EventDetail>(`/api/v1/events/${eventId}`, {
@@ -66,15 +74,15 @@ export function createEventApi(client: ApiClient) {
     discover: (filters: DiscoveryFilters = {}, cursor?: string, size = 20) =>
       client.get<EventPage>(
         `/api/v1/events${buildQuery([
-          ['communityId', filters.communityId],
-          ['scope', filters.scope],
-          ['categoryId', filters.categoryId],
-          ['mode', filters.mode],
-          ['from', filters.from],
-          ['to', filters.to],
-          ['search', filters.search],
-          ['cursor', cursor],
-          ['size', String(size)],
+          ["communityId", filters.communityId],
+          ["scope", filters.scope],
+          ["categoryId", filters.categoryId],
+          ["mode", filters.mode],
+          ["from", filters.from],
+          ["to", filters.to],
+          ["search", filters.search],
+          ["cursor", cursor],
+          ["size", String(size)],
         ])}`,
         { authenticated: true },
       ),
@@ -83,17 +91,21 @@ export function createEventApi(client: ApiClient) {
     communityEvents: (communityId: string, cursor?: string, size = 20) =>
       client.get<EventPage>(
         `/api/v1/communities/${communityId}/events${buildQuery([
-          ['cursor', cursor],
-          ['size', String(size)],
+          ["cursor", cursor],
+          ["size", String(size)],
         ])}`,
         { authenticated: true },
       ),
 
     // ---- RSVP ----
     setRsvp: (eventId: string, status: RsvpStatus) =>
-      client.put<RsvpResult>(`/api/v1/events/${eventId}/rsvp`, { status }, {
-        authenticated: true,
-      }),
+      client.put<RsvpResult>(
+        `/api/v1/events/${eventId}/rsvp`,
+        { status },
+        {
+          authenticated: true,
+        },
+      ),
 
     removeRsvp: (eventId: string) =>
       client.delete<RsvpResult>(`/api/v1/events/${eventId}/rsvp`, {
@@ -103,9 +115,9 @@ export function createEventApi(client: ApiClient) {
     participants: (eventId: string, status?: string, page = 0, size = 20) =>
       client.get<ParticipantPage>(
         `/api/v1/events/${eventId}/participants${buildQuery([
-          ['status', status],
-          ['page', String(page)],
-          ['size', String(size)],
+          ["status", status],
+          ["page", String(page)],
+          ["size", String(size)],
         ])}`,
         { authenticated: true },
       ),
@@ -118,21 +130,25 @@ export function createEventApi(client: ApiClient) {
       client.delete(`/api/v1/events/${eventId}/save`, { authenticated: true }),
 
     savedEvents: (page = 0, size = 20) =>
-      client.get<{ items: EventPage['items']; page: number; size: number }>(
+      client.get<{ items: EventPage["items"]; page: number; size: number }>(
         `/api/v1/me/events/saved${buildQuery([
-          ['page', String(page)],
-          ['size', String(size)],
+          ["page", String(page)],
+          ["size", String(size)],
         ])}`,
         { authenticated: true },
       ),
 
     // ---- my events ----
-    myEvents: (role: 'organized' | 'participating' = 'organized', page = 0, size = 20) =>
-      client.get<{ items: EventPage['items']; page: number; size: number }>(
+    myEvents: (
+      role: "organized" | "participating" = "organized",
+      page = 0,
+      size = 20,
+    ) =>
+      client.get<{ items: EventPage["items"]; page: number; size: number }>(
         `/api/v1/me/events${buildQuery([
-          ['role', role],
-          ['page', String(page)],
-          ['size', String(size)],
+          ["role", role],
+          ["page", String(page)],
+          ["size", String(size)],
         ])}`,
         { authenticated: true },
       ),

@@ -1,7 +1,7 @@
 package com.diasporum.backend.events.internal.application;
 
-import com.diasporum.backend.businessaccounts.BusinessAccountApi;
-import com.diasporum.backend.businessaccounts.BusinessAccountApi.AccountMembershipView;
+import com.diasporum.backend.businessaccounts.BusinessAccountsApi;
+import com.diasporum.backend.businessaccounts.BusinessAccountsApi.AccountMembershipView;
 import com.diasporum.backend.community.CommunityApi;
 import com.diasporum.backend.identity.IdentityApi;
 import com.diasporum.backend.identity.IdentityApi.ProfileSummary;
@@ -30,7 +30,7 @@ import org.springframework.web.server.ResponseStatusException;
  * Event lifecycle, discovery, RSVP/capacity/waitlist, saves, participants and
  * reports over the v10.12 {@code events} tables. Community membership and
  * catalogue data come from {@link CommunityApi}/{@link TaxonomyApi}; business
- * ownership from {@link BusinessAccountApi}; cover assets from {@link MediaApi};
+ * ownership from {@link BusinessAccountsApi}; cover assets from {@link MediaApi};
  * block filtering from {@link SocialApi}.
  *
  * <p>Capacity and waitlist invariants are serialized per event with
@@ -57,11 +57,11 @@ public class EventService {
     private final TaxonomyApi taxonomy;
     private final MediaApi media;
     private final SocialApi social;
-    private final BusinessAccountApi businessAccounts;
+    private final BusinessAccountsApi businessAccounts;
 
     public EventService(JdbcTemplate jdbc, IdentityApi identity,
             CommunityApi community, TaxonomyApi taxonomy, MediaApi media,
-            SocialApi social, BusinessAccountApi businessAccounts) {
+            SocialApi social, BusinessAccountsApi businessAccounts) {
         this.jdbc = jdbc;
         this.identity = identity;
         this.community = community;

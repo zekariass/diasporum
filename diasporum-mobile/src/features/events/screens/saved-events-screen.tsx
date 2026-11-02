@@ -3,25 +3,31 @@
  * Route: /(app)/events/saved
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { safeBack } from '@/core/navigation/safe-back';
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
+import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { safeBack } from "@/core/navigation/safe-back";
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { useSession } from '@/core/session/session-provider';
-import { createEventApi } from '../services/event-api';
-import { BrandColors } from '@/shared/theme/colors';
-import { Spacing } from '@/shared/theme/spacing';
-import { useTheme } from '@/hooks/use-theme';
-import { ApiError } from '@/core/api/api-error';
-import type { EventItem } from '../types/event-types';
-import { EventCard } from '../components/event-card';
-import { EventsEmpty, EventsSkeleton } from '../components/event-states';
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
+import { useSession } from "@/core/session/session-provider";
+import { createEventApi } from "../services/event-api";
+import { BrandColors } from "@/shared/theme/colors";
+import { Spacing } from "@/shared/theme/spacing";
+import { useTheme } from "@/hooks/use-theme";
+import { ApiError } from "@/core/api/api-error";
+import type { EventItem } from "../types/event-types";
+import { EventCard } from "../components/event-card";
+import { EventsEmpty, EventsSkeleton } from "../components/event-states";
 
 const PAGE_SIZE = 20;
 
@@ -40,28 +46,39 @@ export default function SavedEventsScreen() {
   const [error, setError] = useState<string | null>(null);
   const loadingRef = useRef(false);
 
-  const load = useCallback(async () => {
-    if (loadingRef.current) return;
+  // State updates live in promise continuations so the mount effect never
+  // sets state synchronously (react-hooks/set-state-in-effect).
+  const load = useCallback(() => {
+    if (loadingRef.current) return Promise.resolve();
     loadingRef.current = true;
-    try {
-      const r = await eventApi.savedEvents(0, PAGE_SIZE);
-      setItems(r.items);
-      setPage(0);
-      setHasMore(r.items.length === PAGE_SIZE);
-      setError(null);
-    } catch (e) {
-      setError(ApiError.isApiError(e) ? e.userMessage : 'Failed to load saved events.');
-    } finally {
-      loadingRef.current = false;
-      setLoading(false);
-      setRefreshing(false);
-    }
+    return eventApi
+      .savedEvents(0, PAGE_SIZE)
+      .then((r) => {
+        setItems(r.items);
+        setPage(0);
+        setHasMore(r.items.length === PAGE_SIZE);
+        setError(null);
+      })
+      .catch((e: unknown) => {
+        setError(
+          ApiError.isApiError(e) ? e.userMessage : "Failed to load saved events.",
+        );
+      })
+      .finally(() => {
+        loadingRef.current = false;
+        setLoading(false);
+        setRefreshing(false);
+      });
   }, [eventApi]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const refresh = useCallback(() => { setRefreshing(true); void load(); }, [load]);
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    void load();
+  }, [load]);
 
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingRef.current) return;
@@ -70,11 +87,15 @@ export default function SavedEventsScreen() {
     try {
       const next = page + 1;
       const r = await eventApi.savedEvents(next, PAGE_SIZE);
-      setItems(prev => [...prev, ...r.items.filter(i => !prev.some(p => p.event.id === i.event.id))]);
+      setItems((prev) => [
+        ...prev,
+        ...r.items.filter((i) => !prev.some((p) => p.event.id === i.event.id)),
+      ]);
       setPage(next);
       setHasMore(r.items.length === PAGE_SIZE);
-    } catch { /* footer retry via pull-to-refresh */ }
-    finally {
+    } catch {
+      /* footer retry via pull-to-refresh */
+    } finally {
       loadingRef.current = false;
       setLoadingMore(false);
     }
@@ -88,30 +109,50 @@ export default function SavedEventsScreen() {
   return (
     <ThemedView style={s.root}>
       <StatusBar style="auto" />
-      <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={s.safeArea} edges={["top", "left", "right"]}>
         <View style={[s.header, { borderBottomColor: theme.border }]}>
-          <Pressable onPress={safeBack} hitSlop={8} accessibilityRole="button" accessibilityLabel="Go back">
+          <Pressable
+            onPress={safeBack}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
             <Ionicons name="chevron-back" size={24} color={theme.text} />
           </Pressable>
-          <ThemedText type="title" style={s.headerTitle}>Saved events</ThemedText>
+          <ThemedText type="title" style={s.headerTitle}>
+            Saved events
+          </ThemedText>
           <View style={s.headerSpacer} />
         </View>
 
         <FlatList
           data={items}
-          renderItem={({ item }) => <EventCard item={item} onPress={openDetail} />}
-          keyExtractor={item => item.event.id}
+          renderItem={({ item }) => (
+            <EventCard item={item} onPress={openDetail} />
+          )}
+          keyExtractor={(item) => item.event.id}
           onEndReached={loadMore}
           onEndReachedThreshold={0.4}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={BrandColors.primary} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={refresh}
+              tintColor={BrandColors.primary}
+            />
           }
           ListHeaderComponent={
-            loading && !refreshing ? <EventsSkeleton /> :
-            error ? (
+            loading && !refreshing ? (
+              <EventsSkeleton />
+            ) : error ? (
               <View style={s.errorRow}>
-                <ThemedText style={s.errorText} themeColor="textSecondary">{error}</ThemedText>
-                <Pressable onPress={() => void load()} accessibilityRole="button" accessibilityLabel="Retry">
+                <ThemedText style={s.errorText} themeColor="textSecondary">
+                  {error}
+                </ThemedText>
+                <Pressable
+                  onPress={() => void load()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry"
+                >
                   <ThemedText style={s.retryText}>Retry</ThemedText>
                 </Pressable>
               </View>
@@ -125,7 +166,7 @@ export default function SavedEventsScreen() {
                 actionLabel="Browse events"
                 onAction={() => {
                   if (router.canGoBack()) router.back();
-                  else router.replace('/(app)/events' as never);
+                  else router.replace("/(app)/events" as never);
                 }}
               />
             ) : undefined
@@ -133,12 +174,16 @@ export default function SavedEventsScreen() {
           ListFooterComponent={
             loadingMore ? (
               <View style={s.footer}>
-                <ThemedText style={s.footerText} themeColor="textSecondary">Loading more…</ThemedText>
+                <ThemedText style={s.footerText} themeColor="textSecondary">
+                  Loading more…
+                </ThemedText>
               </View>
             ) : undefined
           }
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={items.length === 0 ? { flexGrow: 1 } : undefined}
+          contentContainerStyle={
+            items.length === 0 ? { flexGrow: 1 } : undefined
+          }
         />
       </SafeAreaView>
     </ThemedView>
@@ -149,15 +194,23 @@ const s = StyleSheet.create({
   root: { flex: 1 },
   safeArea: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.two,
-    paddingHorizontal: Spacing.three, paddingVertical: Spacing.two,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerTitle: { fontSize: 18 },
   headerSpacer: { width: 24 },
-  errorRow: { alignItems: 'center', gap: Spacing.two, paddingTop: Spacing.five, paddingHorizontal: Spacing.four },
-  errorText: { fontSize: 14, textAlign: 'center' },
-  retryText: { color: BrandColors.primary, fontWeight: '700', fontSize: 14 },
-  footer: { alignItems: 'center', paddingVertical: Spacing.three },
+  errorRow: {
+    alignItems: "center",
+    gap: Spacing.two,
+    paddingTop: Spacing.five,
+    paddingHorizontal: Spacing.four,
+  },
+  errorText: { fontSize: 14, textAlign: "center" },
+  retryText: { color: BrandColors.primary, fontWeight: "700", fontSize: 14 },
+  footer: { alignItems: "center", paddingVertical: Spacing.three },
   footerText: { fontSize: 13 },
 });

@@ -107,7 +107,9 @@ describe("countsSummary", () => {
   });
 
   it("includes the waitlist only when populated", () => {
-    expect(countsSummary(2, 1, 4)).toBe("2 going · 1 interested · 4 waitlisted");
+    expect(countsSummary(2, 1, 4)).toBe(
+      "2 going · 1 interested · 4 waitlisted",
+    );
   });
 });
 

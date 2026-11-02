@@ -13,7 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.diasporum.backend.businessaccounts.BusinessAccountApi;
+import com.diasporum.backend.businessaccounts.BusinessAccountsApi;
 import com.diasporum.backend.businessaccounts.internal.application.BusinessAccountService;
 import com.diasporum.backend.community.internal.application.CommunityService;
 import com.diasporum.backend.events.internal.application.EventService;
@@ -65,7 +65,7 @@ class EventsModuleIntegrationTest {
     @Autowired EventService service;
     @Autowired CommunityService communities;
     @Autowired BusinessAccountService businessService;
-    @Autowired BusinessAccountApi businessApi;
+    @Autowired BusinessAccountsApi businessApi;
     @Autowired ApplicationContext ctx;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
