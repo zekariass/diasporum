@@ -229,6 +229,14 @@ export default function ExploreScreen() {
               accessibilityRole="button" accessibilityLabel="Explore jobs" hitSlop={8}>
               <Ionicons name="briefcase-outline" size={24} color={BrandColors.primary} />
             </Pressable>
+            <Pressable
+              onPress={() => router.push('/(app)/businesses' as never)}
+              accessibilityRole="button"
+              accessibilityLabel="Explore businesses"
+              style={s.businessesLink}
+            >
+              <ThemedText style={s.businessesLinkText}>Businesses</ThemedText>
+            </Pressable>
           </View>
         </View>
         {/* Search */}
@@ -280,6 +288,8 @@ const s = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingHorizontal: Spacing.four, paddingVertical: Spacing.two, borderBottomWidth: StyleSheet.hairlineWidth },
   communityLabel: { fontSize: 12 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  businessesLink: { paddingHorizontal: Spacing.two, paddingVertical: 4, borderRadius: 14, backgroundColor: BrandColors.primarySurface },
+  businessesLinkText: { color: BrandColors.primaryDark, fontSize: 12, fontWeight: '700' },
   searchBar: { flexDirection: 'row', alignItems: 'center', margin: Spacing.four, borderWidth: 1, borderRadius: 10, paddingHorizontal: Spacing.three, height: 44 },
   searchIcon: { fontSize: 16, marginRight: Spacing.two },
   searchInput: { flex: 1, fontSize: 15, height: '100%' },
