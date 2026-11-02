@@ -1,6 +1,8 @@
 package com.diasporum.backend.media;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -30,6 +32,9 @@ public interface MediaApi {
      * (e.g. "can this user see this post").
      */
     String authorizedDownloadUrl(UUID assetId);
+
+    /** Batch variant for parent-authorized list and detail enrichment. */
+    Map<UUID, String> authorizedDownloadUrls(Collection<UUID> assetIds);
 
     /** Delete after the consuming module has detached its reference. */
     void deleteAsset(UUID requesterId, UUID assetId);

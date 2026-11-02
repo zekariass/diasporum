@@ -1,4 +1,5 @@
 import type { ApiClient } from "@/core/api/api-client";
+import { uploadMedia } from "@/shared/services/media-upload";
 import type {
   ApplicationPage,
   ApplicationStatus,
@@ -180,35 +181,5 @@ export async function uploadJobMedia(
   selection: MediaUploadSelection,
   purpose: "JOB" | "DOCUMENT",
 ): Promise<string> {
-  const fileResponse = await fetch(selection.uri);
-  if (!fileResponse.ok) throw new Error("Could not read the selected file.");
-  const file = await fileResponse.blob();
-  const init = await client.post<{ assetId: string; uploadUrl: string }>(
-    "/api/v1/media/uploads",
-    {
-      purpose,
-      mimeType: selection.mimeType,
-      declaredSizeBytes: file.size,
-    },
-    { authenticated: true },
-  );
-  try {
-    const upload = await fetch(init.uploadUrl, {
-      method: "PUT",
-      body: file,
-      headers: { "Content-Type": selection.mimeType },
-    });
-    if (!upload.ok) throw new Error("File upload failed.");
-    await client.post(
-      `/api/v1/media/uploads/${init.assetId}/complete`,
-      { declaredSizeBytes: file.size },
-      { authenticated: true },
-    );
-    return init.assetId;
-  } catch (error) {
-    void client
-      .delete(`/api/v1/media/${init.assetId}`, { authenticated: true })
-      .catch(() => {});
-    throw error;
-  }
+  return uploadMedia(client, selection, purpose);
 }

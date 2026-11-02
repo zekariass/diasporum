@@ -3,6 +3,8 @@ package com.diasporum.backend.media.internal.application;
 import com.diasporum.backend.media.internal.infrastructure.integration.storage.MediaProperties;
 import com.diasporum.backend.media.internal.infrastructure.integration.storage.StorageClient;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,6 +32,7 @@ public class MediaService {
             Map.entry("BUSINESS", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("PROPERTY", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("SPARE_BAG_LISTING", List.of("image/jpeg", "image/png", "image/webp")),
+            Map.entry("VEHICLE", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("FEED_VIDEO", List.of("video/mp4", "video/quicktime")),
             Map.entry("MESSAGE_AUDIO", List.of("audio/mpeg", "audio/ogg", "audio/mp4")),
             Map.entry("DOCUMENT", List.of("application/pdf", "application/msword",
@@ -208,6 +211,35 @@ public class MediaService {
         String key = jdbc.queryForObject(
                 "SELECT object_key FROM media_objects WHERE id=?", String.class, assetId);
         return storage().presignGet(key, props.downloadUrlTtl());
+    }
+
+    /** Batch parent-authorized access with one metadata query. */
+    public Map<UUID, String> authorizedDownloadUrls(Collection<UUID> assetIds) {
+        if (assetIds == null || assetIds.isEmpty()) {
+            return Map.of();
+        }
+        var ids = assetIds.stream().distinct().toList();
+        String placeholders = String.join(",",
+                java.util.Collections.nCopies(ids.size(), "?"));
+        record StoredAsset(UUID id, String key, String status) {
+        }
+        var stored = jdbc.query("SELECT id,object_key,status::text FROM media_objects "
+                        + "WHERE id IN (" + placeholders + ")",
+                (rs, i) -> new StoredAsset(rs.getObject("id", UUID.class),
+                        rs.getString("object_key"), rs.getString("status")),
+                ids.toArray());
+        if (stored.size() != ids.size()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND");
+        }
+        var storage = storage();
+        Map<UUID, String> urls = new LinkedHashMap<>();
+        for (var asset : stored) {
+            if (!"READY".equals(asset.status())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "MEDIA_NOT_READY");
+            }
+            urls.put(asset.id(), storage.presignGet(asset.key(), props.downloadUrlTtl()));
+        }
+        return urls;
     }
 
     // ---- deletion ----

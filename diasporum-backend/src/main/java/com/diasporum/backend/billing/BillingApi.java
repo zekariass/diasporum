@@ -23,6 +23,23 @@ public interface BillingApi {
             String featureKey, String targetType, UUID targetId,
             String idempotencyKey);
 
+    /**
+     * Feature-generic entitlement consumption with explicit quantities.
+     * Grants take precedence over subscription allowances and a replayed
+     * idempotency key returns the original usage record. Denials raise
+     * ResponseStatusException instead of returning a result.
+     * Exactly one of {@code userId} and {@code businessAccountId} is required.
+     */
+    QuotaConsumption consume(ConsumptionCommand command);
+
+    record ConsumptionCommand(UUID userId, UUID businessAccountId,
+            String featureKey, long quantity, String targetType, UUID targetId,
+            String idempotencyKey) {
+    }
+
+    record QuotaConsumption(UUID usageRecordId, boolean alreadyConsumed) {
+    }
+
     record EntitlementDecision(boolean allowed, String reason,
             long remaining) {
     }
