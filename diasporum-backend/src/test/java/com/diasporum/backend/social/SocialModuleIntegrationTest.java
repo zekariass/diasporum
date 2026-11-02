@@ -32,8 +32,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
-/** Social module on real migrated PostgreSQL — v10.12: friendships are derived
- * from reciprocal user_follows via user_mutual_connections. */
+/** Social module on real migrated PostgreSQL: follows and durable friendships
+ * remain independent, including during block and matchmaking workflows. */
 @SpringBootTest
 @Testcontainers
 @org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -61,7 +61,7 @@ class SocialModuleIntegrationTest {
 
     @BeforeEach
     void clean() {
-        for (String t : new String[]{"user_follows", "user_blocks",
+        for (String t : new String[]{"friendships", "user_follows", "user_blocks",
                 "user_mutes", "user_privacy_settings",
                 "external_identities", "profiles"}) {
             jdbc.update("DELETE FROM " + t);
@@ -89,7 +89,7 @@ class SocialModuleIntegrationTest {
         social.follow(u2, u1);
         var r = api.relationship(u1, u2);
         assertTrue(r.following() && r.followedBy() && r.mutual());
-        assertTrue(r.friends());                    // mutual follow IS the connection
+        assertFalse(r.friends());                   // mutual follow is not friendship
     }
 
     @Test
@@ -114,34 +114,33 @@ class SocialModuleIntegrationTest {
 
     @Test
     void friendshipDirectAndMatchmaking() {
-        // Direct: a friend intent follows the target; the connection only
-        // materializes once the target follows back (v10.12 derived model).
         social.addFriend(u1, u2);
-        assertFalse(api.isFriend(u1, u2));         // not yet mutual
         social.follow(u2, u1);
-        assertTrue(api.isFriend(u1, u2));
-        assertTrue(api.isFriend(u2, u1));         // unordered
-        assertTrue(api.friendIds(u1).contains(u2));
-        // Matchmaking: a mutual match establishes both edges at once.
+        assertFalse(api.isFriend(u1, u2));         // reciprocal follows stay separate
         api.establishMatchmakingFriendship(u1, u3);
         api.establishMatchmakingFriendship(u1, u3);   // idempotent
         assertTrue(api.isFriend(u1, u3));
+        assertTrue(api.isFriend(u3, u1));         // unordered
+        assertTrue(api.friendIds(u1).contains(u3));
         Integer edges = jdbc.queryForObject(
                 "SELECT count(*) FROM user_follows WHERE (follower_user_id=?::uuid"
                         + " AND followed_user_id=?::uuid) OR (follower_user_id=?::uuid"
                         + " AND followed_user_id=?::uuid)",
                 Integer.class, u1, u3, u3, u1);
-        assertEquals(2, edges);                   // both directions, exactly once
-        api.dissolveMatchmakingFriendship(u1, u3);
-        assertFalse(api.isFriend(u1, u3));
-        assertTrue(api.isFriend(u1, u2));         // direct connection preserved
+        assertEquals(0, edges);                   // no follow side effects
+        Integer friendships = jdbc.queryForObject(
+                "SELECT count(*) FROM friendships WHERE user_a_id=least(?::uuid,?::uuid)"
+                        + " AND user_b_id=greatest(?::uuid,?::uuid)",
+                Integer.class, u1, u3, u1, u3);
+        assertEquals(1, friendships);
     }
 
     @Test
     void blockRestrictionsHistoryAndBlockerNotRevealed() {
         social.follow(u1, u2);
         social.follow(u2, u1);                     // mutual connection
-        social.block(u1, u2);                      // severs both follow edges
+        api.establishMatchmakingFriendship(u1, u2);
+        social.block(u1, u2);                      // severs follows and friendship
         assertTrue(api.isBlockedByMe(u1, u2));
         assertFalse(api.isBlockedByMe(u2, u1));   // blocked user cannot learn of the block
         assertFalse(api.relationship(u2, u1).blockedByMe());
@@ -192,7 +191,9 @@ class SocialModuleIntegrationTest {
         assertEquals(2, api.followerCount(u2));
         assertEquals(1, api.followingCount(u1));
         social.addFriend(u1, u3);
-        social.follow(u3, u1);                     // reciprocal → mutual connection
+        social.follow(u3, u1);                     // reciprocal → mutual connection only
+        assertEquals(0, api.friendCount(u1));
+        api.establishMatchmakingFriendship(u1, u3);
         assertEquals(1, api.friendCount(u1));
         var asU2 = authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(u2, UUID.randomUUID(), "s2@test.com", List.of()), null, List.of()));
         mvc.perform(get("/api/v1/social/followers").with(asU2))
@@ -218,10 +219,9 @@ class SocialModuleIntegrationTest {
         }
         pool.shutdown();
         Integer n = jdbc.queryForObject(
-                "SELECT count(*) FROM user_mutual_connections WHERE"
-                        + " (user_a_id=?::uuid AND user_b_id=?::uuid)"
-                        + " OR (user_a_id=?::uuid AND user_b_id=?::uuid)",
-                Integer.class, u1, u2, u2, u1);
+                "SELECT count(*) FROM friendships WHERE user_a_id=least(?::uuid,?::uuid)"
+                        + " AND user_b_id=greatest(?::uuid,?::uuid)",
+                Integer.class, u1, u2, u1, u2);
         assertEquals(1, n);                       // race-safe: exactly one connection
         assertTrue(api.isFriend(u1, u2));
     }

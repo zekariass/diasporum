@@ -9,14 +9,27 @@ import org.springframework.stereotype.Service;
 public class MessagingApiImpl implements MessagingApi {
 
     private final MessagingService service;
+    private final MatchConversationService matchConversations;
 
-    public MessagingApiImpl(MessagingService service) {
+    public MessagingApiImpl(MessagingService service,
+            MatchConversationService matchConversations) {
         this.service = service;
+        this.matchConversations = matchConversations;
     }
 
     @Override
     public UUID ensureAcceptedGeneralConversation(UUID userAId, UUID userBId) {
         return service.ensureAcceptedGeneralConversation(userAId, userBId);
+    }
+
+    @Override
+    public UUID ensureAcceptedGeneralConversation(UUID userAId, UUID userBId, UUID matchId) {
+        return matchConversations.ensureAcceptedGeneralConversation(userAId, userBId, matchId);
+    }
+
+    @Override
+    public java.util.Optional<UUID> conversationIdForMatch(UUID matchId) {
+        return matchConversations.conversationIdForMatch(matchId);
     }
 
     @Override

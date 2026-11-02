@@ -56,8 +56,8 @@ public class OutboxDispatcher {
     }
 
     /** Claimed-but-not-yet-published event. */
-    public record ClaimedEvent(UUID id, UUID conversationId, String eventType,
-                               String payloadJson, int attemptCount) {
+    public record ClaimedEvent(UUID id, UUID aggregateId, String aggregateType,
+                               String eventType, String payloadJson, int attemptCount) {
     }
 
     /**
@@ -97,12 +97,13 @@ public class OutboxDispatcher {
                 + " FOR UPDATE SKIP LOCKED)"
                 + " UPDATE outbox_events o SET locked_at=now()"
                 + " FROM picked WHERE o.id=picked.id"
-                + " RETURNING o.id,o.aggregate_id,o.event_type,o.payload::text,"
+                + " RETURNING o.id,o.aggregate_id,o.aggregate_type,o.event_type,o.payload::text,"
                 + "o.attempt_count";
         return tx.execute(status -> jdbc.query(sql,
                 (rs, i) -> new ClaimedEvent(
                         rs.getObject("id", UUID.class),
                         rs.getObject("aggregate_id", UUID.class),
+                        rs.getString("aggregate_type"),
                         rs.getString("event_type"),
                         rs.getString("payload"),
                         rs.getInt("attempt_count")),
@@ -115,7 +116,8 @@ public class OutboxDispatcher {
      * a member revoked between enqueue and dispatch simply never receives it.
      */
     void publish(ClaimedEvent e) throws Exception {
-        Set<UUID> recipients = recipientsFor(e.conversationId());
+        Set<UUID> recipients = "USER".equals(e.aggregateType())
+                ? Set.of(e.aggregateId()) : recipientsFor(e.aggregateId());
         if (recipients.isEmpty()) {
             // Conversation deleted between enqueue and dispatch — nothing to
             // deliver; mark published so the queue does not stall.

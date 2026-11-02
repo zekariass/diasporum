@@ -111,6 +111,31 @@ export default function ProfileTabScreen() {
           </Pressable>
 
           <Pressable
+            onPress={() => router.push("/(app)/matchmaking" as never)}
+            accessibilityRole="button"
+            accessibilityLabel="Open Matchmaking"
+            style={({ pressed }) => [
+              styles.businessCard,
+              { backgroundColor: theme.primarySurface },
+              pressed && styles.pressed,
+            ]}
+          >
+            <View style={[styles.businessIcon, { backgroundColor: theme.background }]}>
+              <Ionicons name="heart" size={25} color={theme.primary} />
+            </View>
+            <View style={styles.businessCopy}>
+              <ThemedText style={styles.businessTitle}>Matchmaking</ThemedText>
+              <ThemedText style={styles.businessDescription} themeColor="textSecondary">
+                Discover compatible adults with privacy-safe profiles.
+              </ThemedText>
+              <ThemedText style={[styles.businessAction, { color: theme.primary }]}>
+                Open Matchmaking
+              </ThemedText>
+            </View>
+            <Ionicons name="chevron-forward" size={21} color={theme.primary} />
+          </Pressable>
+
+          <Pressable
             onPress={() => router.push("/(app)/jobs" as never)}
             accessibilityRole="button"
             accessibilityLabel="Explore jobs"

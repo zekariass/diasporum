@@ -52,16 +52,11 @@ public interface SocialApi {
     List<UUID> blockedIds(UUID userId);
 
     /**
-     * Establish the mutual connection for a matchmaking match by inserting
-     * reciprocal follow edges. INTERNAL module call only (matchmaking).
-     * Idempotent and race-safe — the follow-policy trigger serializes on the
-     * user pair, and duplicate edges are ignored.
+     * Establish the durable friendship for a matchmaking match. This is
+     * idempotent, race-safe and independent of directional follow edges.
+     * Unmatching deliberately has no friendship-dissolution operation.
      */
     void establishMatchmakingFriendship(UUID userA, UUID userB);
-
-    /** Remove the reciprocal follow edges created by a match — called by
-     * unmatching. Message history is untouched. */
-    void dissolveMatchmakingFriendship(UUID userA, UUID userB);
 
     record RelationshipView(boolean following, boolean followedBy,
             boolean mutual, boolean friends, boolean blockedByMe) {

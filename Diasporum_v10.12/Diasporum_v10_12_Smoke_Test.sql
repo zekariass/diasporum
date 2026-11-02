@@ -39,11 +39,13 @@ BEGIN
       RAISE EXCEPTION 'Account restriction must revoke active sessions';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname='postgis') THEN RAISE EXCEPTION 'PostGIS extension is missing'; END IF;
-  IF to_regclass('public.user_follows') IS NULL OR to_regclass('public.user_mutual_connections') IS NULL THEN RAISE EXCEPTION 'Follow-only social model is incomplete'; END IF;
-  IF to_regclass('public.friend_requests') IS NOT NULL OR to_regclass('public.friendships') IS NOT NULL THEN RAISE EXCEPTION 'Deprecated friend request/friendship tables must not exist in v10.12'; END IF;
+  IF to_regclass('public.user_follows') IS NULL OR to_regclass('public.user_mutual_connections') IS NULL
+     OR to_regclass('public.friendships') IS NULL THEN RAISE EXCEPTION 'Follow/friendship social model is incomplete'; END IF;
+  IF to_regclass('public.friend_requests') IS NOT NULL THEN RAISE EXCEPTION 'Unapproved friend request table must not exist'; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_user_follow_policy' AND NOT tgisinternal)
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_cleanup_relationships_on_block' AND NOT tgisinternal) THEN RAISE EXCEPTION 'Follow/block integrity triggers are missing'; END IF;
-  IF pg_get_functiondef('create_match_after_mutual_like()'::regprocedure) ILIKE '%friendship%' THEN RAISE EXCEPTION 'Matchmaking must not create generic friendship records'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.friendships'::regclass AND contype='p')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_matchmaking_swipe_immutable' AND NOT tgisinternal) THEN RAISE EXCEPTION 'Durable friendship or guarded swipe lifecycle is incomplete'; END IF;
   IF to_regclass('public.voice_rooms') IS NULL OR to_regclass('public.voice_room_sessions') IS NULL THEN RAISE EXCEPTION 'Persistent room/session split is missing'; END IF;
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='voice_rooms' AND column_name IN ('expires_at','ended_at','inactive_since')) THEN RAISE EXCEPTION 'Persistent voice_rooms must not hold live-session expiry/end fields'; END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='voice_rooms' AND column_name='owner_user_id')
@@ -121,7 +123,7 @@ ROLLBACK;
 -- Required API/integration scenarios (must be run by the application test suite):
 -- 1. A follows B without a reverse edge; only when B follows A too does user_mutual_connections show the canonical pair.
 -- 2. When either user blocks the other, both follow edges are removed, a matching pair is blocked/closed, and future follow/discovery/DM calls are denied.
--- 3. Matchmaking mutual LIKE creates one MATCHED row and a normal accepted GENERAL conversation, but never creates/removes user_follows; unmatch preserves chat history and independent follows.
+-- 3. Matchmaking mutual LIKE creates one MATCHED row, one canonical friendships row and a reused accepted GENERAL conversation without changing user_follows; unmatch preserves friendship, chat history and ordinary messaging subject to safety/privacy rules.
 -- 4. A room with no live session remains in All Rooms and keeps its room ID after a session ends/expires; the next live session has a new ID and empty comments.
 -- 5. Session comments survive INACTIVE/recovery grace. Terminal ENDED/EXPIRED purges comments, removes queued not-yet-published comment-created events, and emits VOICE_ROOM_COMMENTS_CLEARED; late events must be ignored by session ID.
 -- 6. Race concurrent session joins/promotions and host transfer. Confirm total participants/speakers never exceed limits, a participant cannot have duplicate active rows, and only one active HOST exists.

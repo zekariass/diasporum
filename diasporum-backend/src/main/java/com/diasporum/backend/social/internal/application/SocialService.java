@@ -10,9 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-/** Follow/block logic over user_follows and user_blocks. Mutual connections
- * ("friends") are derived from reciprocal follows per the v10.12 schema —
- * no separate friendship edge is stored. */
+/** Follow, durable friendship and block logic. Mutual-follow state remains
+ * independent from the canonical friendships pair. */
 @Service
 public class SocialService {
 
@@ -115,57 +114,52 @@ public class SocialService {
         return n == null ? 0 : n;
     }
 
-    // ---- mutual connections ("friends" — derived from reciprocal follows) ----
+    // ---- durable friendships and independent mutual-follow state ----
 
-    /** Expresses a friend intent by following the target. The connection only
-     * materializes once the target follows back — v10.12 stores no unilateral
-     * friendship edge. */
+    /** Legacy friend-intent endpoint: it remains a directional follow action. */
     @Transactional
     public void addFriend(UUID actor, UUID target) {
         follow(actor, target);
     }
 
-    /** Removes the actor's follow edge, breaking the mutual connection. The
-     * target's own follow edge (if any) can only be severed by them or by a
-     * block. */
+    /** Legacy removal endpoint: it removes only the actor's follow edge. */
     @Transactional
     public void removeFriend(UUID actor, UUID target) {
         unfollow(actor, target);
     }
 
     public boolean isFriend(UUID a, UUID b) {
-        return isFollowing(a, b) && isFollowing(b, a);
+        return exists("SELECT 1 FROM friendships WHERE user_a_id=least(?::uuid,?::uuid)"
+                + " AND user_b_id=greatest(?::uuid,?::uuid)", a, b, a, b);
     }
 
     public List<UUID> friends(UUID userId, int page, int size) {
         return jdbc.queryForList("SELECT CASE WHEN user_a_id=? THEN user_b_id"
-                + " ELSE user_a_id END FROM user_mutual_connections"
-                + " WHERE user_a_id=? OR user_b_id=? ORDER BY mutual_since DESC"
+                + " ELSE user_a_id END FROM friendships"
+                + " WHERE user_a_id=? OR user_b_id=? ORDER BY created_at DESC"
                 + " LIMIT ? OFFSET ?",
                 UUID.class, userId, userId, userId, size, page * size);
     }
 
     public int friendCount(UUID userId) {
-        Integer n = jdbc.queryForObject("SELECT count(*) FROM user_mutual_connections"
+        Integer n = jdbc.queryForObject("SELECT count(*) FROM friendships"
                 + " WHERE user_a_id=? OR user_b_id=?", Integer.class, userId, userId);
         return n == null ? 0 : n;
     }
 
-    /** A mutual matchmaking match creates reciprocal follow edges — that IS the
-     * connection record under v10.12. Idempotent and race-safe. */
+    /** Creates exactly one durable pair without creating or removing follows. */
     @Transactional
     public void establishMatchmakingFriendship(UUID a, UUID b) {
         requireNotSelf(a, b, "FRIEND");
-        insertFollow(a, b);
-        insertFollow(b, a);
-    }
-
-    /** Unmatching removes the reciprocal follow edges created by the match. */
-    @Transactional
-    public void dissolveMatchmakingFriendship(UUID a, UUID b) {
-        jdbc.update("DELETE FROM user_follows WHERE (follower_user_id=? AND"
-                + " followed_user_id=?) OR (follower_user_id=? AND"
-                + " followed_user_id=?)", a, b, b, a);
+        requireTarget(a);
+        requireTarget(b);
+        requireNotBlocked(a, b, "FRIEND");
+        jdbc.query("SELECT pg_advisory_xact_lock(hashtextextended("
+                + "least(?::text,?::text)||':'||greatest(?::text,?::text),0))", rs -> null,
+                a.toString(), b.toString(), a.toString(), b.toString());
+        jdbc.update("INSERT INTO friendships(user_a_id,user_b_id)"
+                + " VALUES(least(?::uuid,?::uuid),greatest(?::uuid,?::uuid))"
+                + " ON CONFLICT(user_a_id,user_b_id) DO NOTHING", a, b, a, b);
     }
 
     // ---- blocks ----
@@ -176,8 +170,7 @@ public class SocialService {
         requireTarget(target);
         jdbc.update("INSERT INTO user_blocks(blocker_user_id,blocked_user_id)"
                 + " VALUES(?,?) ON CONFLICT DO NOTHING", actor, target);
-        // Blocking severs visible follow edges in both directions; friendship
-        // history is preserved per approved semantics (documented in report).
+        // The database block trigger also severs follows and durable friendship.
         jdbc.update("DELETE FROM user_follows WHERE (follower_user_id=? AND"
                 + " followed_user_id=?) OR (follower_user_id=? AND followed_user_id=?)",
                 actor, target, target, actor);
@@ -231,7 +224,7 @@ public class SocialService {
     public RelationshipView relationship(UUID viewer, UUID target) {
         boolean f = isFollowing(viewer, target);
         boolean fb = isFollowing(target, viewer);
-        return new RelationshipView(f, fb, f && fb, f && fb,
+        return new RelationshipView(f, fb, f && fb, isFriend(viewer, target),
                 isBlockedByMe(viewer, target));
     }
 }

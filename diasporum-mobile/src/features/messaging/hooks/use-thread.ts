@@ -213,6 +213,8 @@ export function useThread(conversationId: string, viewerUserId: string) {
       realtime.on('CONVERSATION_UPDATED', e => {
         if (e.conversationId === conversationId) void refreshDetail();
       }),
+      realtime.on('MATCHMAKING_MATCHED', () => void refreshDetail()),
+      realtime.on('MATCHMAKING_UNMATCHED', () => void refreshDetail()),
       realtime.on('TYPING_STARTED', e => {
         if (e.conversationId !== conversationId || e.userId === viewerUserId) return;
         const uid = e.userId!;

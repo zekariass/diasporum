@@ -225,6 +225,10 @@ export default function ExploreScreen() {
           <ThemedText type="title">Explore</ThemedText>
           <View style={s.headerActions}>
             <ThemedText style={s.communityLabel} themeColor="textSecondary">{communityName}</ThemedText>
+            <Pressable onPress={() => router.push('/(app)/matchmaking' as never)}
+              accessibilityRole="button" accessibilityLabel="Open Matchmaking" hitSlop={8}>
+              <Ionicons name="heart-outline" size={24} color={BrandColors.primary} />
+            </Pressable>
             <Pressable onPress={() => router.push('/(app)/jobs' as never)}
               accessibilityRole="button" accessibilityLabel="Explore jobs" hitSlop={8}>
               <Ionicons name="briefcase-outline" size={24} color={BrandColors.primary} />
