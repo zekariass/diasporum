@@ -54,6 +54,9 @@ export function FeatureNav() {
       case "spare-bag":
         router.push("/(app)/spare-bag" as never);
         return;
+      case "property":
+        router.push("/(app)/properties" as never);
+        return;
       default:
         Alert.alert("Coming soon", `${label} isn't available yet.`);
     }

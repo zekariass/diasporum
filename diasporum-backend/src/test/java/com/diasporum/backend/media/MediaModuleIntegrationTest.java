@@ -159,7 +159,7 @@ class MediaModuleIntegrationTest {
                 "MESSAGE_DOCUMENT", "application/pdf",
                 "JOB", "image/jpeg",
                 "BUSINESS", "image/png",
-                "PROPERTY", "image/jpeg",
+                "PROPERTY", "image/webp",
                 "SPARE_BAG_LISTING", "image/webp");
 
         for (var entry : purposes.entrySet()) {
