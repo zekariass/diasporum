@@ -75,6 +75,14 @@ diasporum:
     # Default false per v10.12: published-resource owners are contactable;
     # dm_permission governs GENERAL conversations only. Blocks/mutes always apply.
     context-respects-dm-permission: ${DIASPORUM_MSG_CONTEXT_RESPECTS_DM:false}
+    # M4: attachment limits (backend is authoritative).
+    max-attachments-per-message: ${DIASPORUM_MSG_MAX_ATTACHMENTS:4}
+    # M4: seconds before a TYPING_STARTED is considered stale on the client.
+    typing-expiry-seconds: ${DIASPORUM_MSG_TYPING_EXPIRY:8}
+    # M4: seconds of heartbeat silence before a user is marked offline.
+    presence-timeout-seconds: ${DIASPORUM_MSG_PRESENCE_TIMEOUT:60}
+    # M4: interval between presence expiry scheduler runs (ISO-8601 duration).
+    presence-check-interval: ${DIASPORUM_MSG_PRESENCE_CHECK_INTERVAL:PT30S}
     # Transactional-outbox dispatcher (M3) — polls outbox_events for
     # destination='ABLY' rows and publishes one Ably message per participant
     # channel (user:{id}; business side → all active members). Claimed rows

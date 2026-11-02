@@ -1,15 +1,12 @@
 /**
  * Messaging API types — mirror MessagingService records exactly.
- * Verified against DirectConversationController, DirectMessageController,
- * MessageRequestController and MessagingService.java (v10.12 M1).
+ * M4: added AttachmentView, extended MessageView with attachments,
+ * added typing/presence event types.
  */
 
-/** MessagingService.ParticipantView — one canonical side of a conversation. */
 export interface ParticipantView {
   side: 'A' | 'B';
-  /** Canonical endpoint user id (for business sides: the representative). */
   userId: string;
-  /** Non-null when this side is a Business Account. */
   businessAccountId: string | null;
   displayName: string;
   business: boolean;
@@ -18,17 +15,10 @@ export interface ParticipantView {
 export type ConversationStatus = 'REQUESTED' | 'ACCEPTED' | 'DECLINED' | 'CLOSED';
 
 export type ConversationContextType =
-  | 'GENERAL'
-  | 'PROPERTY_LISTING'
-  | 'VEHICLE_LISTING'
-  | 'BUSINESS_PROFILE'
-  | 'EVENT'
-  | 'JOB_LISTING'
-  | 'SPARE_BAG_CONTACT'
-  | 'SERVICE_REQUEST'
+  | 'GENERAL' | 'PROPERTY_LISTING' | 'VEHICLE_LISTING' | 'BUSINESS_PROFILE'
+  | 'EVENT' | 'JOB_LISTING' | 'SPARE_BAG_CONTACT' | 'SERVICE_REQUEST'
   | 'COMMUNITY_HELP_POST';
 
-/** MessagingService.ConversationView — inbox row and thread header shape. */
 export interface ConversationView {
   id: string;
   contextType: ConversationContextType;
@@ -43,7 +33,6 @@ export interface ConversationView {
   archivedAt: string | null;
   mutedUntil: string | null;
   pendingRequestId: string | null;
-  /** INCOMING when the pending request was sent to me, OUTGOING when sent by me. */
   pendingRequestDirection: 'INCOMING' | 'OUTGOING' | null;
   createdAt: string;
 }
@@ -53,7 +42,15 @@ export interface ConversationPage {
   nextCursor: string | null;
 }
 
-/** MessagingService.MessageView — a durable direct message. */
+/** M4: metadata for a single attachment. No download URL embedded here —
+ * use the dedicated download-url endpoint. */
+export interface AttachmentView {
+  assetId: string;
+  purpose: 'MESSAGE_IMAGE' | 'MESSAGE_DOCUMENT';
+  mimeType: string;
+  sizeBytes: number | null;
+}
+
 export interface MessageView {
   id: string;
   conversationId: string;
@@ -65,11 +62,12 @@ export interface MessageView {
   replyToMessageId: string | null;
   createdAt: string;
   editedAt: string | null;
+  /** M4: non-empty when messageType === 'MEDIA'. */
+  attachments: AttachmentView[];
 }
 
 export interface MessagePage {
   items: MessageView[];
-  /** Cursor for the next page of older messages (a sequence number). */
   nextCursor: string | null;
 }
 
@@ -79,7 +77,6 @@ export interface UnreadCountView {
   total: number;
 }
 
-/** MessagingService.MessageRequestView — an incoming GENERAL first-contact request. */
 export interface MessageRequestView {
   id: string;
   conversationId: string;
@@ -91,13 +88,11 @@ export interface MessageRequestView {
   respondedAt: string | null;
 }
 
-/** GET /conversations/{id} response — conversation + both side identities. */
 export interface ConversationDetail {
   conversation: ConversationView;
   participants: ParticipantView[];
 }
 
-/** POST /conversations request body — exactly one recipient identity. */
 export interface CreateConversationRequest {
   contextType?: ConversationContextType;
   contextId?: string;
@@ -106,4 +101,45 @@ export interface CreateConversationRequest {
   actingBusinessAccountId?: string;
   initialMessage?: string;
   clientMessageId?: string;
+}
+
+// ---- M4: upload ----
+
+export interface UploadInitResult {
+  assetId: string;
+  uploadUrl: string;
+}
+
+export type UploadStatus = 'idle' | 'uploading' | 'done' | 'failed';
+
+export interface PendingAttachment {
+  localId: string;
+  uri: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  purpose: 'MESSAGE_IMAGE' | 'MESSAGE_DOCUMENT';
+  status: UploadStatus;
+  progress: number;       // 0-1
+  assetId: string | null; // set when upload completes
+  error: string | null;
+}
+
+// ---- M4: typing ----
+
+export type MessagingEventType =
+  | 'MESSAGE_CREATED' | 'MESSAGE_READ' | 'CONVERSATION_UPDATED'
+  | 'TYPING_STARTED' | 'TYPING_STOPPED'
+  | 'PRESENCE_ONLINE' | 'PRESENCE_OFFLINE';
+
+export interface TypingEvent {
+  type: 'TYPING_STARTED' | 'TYPING_STOPPED';
+  conversationId: string;
+  userId: string;
+}
+
+export interface PresenceEvent {
+  type: 'PRESENCE_ONLINE' | 'PRESENCE_OFFLINE';
+  userId: string;
+  online: boolean;
 }
