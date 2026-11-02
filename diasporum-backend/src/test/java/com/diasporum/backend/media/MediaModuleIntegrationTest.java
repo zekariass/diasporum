@@ -153,6 +153,20 @@ class MediaModuleIntegrationTest {
     }
 
     @Test
+    void messagingAndJobsUploadPurposesRemainEnabled() {
+        var job = service.initiate(u1, "JOB", "image/jpeg", 1000L);
+        var messageImage = service.initiate(u1, "MESSAGE_IMAGE", "image/webp", 1000L);
+        var messageDocument = service.initiate(u1, "MESSAGE_DOCUMENT", "application/pdf", 1000L);
+
+        assertEquals("JOB", service.complete(u1, job.assetId(), 1000L).purpose());
+        assertEquals("MESSAGE_IMAGE", service.complete(u1, messageImage.assetId(), 1000L).purpose());
+        assertEquals("MESSAGE_DOCUMENT", service.complete(u1, messageDocument.assetId(), 1000L).purpose());
+        assertTrue(api.validateForAttach(job.assetId(), u1, "JOB"));
+        assertTrue(api.validateForAttach(messageImage.assetId(), u1, "MESSAGE_IMAGE"));
+        assertTrue(api.validateForAttach(messageDocument.assetId(), u1, "MESSAGE_DOCUMENT"));
+    }
+
+    @Test
     void httpLifecycleWorks() throws Exception {
         var asU1 = authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(u1, UUID.randomUUID(), "m1@test.com", List.of()), null, List.of()));
         var res = mvc.perform(post("/api/v1/media/uploads").with(asU1)
