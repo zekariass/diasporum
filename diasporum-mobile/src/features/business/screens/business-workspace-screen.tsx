@@ -179,6 +179,11 @@ export default function BusinessWorkspaceScreen() {
                 icon="storefront-outline"
                 title="Business Profiles"
                 detail="Public profiles, branches, locations, hours, and media"
+                onPress={() =>
+                  router.push(
+                    `/(app)/businesses/manage?accountId=${accountId}` as never,
+                  )
+                }
               />
               <ManagementCard
                 visible={workspace.capabilities.manageListings}
@@ -221,8 +226,8 @@ export default function BusinessWorkspaceScreen() {
                 style={styles.integrationText}
                 themeColor="textSecondary"
               >
-                These management modules require their dedicated backend APIs.
-                No unavailable operation is presented as ready.
+                Business Profiles are ready. Unavailable management modules remain
+                marked Pending API and are not presented as functional.
               </ThemedText>
             </View>
 
@@ -243,16 +248,22 @@ function ManagementCard({
   icon,
   title,
   detail,
+  onPress,
 }: {
   visible: boolean;
   icon: IconName;
   title: string;
   detail: string;
+  onPress?: () => void;
 }) {
   const theme = useTheme();
   if (!visible) return null;
   return (
-    <View
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
       style={[
         styles.managementCard,
         { backgroundColor: theme.backgroundElement, borderColor: theme.border },
@@ -267,10 +278,14 @@ function ManagementCard({
           {detail}
         </ThemedText>
       </View>
-      <ThemedText style={styles.pendingText} themeColor="textSecondary">
-        Pending API
-      </ThemedText>
-    </View>
+      {onPress ? (
+        <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+      ) : (
+        <ThemedText style={styles.pendingText} themeColor="textSecondary">
+          Pending API
+        </ThemedText>
+      )}
+    </Pressable>
   );
 }
 

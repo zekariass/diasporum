@@ -51,6 +51,7 @@ const OPTIONS: CreateOption[] = [
     description: "List a home, apartment, or rental",
     icon: "business-outline",
     color: "#2563EB",
+    route: "/(app)/properties/create",
   },
   {
     key: "vehicle",
@@ -58,6 +59,7 @@ const OPTIONS: CreateOption[] = [
     description: "Offer a car or other vehicle",
     icon: "car-outline",
     color: "#0891B2",
+    route: "/(app)/vehicles/create",
   },
   {
     key: "spare-bag",

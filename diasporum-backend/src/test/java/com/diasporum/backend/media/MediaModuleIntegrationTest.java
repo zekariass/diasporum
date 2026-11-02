@@ -153,17 +153,36 @@ class MediaModuleIntegrationTest {
     }
 
     @Test
-    void messagingAndJobsUploadPurposesRemainEnabled() {
-        var job = service.initiate(u1, "JOB", "image/jpeg", 1000L);
-        var messageImage = service.initiate(u1, "MESSAGE_IMAGE", "image/webp", 1000L);
-        var messageDocument = service.initiate(u1, "MESSAGE_DOCUMENT", "application/pdf", 1000L);
+    void sharedMediaLifecycleRemainsEnabledForAllConsumerPurposes() {
+        var purposes = Map.of(
+                "MESSAGE_IMAGE", "image/webp",
+                "MESSAGE_DOCUMENT", "application/pdf",
+                "JOB", "image/jpeg",
+                "BUSINESS", "image/png",
+                "PROPERTY", "image/webp",
+                "SPARE_BAG_LISTING", "image/webp");
 
-        assertEquals("JOB", service.complete(u1, job.assetId(), 1000L).purpose());
-        assertEquals("MESSAGE_IMAGE", service.complete(u1, messageImage.assetId(), 1000L).purpose());
-        assertEquals("MESSAGE_DOCUMENT", service.complete(u1, messageDocument.assetId(), 1000L).purpose());
-        assertTrue(api.validateForAttach(job.assetId(), u1, "JOB"));
-        assertTrue(api.validateForAttach(messageImage.assetId(), u1, "MESSAGE_IMAGE"));
-        assertTrue(api.validateForAttach(messageDocument.assetId(), u1, "MESSAGE_DOCUMENT"));
+        for (var entry : purposes.entrySet()) {
+            String purpose = entry.getKey();
+            var initiated = service.initiate(u1, purpose, entry.getValue(), 1000L);
+            assertTrue(initiated.uploadUrl().contains("/put/"));
+
+            var completed = service.complete(u1, initiated.assetId(), 1000L);
+            assertEquals(purpose, completed.purpose());
+            assertEquals("READY", completed.status());
+            assertTrue(api.validateForAttach(initiated.assetId(), u1, purpose));
+            assertFalse(api.validateForAttach(initiated.assetId(), u1, "AVATAR"));
+            assertTrue(service.downloadUrl(u1, initiated.assetId()).contains("/get/"));
+            assertTrue(api.authorizedDownloadUrl(initiated.assetId()).contains("/get/"));
+
+            UUID other = user("media-other-" + purpose);
+            assertThrows(ResponseStatusException.class,
+                    () -> service.downloadUrl(other, initiated.assetId()));
+            assertThrows(ResponseStatusException.class,
+                    () -> service.delete(other, initiated.assetId()));
+            service.delete(u1, initiated.assetId());
+            assertEquals("DELETED", api.asset(initiated.assetId()).orElseThrow().status());
+        }
     }
 
     @Test

@@ -2,7 +2,9 @@ package com.diasporum.backend.businessaccounts.internal.application;
 
 import com.diasporum.backend.businessaccounts.BusinessAccountsApi;
 import com.diasporum.backend.businessaccounts.BusinessAccountsApi.AccountMembershipView;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -61,6 +63,22 @@ public class BusinessAccountsApiImpl implements BusinessAccountsApi {
     }
 
     @Override
+    public Map<UUID, BusinessAccountSummary> accountSummaries(Collection<UUID> accountIds) {
+        if (accountIds == null || accountIds.isEmpty()) {
+            return Map.of();
+        }
+        var ids = accountIds.stream().distinct().toList();
+        String placeholders = String.join(",",
+                java.util.Collections.nCopies(ids.size(), "?"));
+        return jdbc.query("SELECT id,account_name,status FROM business_accounts "
+                        + "WHERE id IN (" + placeholders + ")",
+                (rs, i) -> new BusinessAccountSummary(rs.getObject("id", UUID.class),
+                        rs.getString("account_name"), rs.getString("status")), ids.toArray())
+                .stream().collect(java.util.stream.Collectors.toMap(
+                        BusinessAccountSummary::id, java.util.function.Function.identity()));
+    }
+
+    @Override
     public Optional<UUID> representativeUserId(UUID businessAccountId) {
         // The messaging schema's normalization trigger stores
         // created_by_user_id as the business side's participant user id —
@@ -73,6 +91,28 @@ public class BusinessAccountsApiImpl implements BusinessAccountsApi {
                         + " FROM business_accounts a WHERE a.id=?",
                 (rs, i) -> rs.getObject("rep", UUID.class),
                 businessAccountId).stream().findFirst();
+    }
+
+    @Override
+    public Map<UUID, UUID> representativeUserIds(Collection<UUID> accountIds) {
+        if (accountIds == null || accountIds.isEmpty()) {
+            return Map.of();
+        }
+        var ids = accountIds.stream().distinct().toList();
+        String placeholders = String.join(",",
+                java.util.Collections.nCopies(ids.size(), "?"));
+        return jdbc.query("SELECT a.id,COALESCE(a.created_by_user_id,"
+                        + "(SELECT m.user_id FROM business_account_members m "
+                        + "WHERE m.business_account_id=a.id AND m.role_key='OWNER' "
+                        + "AND m.accepted_at IS NOT NULL AND m.revoked_at IS NULL "
+                        + "LIMIT 1)) AS rep FROM business_accounts a "
+                        + "WHERE a.id IN (" + placeholders + ")",
+                (rs, i) -> new java.util.AbstractMap.SimpleImmutableEntry<>(
+                        rs.getObject("id", UUID.class), rs.getObject("rep", UUID.class)),
+                ids.toArray()).stream()
+                .filter(e -> e.getValue() != null)
+                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey,
+                        Map.Entry::getValue));
     }
 
     @Override

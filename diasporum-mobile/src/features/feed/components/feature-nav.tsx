@@ -25,6 +25,7 @@ const FEATURES: { key: string; icon: IconName; label: string }[] = [
   { key: "property", icon: "business-outline", label: "Property" },
   { key: "vehicle", icon: "car-outline", label: "Vehicle" },
   { key: "event", icon: "calendar-outline", label: "Events" },
+  { key: "spare-bag", icon: "bag-handle-outline", label: "Spare Bag" },
   { key: "business", icon: "storefront-outline", label: "Business" },
   { key: "jobs", icon: "briefcase-outline", label: "Jobs" },
   { key: "poll", icon: "stats-chart-outline", label: "Polls" },
@@ -49,6 +50,15 @@ export function FeatureNav() {
         return;
       case "event":
         router.push("/(app)/events" as never);
+        return;
+      case "spare-bag":
+        router.push("/(app)/spare-bag" as never);
+        return;
+      case "property":
+        router.push("/(app)/properties" as never);
+        return;
+      case "vehicle":
+        router.push("/(app)/vehicles" as never);
         return;
       default:
         Alert.alert("Coming soon", `${label} isn't available yet.`);

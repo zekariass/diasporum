@@ -40,7 +40,13 @@
       "expo-video",
       "@react-native-google-signin/google-signin",
       "expo-apple-authentication",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Diasporum to use your approximate location for nearby vehicle discovery and listing search."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

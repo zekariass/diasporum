@@ -92,7 +92,7 @@ class EventsModuleIntegrationTest {
         jdbc.execute("TRUNCATE reports,event_saves,event_rsvps,event_media,"
                 + "events CASCADE");
         for (String t : new String[]{"community_memberships", "external_identities",
-                "profiles", "communities", "countries"}) {
+                "profiles", "communities", "airports", "countries"}) {
             jdbc.update("DELETE FROM " + t);
         }
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES"

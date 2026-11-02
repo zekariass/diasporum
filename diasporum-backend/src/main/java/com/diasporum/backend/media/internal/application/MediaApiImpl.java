@@ -1,7 +1,9 @@
 package com.diasporum.backend.media.internal.application;
 
 import com.diasporum.backend.media.MediaApi;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -44,6 +46,11 @@ public class MediaApiImpl implements MediaApi {
     @Override
     public String authorizedDownloadUrl(UUID assetId) {
         return service.authorizedDownloadUrl(assetId);
+    }
+
+    @Override
+    public Map<UUID, String> authorizedDownloadUrls(Collection<UUID> assetIds) {
+        return service.authorizedDownloadUrls(assetIds);
     }
 
     @Override

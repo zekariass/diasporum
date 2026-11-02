@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.diasporum.backend.identity.IdentityTestSupport;
+import com.diasporum.backend.media.internal.infrastructure.integration.storage.StorageClient;
 import com.diasporum.backend.messaging.internal.application.MessagingService;
 import com.diasporum.backend.messaging.internal.application.MessagingService.CreateConversationCommand;
 import com.diasporum.backend.security.DiasporumUserPrincipal;
@@ -15,8 +16,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -45,6 +49,27 @@ class MessagingAttachmentIntegrationTest {
             DockerImageName.parse("postgis/postgis:17-3.5")
                     .asCompatibleSubstituteFor("postgres"));
 
+    @TestConfiguration
+    static class FakeStorage {
+        @Bean
+        @Primary
+        StorageClient storageClient() {
+            return new StorageClient() {
+                public String presignPut(String key, String contentType, java.time.Duration ttl) {
+                    return "https://r2.test/put/" + key;
+                }
+                public String presignGet(String key, java.time.Duration ttl) {
+                    return "https://r2.test/get/" + key;
+                }
+                public java.util.Optional<StorageClient.ObjectMeta> head(String key) {
+                    return java.util.Optional.of(new StorageClient.ObjectMeta(1024, "image/png"));
+                }
+                public void delete(String key) {
+                }
+            };
+        }
+    }
+
     @Autowired MessagingService service;
     @Autowired ApplicationContext ctx;
     @Autowired JdbcTemplate jdbc;
@@ -69,7 +94,7 @@ class MessagingAttachmentIntegrationTest {
     }
 
     /** Creates an ACCEPTED conversation by inserting the row + accepting the
-     * request — avoids the pending-request initial-message restriction. */
+     * request - avoids the pending-request initial-message restriction. */
     private UUID createConversation(UUID actor, UUID recipient) {
         var cmd = new CreateConversationCommand(
                 "GENERAL", null, recipient, null, null, "hi", null);
@@ -227,10 +252,12 @@ class MessagingAttachmentIntegrationTest {
         UUID assetId = readyAsset(u1, "MESSAGE_IMAGE");
         var msg = service.sendMessage(u1, convId, null, null, null, java.util.List.of(assetId));
 
+        assertTrue(service.attachmentDownloadUrl(u2, convId, msg.id(), assetId)
+                .endsWith("/get/key-" + assetId));
         UUID outsider = user("outsider-" + UUID.randomUUID());
         var ex = assertThrows(ResponseStatusException.class,
                 () -> service.attachmentDownloadUrl(outsider, convId, msg.id(), assetId));
-        // 404 not 403 — requireSide hides conversation existence.
+        // 404 not 403 - requireSide hides conversation existence.
         assertEquals(HttpStatus.NOT_FOUND, ex.getStatusCode());
     }
 

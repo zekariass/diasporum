@@ -50,7 +50,7 @@ class MatchmakingMigrationIntegrationTest {
                 Integer.class, a, b, a, b));
 
         int migrations = Flyway.configure().dataSource(dataSource).load().migrate().migrationsExecuted;
-        assertEquals(1, migrations);
+        assertEquals(5, migrations);
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM friendships"
                 + " WHERE user_a_id=least(?::uuid,?::uuid) AND user_b_id=greatest(?::uuid,?::uuid)",
                 Integer.class, a, b, a, b));
