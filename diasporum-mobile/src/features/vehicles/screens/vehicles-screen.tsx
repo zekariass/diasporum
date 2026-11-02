@@ -162,7 +162,7 @@ export default function VehiclesScreen() {
     void load();
   }, [load]);
 
-  async function useMyLocation() {
+  async function requestMyLocation() {
     setLocationError(null);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
@@ -278,7 +278,7 @@ export default function VehiclesScreen() {
                   onChangeText={(value) => setAttributeFilters((previous) => ({ ...previous, [key]: value }))} />
             )) : null}
             <View style={styles.locationActions}>
-              <Pressable onPress={() => void useMyLocation()} accessibilityRole="button" accessibilityLabel="Use my location">
+              <Pressable onPress={() => void requestMyLocation()} accessibilityRole="button" accessibilityLabel="Use my location">
                 <ThemedText style={styles.actionText}>Use my location</ThemedText>
               </Pressable>
               {origin ? <Pressable onPress={() => { setOrigin(null); if (sort === "DISTANCE") setSort("NEWEST"); }} accessibilityRole="button"><ThemedText style={styles.actionText}>Clear nearby search</ThemedText></Pressable> : null}

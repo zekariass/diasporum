@@ -12,9 +12,10 @@ BEGIN
             ADD CONSTRAINT media_objects_purpose_check
             CHECK (purpose IN (
                 'AVATAR', 'FEED_IMAGE', 'FEED_VIDEO', 'BUSINESS', 'EVENT', 'JOB',
-                'MATCHMAKING_PROFILE_PHOTO', 'MATCHMAKING_PROFILE_BLURRED',
-                'CHAT_ATTACHMENT', 'SPARE_BAG_LISTING', 'DOCUMENT', 'OTHER',
-                'MESSAGE_AUDIO', 'MESSAGE_IMAGE', 'MESSAGE_DOCUMENT', 'VEHICLE'
+                'PROPERTY', 'MATCHMAKING_PROFILE_PHOTO',
+                'MATCHMAKING_PROFILE_BLURRED', 'CHAT_ATTACHMENT',
+                'SPARE_BAG_LISTING', 'DOCUMENT', 'OTHER', 'MESSAGE_AUDIO',
+                'MESSAGE_IMAGE', 'MESSAGE_DOCUMENT', 'VEHICLE'
             ));
     END IF;
 END $$;

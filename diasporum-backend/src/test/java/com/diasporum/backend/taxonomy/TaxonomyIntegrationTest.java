@@ -54,7 +54,7 @@ class TaxonomyIntegrationTest {
     void clean() {
         for (String t : new String[]{"user_languages", "user_interests",
                 "external_identities", "profiles", "communities", "interests",
-                "languages", "countries"}) {
+                "languages", "airports", "countries"}) {
             jdbc.update("DELETE FROM " + t);
         }
     }

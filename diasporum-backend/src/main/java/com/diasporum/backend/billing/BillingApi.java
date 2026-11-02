@@ -2,26 +2,52 @@ package com.diasporum.backend.billing;
 
 import java.util.UUID;
 
-/**
- * Feature-generic entitlement consumption for other modules. Billing owns
- * allowance resolution, quota accounting and idempotency; callers own the
- * business operation and invoke this API in the same database transaction.
- */
+/** Public provider-neutral entitlement operations for consumer modules. */
 public interface BillingApi {
 
     /**
-     * Resolve current eligibility and consume an allowance atomically.
-     * Retrying the same account/idempotency key returns the original usage
-     * record without consuming another unit.
+     * Atomically consumes one personal-plan quota unit. Missing, disabled or
+     * incompletely configured entitlements fail closed. Repeating an operation
+     * with the same idempotency key returns its original success without
+     * consuming another unit.
      */
-    ConsumptionResult consume(ConsumptionCommand command);
+    EntitlementDecision consumePersonalQuota(UUID userId, String featureKey,
+            String targetType, UUID targetId, String idempotencyKey);
 
-    /** Exactly one of {@code userId} and {@code businessAccountId} is required. */
+    /**
+     * Atomically consumes one configured entitlement. Repeating the same
+     * idempotency key is safe. NOT_CONFIGURED lets a feature follow its
+     * approved rollout behavior without inventing a grant or payment flow.
+     */
+    ConsumptionResult consume(UUID userId, UUID businessAccountId,
+            String featureKey, String targetType, UUID targetId,
+            String idempotencyKey);
+
+    /**
+     * Feature-generic entitlement consumption with explicit quantities.
+     * Grants take precedence over subscription allowances and a replayed
+     * idempotency key returns the original usage record. Denials raise
+     * ResponseStatusException instead of returning a result.
+     * Exactly one of {@code userId} and {@code businessAccountId} is required.
+     */
+    QuotaConsumption consume(ConsumptionCommand command);
+
     record ConsumptionCommand(UUID userId, UUID businessAccountId,
             String featureKey, long quantity, String targetType, UUID targetId,
             String idempotencyKey) {
     }
 
-    record ConsumptionResult(UUID usageRecordId, boolean alreadyConsumed) {
+    record QuotaConsumption(UUID usageRecordId, boolean alreadyConsumed) {
+    }
+
+    record EntitlementDecision(boolean allowed, String reason,
+            long remaining) {
+    }
+
+    enum ConsumptionResult {
+        CONSUMED,
+        ALREADY_CONSUMED,
+        NOT_CONFIGURED,
+        ENTITLEMENT_REQUIRED
     }
 }

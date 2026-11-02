@@ -1310,7 +1310,7 @@ public class MessagingService {
         Set<UUID> myBizIds = new java.util.HashSet<>(
                 businesses.activeAccountIdsOf(userId));
         String bizPh = myBizIds.isEmpty()
-                ? "NULL"  // IN (NULL) never matches — no active memberships
+                ? "NULL"  // IN (NULL) never matches - no active memberships
                 : String.join(",", java.util.Collections.nCopies(
                         myBizIds.size(), "?::uuid"));
 
@@ -1380,7 +1380,7 @@ public class MessagingService {
                 dedupeKey);
     }
 
-    /** Backward-compatible overload — text-only send (no attachments). */
+    /** Backward-compatible overload - text-only send (no attachments). */
     @Transactional
     public MessageView sendMessage(UUID actor, UUID conversationId,
             String body, String clientMessageId, UUID replyToMessageId) {

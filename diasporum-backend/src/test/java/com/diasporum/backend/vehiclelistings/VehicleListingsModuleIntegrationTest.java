@@ -112,7 +112,7 @@ class VehicleListingsModuleIntegrationTest {
         jdbc.update("DELETE FROM user_blocks");
         for (String table : new String[]{"community_memberships", "external_identities",
                 "profiles", "communities", "vehicle_variants", "vehicle_models", "vehicle_makes",
-                "vehicle_features", "vehicle_categories", "countries"}) {
+                "vehicle_features", "vehicle_categories", "airports", "countries"}) {
             jdbc.update("DELETE FROM " + table);
         }
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES"

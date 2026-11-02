@@ -143,7 +143,7 @@ export function VehicleForm({
     }
   }
 
-  async function useMyLocation() {
+  async function requestMyLocation() {
     if (locating) return;
     setLocating(true);
     setLocationError(null);
@@ -320,7 +320,7 @@ export function VehicleForm({
         <Field label="Region" value={state.region} onChangeText={(region) => onChange({ region })} />
         <Field label="General area (no street or postal address)" value={state.formattedAddress}
           onChangeText={(formattedAddress) => onChange({ formattedAddress })} />
-        <Pressable onPress={() => void useMyLocation()} disabled={locating} accessibilityRole="button"
+        <Pressable onPress={() => void requestMyLocation()} disabled={locating} accessibilityRole="button"
           accessibilityLabel="Use my location" style={[styles.locationButton, { borderColor: theme.border }]}>
           {locating ? <ActivityIndicator color={BrandColors.primary} /> : <Ionicons name="locate-outline" size={20} color={BrandColors.primary} />}
           <ThemedText style={styles.locationButtonText}>Use my location for approximate discovery</ThemedText>
