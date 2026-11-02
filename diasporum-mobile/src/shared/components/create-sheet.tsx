@@ -79,6 +79,7 @@ const OPTIONS: CreateOption[] = [
     description: "Bring your community together",
     icon: "calendar-outline",
     color: "#D97706",
+    route: "/(app)/events/create",
   },
   {
     key: "job",
@@ -223,16 +224,16 @@ export function CreateSheet({ visible, onClose }: Props) {
                 { backgroundColor: `${theme.primary}18` },
               ]}
             >
-              <Ionicons name="briefcase-outline" size={17} color={theme.primary} />
+              <Ionicons
+                name="briefcase-outline"
+                size={17}
+                color={theme.primary}
+              />
             </View>
             <ThemedText style={styles.workspaceLinkText}>
               Business Workspace
             </ThemedText>
-            <Ionicons
-              name="chevron-forward"
-              size={16}
-              color={theme.primary}
-            />
+            <Ionicons name="chevron-forward" size={16} color={theme.primary} />
           </Pressable>
 
           <ScrollView
@@ -380,7 +381,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: Spacing.two + Spacing.half,
   },
-  workspaceLinkText: { flex: 1, fontSize: 14, lineHeight: 18, fontWeight: "700" },
+  workspaceLinkText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",

@@ -47,6 +47,9 @@ export function FeatureNav() {
       case "poll":
         router.push("/(app)/posts/create" as never);
         return;
+      case "event":
+        router.push("/(app)/events" as never);
+        return;
       default:
         Alert.alert("Coming soon", `${label} isn't available yet.`);
     }

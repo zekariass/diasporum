@@ -39,7 +39,8 @@
       "expo-secure-store",
       "expo-video",
       "@react-native-google-signin/google-signin",
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,
