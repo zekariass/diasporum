@@ -1,11 +1,11 @@
 /**
  * FeatureNav — horizontal scrollable strip of Diasporum modules.
- * Feed is active on this screen; People → Discover; modules that aren't
- * implemented yet show a "coming soon" notice rather than a fake screen.
+ * Stateless: caller tracks the active key and handles selection.
+ * Implemented features update content in-place on the home screen;
+ * unimplemented ones show a "coming soon" alert raised by the caller.
  */
 import React from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { useRouter } from "expo-router";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { ComponentProps } from "react";
 import { ThemedText } from "@/components/themed-text";
@@ -15,7 +15,7 @@ import { Spacing } from "@/shared/theme/spacing";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 
-const FEATURES: { key: string; icon: IconName; label: string }[] = [
+export const FEATURES: { key: string; icon: IconName; label: string }[] = [
   { key: "feed", icon: "home-outline", label: "Feed" },
   { key: "reels", icon: "play-outline", label: "Vids" },
   { key: "people", icon: "people-outline", label: "People" },
@@ -31,39 +31,15 @@ const FEATURES: { key: string; icon: IconName; label: string }[] = [
   { key: "poll", icon: "stats-chart-outline", label: "Polls" },
 ];
 
-export function FeatureNav() {
-  const theme = useTheme();
-  const router = useRouter();
+interface FeatureNavProps {
+  /** Currently active feature key */
+  activeKey: string;
+  /** Called when the user taps a feature button */
+  onSelect: (key: string) => void;
+}
 
-  function go(key: string, label: string) {
-    switch (key) {
-      case "feed":
-        return;
-      case "people":
-        router.push("/(app)/(tabs)/explore" as never);
-        return;
-      case "reels":
-        router.push("/(app)/(tabs)/reels" as never);
-        return;
-      case "poll":
-        router.push("/(app)/posts/create" as never);
-        return;
-      case "event":
-        router.push("/(app)/events" as never);
-        return;
-      case "spare-bag":
-        router.push("/(app)/spare-bag" as never);
-        return;
-      case "property":
-        router.push("/(app)/properties" as never);
-        return;
-      case "vehicle":
-        router.push("/(app)/vehicles" as never);
-        return;
-      default:
-        Alert.alert("Coming soon", `${label} isn't available yet.`);
-    }
-  }
+export function FeatureNav({ activeKey, onSelect }: FeatureNavProps) {
+  const theme = useTheme();
 
   return (
     <View style={[styles.wrap, { borderBottomColor: theme.border }]}>
@@ -73,12 +49,12 @@ export function FeatureNav() {
         contentContainerStyle={styles.strip}
       >
         {FEATURES.map((feature) => {
-          const active = feature.key === "feed";
+          const active = feature.key === activeKey;
           const color = active ? BrandColors.white : theme.textSecondary;
           return (
             <Pressable
               key={feature.key}
-              onPress={() => go(feature.key, feature.label)}
+              onPress={() => onSelect(feature.key)}
               accessibilityRole="button"
               accessibilityLabel={feature.label}
               accessibilityState={{ selected: active }}
@@ -106,6 +82,7 @@ export function FeatureNav() {
     </View>
   );
 }
+
 const styles = StyleSheet.create({
   wrap: { borderBottomWidth: StyleSheet.hairlineWidth },
   strip: {

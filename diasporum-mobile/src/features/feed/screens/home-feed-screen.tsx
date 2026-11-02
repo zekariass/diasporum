@@ -1,13 +1,15 @@
 /**
- * HomeFeedScreen — Threads-style community timeline.
- * Chrome: ☰ · brand · search → composer row → one quiet context row
- * (community · For you/Latest) → category chips → posts. Everything above the
- * posts scrolls with the list; only the header stays fixed.
+ * HomeFeedScreen — home screen with an inline feature switcher.
+ * The FeatureNav strip stays fixed below the header; selecting a feature
+ * cross-fades to that feature's content panel without any screen navigation
+ * (no white flash). Unimplemented features show a "coming soon" alert.
  */
 
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Animated,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -26,12 +28,31 @@ import { FeatureNav } from "../components/feature-nav";
 import { ComposerBar } from "../components/composer-bar";
 import { CategoryFilter } from "../components/feed-controls";
 import { FeedSkeleton, FeedEmpty } from "../components/feed-states";
+import {
+  MatchmakingPanel,
+  PropertyPanel,
+  VehiclesPanel,
+  EventsPanel,
+  JobsPanel,
+  SpareBagPanel,
+  BusinessPanel,
+} from "../components/feature-panels";
 import { useFeed } from "../hooks/use-feed";
 import { createFeedApi } from "../services/feed-api";
 import { useSession } from "@/core/session/session-provider";
 import { Spacing } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
 import type { FeedItem } from "../types/feed-types";
+
+/** Features that navigate to a separate route rather than swapping inline */
+const ROUTE_FEATURES: Record<string, string> = {
+  people: "/(app)/(tabs)/explore",
+  reels: "/(app)/(tabs)/reels",
+  poll: "/(app)/posts/create",
+};
+
+/** Unimplemented features — show an alert */
+const COMING_SOON = new Set(["help", "services"]);
 
 export default function HomeFeedScreen() {
   const theme = useTheme();
@@ -41,7 +62,50 @@ export default function HomeFeedScreen() {
   const feedApi = React.useMemo(() => createFeedApi(apiClient), [apiClient]);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
 
-  const renderItem = useCallback(
+  // Active feature key — 'feed' is the default
+  const [activeFeature, setActiveFeature] = useState("feed");
+
+  // Smooth cross-fade — useState initializer avoids the react-hooks/refs lint error
+  const [fadeAnim] = useState(() => new Animated.Value(1));
+
+  const handleFeatureSelect = useCallback(
+    (key: string) => {
+      if (key === activeFeature) return;
+
+      // Route-based features → navigate immediately (no panel swap)
+      if (ROUTE_FEATURES[key]) {
+        router.push(ROUTE_FEATURES[key] as never);
+        return;
+      }
+
+      // Unimplemented → alert, no state change
+      if (COMING_SOON.has(key)) {
+        const label =
+          key === "help" ? "Community Help & Offers" : "Service Marketplace";
+        Alert.alert("Coming soon", `${label} isn't available yet.`);
+        return;
+      }
+
+      // Panel swap with cross-fade
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 90,
+        useNativeDriver: true,
+      }).start(() => {
+        setActiveFeature(key);
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 140,
+          useNativeDriver: true,
+        }).start();
+      });
+    },
+    [activeFeature, fadeAnim, router],
+  );
+
+  // ── Feed content ──────────────────────────────────────────────────────────
+
+  const renderFeedItem = useCallback(
     ({ item }: { item: FeedItem }) => (
       <PostItem
         item={item}
@@ -61,7 +125,6 @@ export default function HomeFeedScreen() {
 
   const keyExtractor = useCallback((i: FeedItem) => i.itemId, []);
 
-  // View tracking — deduplicated, ≥50% visibility marks the post viewed.
   const viewedRef = useRef(new Set<string>());
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: { item: unknown }[] }) => {
@@ -77,9 +140,8 @@ export default function HomeFeedScreen() {
   );
   const viewabilityConfig = { itemVisiblePercentThreshold: 50 };
 
-  const listHeader = (
+  const feedListHeader = (
     <View>
-      <FeatureNav />
       <ComposerBar
         userName={session?.profile?.username}
         displayName={session?.profile?.displayName ?? session?.me.email}
@@ -94,59 +156,91 @@ export default function HomeFeedScreen() {
     </View>
   );
 
+  // ── render ────────────────────────────────────────────────────────────────
+
   return (
     <ThemedView style={styles.root}>
       <StatusBar style="auto" />
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <FeedHeader onMenu={() => setDrawerOpen(true)} />
-        <CommunityDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
-
-        <FlatList
-          data={feed.items}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          ListHeaderComponent={listHeader}
-          onEndReached={feed.loadMore}
-          onEndReachedThreshold={0.4}
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={viewabilityConfig}
-          refreshControl={
-            <RefreshControl
-              refreshing={feed.refreshing}
-              onRefresh={feed.refresh}
-              tintColor={theme.textSecondary}
-              colors={[theme.text]}
-            />
-          }
-          ListEmptyComponent={
-            feed.loading ? (
-              <FeedSkeleton />
-            ) : (
-              <FeedEmpty
-                filtered={feed.categoryId != null}
-                onCreate={() => router.push("/(app)/posts/create" as never)}
-                onClear={() => feed.setCategory(null)}
-              />
-            )
-          }
-          ListFooterComponent={
-            feed.loadingMore ? (
-              <ActivityIndicator
-                style={styles.footer}
-                color={theme.textSecondary}
-              />
-            ) : feed.error ? (
-              <ThemedText
-                style={[styles.footerText, { color: theme.textSecondary }]}
-              >
-                {feed.error} Pull to retry.
-              </ThemedText>
-            ) : (
-              <View style={styles.footer} />
-            )
-          }
-          showsVerticalScrollIndicator={false}
+        <CommunityDrawer
+          visible={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
         />
+
+        {/* FeatureNav stays fixed — always visible regardless of active panel */}
+        <FeatureNav activeKey={activeFeature} onSelect={handleFeatureSelect} />
+
+        {/* Animated container cross-fades between feed and feature panels */}
+        <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
+          {activeFeature === "feed" ? (
+            <FlatList
+              data={feed.items}
+              renderItem={renderFeedItem}
+              keyExtractor={keyExtractor}
+              ListHeaderComponent={feedListHeader}
+              onEndReached={feed.loadMore}
+              onEndReachedThreshold={0.4}
+              onViewableItemsChanged={onViewableItemsChanged}
+              viewabilityConfig={viewabilityConfig}
+              refreshControl={
+                <RefreshControl
+                  refreshing={feed.refreshing}
+                  onRefresh={feed.refresh}
+                  tintColor={theme.textSecondary}
+                  colors={[theme.text]}
+                />
+              }
+              ListEmptyComponent={
+                feed.loading ? (
+                  <FeedSkeleton />
+                ) : (
+                  <FeedEmpty
+                    filtered={feed.categoryId != null}
+                    onCreate={() =>
+                      router.push("/(app)/posts/create" as never)
+                    }
+                    onClear={() => feed.setCategory(null)}
+                  />
+                )
+              }
+              ListFooterComponent={
+                feed.loadingMore ? (
+                  <ActivityIndicator
+                    style={styles.footer}
+                    color={theme.textSecondary}
+                  />
+                ) : feed.error ? (
+                  <ThemedText
+                    style={[
+                      styles.footerText,
+                      { color: theme.textSecondary },
+                    ]}
+                  >
+                    {feed.error} Pull to retry.
+                  </ThemedText>
+                ) : (
+                  <View style={styles.footer} />
+                )
+              }
+              showsVerticalScrollIndicator={false}
+            />
+          ) : activeFeature === "dating" ? (
+            <MatchmakingPanel />
+          ) : activeFeature === "property" ? (
+            <PropertyPanel />
+          ) : activeFeature === "vehicle" ? (
+            <VehiclesPanel />
+          ) : activeFeature === "event" ? (
+            <EventsPanel />
+          ) : activeFeature === "jobs" ? (
+            <JobsPanel />
+          ) : activeFeature === "spare-bag" ? (
+            <SpareBagPanel />
+          ) : activeFeature === "business" ? (
+            <BusinessPanel />
+          ) : null}
+        </Animated.View>
       </SafeAreaView>
     </ThemedView>
   );
@@ -155,6 +249,7 @@ export default function HomeFeedScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   safeArea: { flex: 1 },
+  content: { flex: 1 },
   divider: { height: StyleSheet.hairlineWidth, marginTop: Spacing.one },
   footer: { paddingVertical: Spacing.four },
   footerText: {
