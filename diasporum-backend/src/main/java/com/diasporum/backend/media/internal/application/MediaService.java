@@ -21,19 +21,28 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class MediaService {
 
-    private static final Map<String, List<String>> ALLOWED = Map.of(
-            "AVATAR", List.of("image/jpeg", "image/png", "image/webp"),
-            "FEED_IMAGE", List.of("image/jpeg", "image/png", "image/webp"),
-            "EVENT", List.of("image/jpeg", "image/png", "image/webp"),
-            "FEED_VIDEO", List.of("video/mp4", "video/quicktime"),
-            "MESSAGE_AUDIO", List.of("audio/mpeg", "audio/ogg", "audio/mp4"),
-            "DOCUMENT", List.of("application/pdf", "application/msword",
+    // M4: MESSAGE_IMAGE and MESSAGE_DOCUMENT added for direct-message attachments.
+    private static final Map<String, List<String>> ALLOWED = Map.ofEntries(
+            Map.entry("AVATAR", List.of("image/jpeg", "image/png", "image/webp")),
+            Map.entry("FEED_IMAGE", List.of("image/jpeg", "image/png", "image/webp")),
+            Map.entry("EVENT", List.of("image/jpeg", "image/png", "image/webp")),
+            Map.entry("FEED_VIDEO", List.of("video/mp4", "video/quicktime")),
+            Map.entry("MESSAGE_AUDIO", List.of("audio/mpeg", "audio/ogg", "audio/mp4")),
+            Map.entry("DOCUMENT", List.of("application/pdf", "application/msword",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     "application/vnd.ms-excel",
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     "application/vnd.ms-powerpoint",
                     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                    "text/plain"));
+                    "text/plain")),
+            Map.entry("MESSAGE_IMAGE", List.of("image/jpeg", "image/png", "image/webp")),
+            Map.entry("MESSAGE_DOCUMENT", List.of("application/pdf", "application/msword",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "application/vnd.ms-excel",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/vnd.ms-powerpoint",
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    "text/plain")));
     private final JdbcTemplate jdbc;
     private final org.springframework.beans.factory.ObjectProvider<StorageClient>
             storageProvider;

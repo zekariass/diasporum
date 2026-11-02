@@ -1,19 +1,12 @@
 /**
- * Conversation thread — inverted message list with cursor-paginated history,
- * optimistic composer (sending/failed states with tap-to-retry), request
- * banners for pending GENERAL conversations, and read-cursor advancement.
+ * Conversation thread — M1-M4.
+ * M4 adds: image/document attachments, typing indicator, presence dot,
+ * read-receipt ticks, attachment picker bar.
  */
-
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-  TextInput,
-  View,
+  ActivityIndicator, FlatList, KeyboardAvoidingView,
+  Platform, Pressable, StyleSheet, TextInput, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,24 +17,43 @@ import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
 import { BorderRadius, Spacing } from '@/shared/theme/spacing';
 import { useSession } from '@/core/session/session-provider';
+import { createMessagingApi } from '../services/messaging-api';
+import { createMediaApi } from '../services/media-api';
 import { useThread, type ThreadItem } from '../hooks/use-thread';
+import { useAttachments } from '../hooks/use-attachments';
 import { timeAgo } from '@/features/feed/utils/time-ago';
-import type { MessageView } from '../types/messaging-types';
+import { TypingIndicator } from '../components/typing-indicator';
+import { PresenceDot } from '../components/presence-dot';
+import { ImageBubble } from '../components/image-bubble';
+import { DocumentBubble } from '../components/document-bubble';
+import { AttachmentPreviewBar } from '../components/attachment-preview-bar';
+import type { AttachmentView, MessageView } from '../types/messaging-types';
 
-function Bubble({ item, mine }: { item: ThreadItem; mine: boolean }) {
+// ─── Bubble ──────────────────────────────────────────────────────────────────
+
+interface BubbleProps {
+  item: ThreadItem;
+  mine: boolean;
+  fetchAttachmentUrl: (messageId: string, assetId: string) => Promise<string>;
+  /** sequenceNo up to which the partner has read (for read ticks). */
+  partnerReadSeq: number;
+}
+
+function Bubble({ item, mine, fetchAttachmentUrl, partnerReadSeq }: BubbleProps) {
   const theme = useTheme();
+
   if (item.kind === 'pending') {
     const p = item.pending;
     const failed = p.status === 'failed';
     return (
       <View style={[styles.bubbleRow, styles.rowMine]}>
-        <View style={[
-          styles.bubble,
-          { backgroundColor: failed ? theme.errorSurface : theme.primary, opacity: failed ? 1 : 0.65 },
-        ]}>
-          <ThemedText style={[styles.bubbleText, { color: failed ? theme.error : '#fff' }]}>
-            {p.body}
-          </ThemedText>
+        <View style={[styles.bubble, { backgroundColor: failed ? theme.errorSurface : theme.primary, opacity: failed ? 1 : 0.65 }]}>
+          {p.body ? <ThemedText style={[styles.bubbleText, { color: failed ? theme.error : '#fff' }]}>{p.body}</ThemedText> : null}
+          {p.attachmentIds.length > 0 && (
+            <ThemedText style={[styles.bubbleMeta, { color: failed ? theme.error : '#fff' }]}>
+              {p.attachmentIds.length} attachment{p.attachmentIds.length > 1 ? 's' : ''}
+            </ThemedText>
+          )}
           <ThemedText style={[styles.bubbleMeta, { color: failed ? theme.error : '#fff' }]}>
             {failed ? 'Failed — tap to retry' : 'Sending…'}
           </ThemedText>
@@ -49,89 +61,147 @@ function Bubble({ item, mine }: { item: ThreadItem; mine: boolean }) {
       </View>
     );
   }
+
   const m: MessageView = item.message;
+  const isRead = mine && m.sequenceNo <= partnerReadSeq;
+
   return (
     <View style={[styles.bubbleRow, mine ? styles.rowMine : styles.rowTheirs]}>
-      <View style={[
-        styles.bubble,
-        mine
-          ? { backgroundColor: theme.primary }
-          : { backgroundColor: theme.backgroundElement },
-      ]}>
-        <ThemedText style={[styles.bubbleText, { color: mine ? '#fff' : theme.text }]}>
-          {m.body ?? ''}
-        </ThemedText>
-        <ThemedText style={[styles.bubbleMeta, { color: mine ? '#fff' : theme.textSecondary }]}>
-          {timeAgo(m.createdAt)}
-        </ThemedText>
+      <View style={[styles.bubble, mine ? { backgroundColor: theme.primary } : { backgroundColor: theme.backgroundElement }]}>
+        {m.body ? (
+          <ThemedText style={[styles.bubbleText, { color: mine ? '#fff' : theme.text }]}>
+            {m.body}
+          </ThemedText>
+        ) : null}
+
+        {/* M4: render attachments */}
+        {m.attachments?.map((att: AttachmentView) =>
+          att.purpose === 'MESSAGE_IMAGE' ? (
+            <ImageBubble
+              key={att.assetId}
+              attachment={att}
+              fetchUrl={() => fetchAttachmentUrl(m.id, att.assetId)}
+            />
+          ) : (
+            <DocumentBubble
+              key={att.assetId}
+              attachment={att}
+              fetchUrl={() => fetchAttachmentUrl(m.id, att.assetId)}
+            />
+          )
+        )}
+
+        <View style={styles.metaRow}>
+          <ThemedText style={[styles.bubbleMeta, { color: mine ? '#fff' : theme.textSecondary }]}>
+            {timeAgo(m.createdAt)}
+          </ThemedText>
+          {/* M4: read ticks — only shown on sender's own messages */}
+          {mine && (
+            <ThemedText style={[styles.readTick, { color: isRead ? '#a5f3fc' : 'rgba(255,255,255,0.5)' }]}>
+              {isRead ? '✓✓' : '✓'}
+            </ThemedText>
+          )}
+        </View>
       </View>
     </View>
   );
 }
 
+// ─── Screen ──────────────────────────────────────────────────────────────────
+
 export default function ConversationScreen() {
   const theme = useTheme();
-  const { session } = useSession();
+  const { session, apiClient } = useSession();
   const params = useLocalSearchParams<{ id: string }>();
   const conversationId = String(params.id);
   const viewerId = session?.me.id ?? '';
 
+  const api = useMemo(() => createMessagingApi(apiClient), [apiClient]);
+  const mediaApiObj = useMemo(() => createMediaApi(apiClient), [apiClient]);
+
   const {
     conversation, items, loading, loadingOlder, sending, error,
-    loadOlder, send, retry,
+    loadOlder, send, retry, anyoneTyping, partnerOnline, partnerReadSeqs,
+    notifyTyping,
   } = useThread(conversationId, viewerId);
 
+  const atts = useAttachments(mediaApiObj);
+
   const [draft, setDraft] = useState('');
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const partnerReadSeq = useMemo(() => {
+    const entries = Object.values(partnerReadSeqs);
+    return entries.length > 0 ? Math.max(...entries) : 0;
+  }, [partnerReadSeqs]);
+
+  const fetchAttachmentUrl = useCallback(
+    (messageId: string, assetId: string) =>
+      api.attachmentDownloadUrl(conversationId, messageId, assetId).then(r => r.downloadUrl),
+    [api, conversationId]
+  );
 
   const title = conversation?.other.displayName ?? 'Conversation';
   const canSend = conversation?.status === 'ACCEPTED';
+
   const requestBanner = useMemo(() => {
     if (conversation?.status !== 'REQUESTED') return null;
     return conversation.pendingRequestDirection === 'OUTGOING'
       ? `Waiting for ${conversation.other.displayName} to accept your message request.`
-      : `${conversation.other.displayName} wants to message you. Respond from the requests inbox.`;
+      : `${conversation.other.displayName} wants to message you.`;
   }, [conversation]);
 
-  const onSend = () => {
-    const text = draft;
-    setDraft('');
-    void send(text);
+  const onDraftChange = (text: string) => {
+    setDraft(text);
+    // M4: typing indicator — throttled
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    if (text.length > 0) {
+      notifyTyping(true);
+      typingTimer.current = setTimeout(() => notifyTyping(false), 5000);
+    } else {
+      notifyTyping(false);
+    }
   };
+
+  const onSend = () => {
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    notifyTyping(false);
+    const text = draft;
+    const attachmentIds = atts.readyAssetIds;
+    setDraft('');
+    atts.clearAll();
+    void send(text, attachmentIds);
+  };
+
+  const canSubmit = (draft.trim().length > 0 || atts.readyAssetIds.length > 0)
+    && !sending && !atts.isUploading;
 
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        {/* Header */}
         <View style={[styles.header, { borderBottomColor: theme.border }]}>
-          <Pressable
-            onPress={() => router.back()}
-            style={styles.backBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Back to conversations"
-          >
+          <Pressable onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Back">
             <Ionicons name="chevron-back" size={24} color={theme.text} />
           </Pressable>
           <View style={styles.headerBody}>
-            <ThemedText style={styles.headerTitle} numberOfLines={1}>
-              {title}
-            </ThemedText>
+            <View style={styles.headerNameRow}>
+              <ThemedText style={styles.headerTitle} numberOfLines={1}>{title}</ThemedText>
+              {/* M4: presence dot */}
+              <PresenceDot online={partnerOnline} size={9} />
+            </View>
             {conversation?.other.business && (
-              <ThemedText style={styles.headerSub} themeColor="textSecondary">
-                Business account
-              </ThemedText>
+              <ThemedText style={styles.headerSub} themeColor="textSecondary">Business account</ThemedText>
             )}
           </View>
         </View>
 
         {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={theme.primary} />
-          </View>
+          <View style={styles.center}><ActivityIndicator color={theme.primary} /></View>
         ) : error && items.length === 0 ? (
           <View style={styles.center}>
             <Ionicons name="cloud-offline-outline" size={36} color={theme.textSecondary} />
-            <ThemedText themeColor="textSecondary" style={styles.errorText}>
-              {error}
-            </ThemedText>
+            <ThemedText themeColor="textSecondary" style={styles.errorText}>{error}</ThemedText>
           </View>
         ) : (
           <FlatList
@@ -148,61 +218,62 @@ export default function ConversationScreen() {
                   mine={item.kind === 'pending'
                     ? item.pending.senderId === viewerId
                     : item.message.senderId === viewerId}
+                  fetchAttachmentUrl={fetchAttachmentUrl}
+                  partnerReadSeq={partnerReadSeq}
                 />
               </Pressable>
             )}
             onEndReached={loadOlder}
             onEndReachedThreshold={0.4}
             contentContainerStyle={styles.listContent}
-            ListFooterComponent={
-              loadingOlder ? <ActivityIndicator color={theme.primary} style={styles.older} /> : undefined
-            }
+            ListFooterComponent={loadingOlder ? <ActivityIndicator color={theme.primary} style={styles.older} /> : undefined}
             ListHeaderComponent={
-              requestBanner ? (
-                <View style={[styles.banner, { backgroundColor: theme.primarySurface }]}>
-                  <ThemedText style={[styles.bannerText, { color: theme.primary }]}>
-                    {requestBanner}
-                  </ThemedText>
-                </View>
-              ) : undefined
+              <>
+                <TypingIndicator visible={anyoneTyping} />
+                {requestBanner ? (
+                  <View style={[styles.banner, { backgroundColor: theme.primarySurface }]}>
+                    <ThemedText style={[styles.bannerText, { color: theme.primary }]}>{requestBanner}</ThemedText>
+                  </View>
+                ) : null}
+              </>
             }
           />
         )}
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={0}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+          <AttachmentPreviewBar
+            attachments={atts.pending}
+            onRemove={atts.removeAttachment}
+            onRetry={atts.retryAttachment}
+          />
           {canSend ? (
             <View style={[styles.composer, { borderTopColor: theme.border }]}>
+              <Pressable onPress={atts.addImageFromGallery} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Add image">
+                <Ionicons name="image-outline" size={22} color={theme.textSecondary} />
+              </Pressable>
+              <Pressable onPress={atts.addDocument} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Add document">
+                <Ionicons name="document-outline" size={22} color={theme.textSecondary} />
+              </Pressable>
               <TextInput
-                style={[styles.input, {
-                  backgroundColor: theme.backgroundElement,
-                  color: theme.text,
-                }]}
-                placeholder="Message…"
+                style={[styles.input, { backgroundColor: theme.backgroundElement, color: theme.text }]}
+                placeholder="Message�"
                 placeholderTextColor={theme.textSecondary}
                 value={draft}
-                onChangeText={setDraft}
+                onChangeText={onDraftChange}
                 multiline
                 maxLength={10000}
                 accessibilityLabel="Message input"
               />
               <Pressable
-                style={[styles.sendBtn, {
-                  backgroundColor: theme.primary,
-                  opacity: draft.trim() && !sending ? 1 : 0.4,
-                }]}
+                style={[styles.sendBtn, { backgroundColor: theme.primary, opacity: canSubmit ? 1 : 0.4 }]}
                 onPress={onSend}
-                disabled={!draft.trim() || sending}
+                disabled={!canSubmit}
                 accessibilityRole="button"
                 accessibilityLabel="Send message"
               >
-                {sending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Ionicons name="send" size={18} color="#fff" />
-                )}
+                {sending || atts.isUploading
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Ionicons name="send" size={18} color="#fff" />}
               </Pressable>
             </View>
           ) : conversation ? (
@@ -223,13 +294,10 @@ export default function ConversationScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   safeArea: { flex: 1 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.two,
-    paddingHorizontal: Spacing.two, paddingVertical: Spacing.two,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
+  header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.two, paddingVertical: Spacing.two, borderBottomWidth: StyleSheet.hairlineWidth },
   backBtn: { padding: Spacing.two },
   headerBody: { flex: 1 },
+  headerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerTitle: { fontSize: 17, fontWeight: '700' },
   headerSub: { fontSize: 12 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.three, paddingHorizontal: Spacing.five },
@@ -238,17 +306,16 @@ const styles = StyleSheet.create({
   bubbleRow: { flexDirection: 'row', marginVertical: 2 },
   rowMine: { justifyContent: 'flex-end' },
   rowTheirs: { justifyContent: 'flex-start' },
-  bubble: { maxWidth: '78%', borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
+  bubble: { maxWidth: '78%', borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, gap: 4 },
   bubbleText: { fontSize: 15, lineHeight: 20 },
-  bubbleMeta: { fontSize: 10, marginTop: 2, opacity: 0.75, alignSelf: 'flex-end' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-end' },
+  bubbleMeta: { fontSize: 10, opacity: 0.75 },
+  readTick: { fontSize: 11, fontWeight: '700' },
   older: { marginVertical: Spacing.three },
   banner: { margin: Spacing.two, borderRadius: 12, padding: Spacing.three },
   bannerText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
-  composer: {
-    flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two,
-    paddingHorizontal: Spacing.three, paddingVertical: Spacing.two,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderTopWidth: StyleSheet.hairlineWidth },
+  iconBtn: { padding: 6 },
   input: { flex: 1, borderRadius: 20, paddingHorizontal: Spacing.four, paddingVertical: 10, maxHeight: 120, fontSize: 15 },
   sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   closedNote: { flex: 1, textAlign: 'center', fontSize: 13, paddingVertical: Spacing.two },

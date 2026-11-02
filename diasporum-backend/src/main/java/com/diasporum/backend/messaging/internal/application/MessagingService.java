@@ -4,9 +4,11 @@ import com.diasporum.backend.businessaccounts.BusinessAccountsApi;
 import com.diasporum.backend.community.CommunityApi;
 import com.diasporum.backend.feed.FeedApi;
 import com.diasporum.backend.identity.IdentityApi;
+import com.diasporum.backend.media.MediaApi;
 import com.diasporum.backend.social.SocialApi;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +42,10 @@ public class MessagingService {
             "VEHICLE_LISTING", "BUSINESS_PROFILE", "EVENT", "JOB_LISTING",
             "SPARE_BAG_CONTACT", "SERVICE_REQUEST", "COMMUNITY_HELP_POST");
 
+    /** M4: purposes valid for direct-message attachments. */
+    private static final Set<String> ATTACHMENT_PURPOSES =
+            Set.of("MESSAGE_IMAGE", "MESSAGE_DOCUMENT");
+
     private static final int DEFAULT_PAGE = 20;
     private static final int MAX_PAGE = 50;
     private static final int MAX_BODY = 10_000;
@@ -50,11 +56,12 @@ public class MessagingService {
     private final CommunityApi community;
     private final BusinessAccountsApi businesses;
     private final FeedApi feed;
+    private final MediaApi media;
     private final MessagingProperties props;
 
     public MessagingService(JdbcTemplate jdbc, IdentityApi identity,
             SocialApi social, CommunityApi community,
-            BusinessAccountsApi businesses, FeedApi feed,
+            BusinessAccountsApi businesses, FeedApi feed, MediaApi media,
             MessagingProperties props) {
         this.jdbc = jdbc;
         this.identity = identity;
@@ -62,6 +69,7 @@ public class MessagingService {
         this.community = community;
         this.businesses = businesses;
         this.feed = feed;
+        this.media = media;
         this.props = props;
     }
 
@@ -70,7 +78,7 @@ public class MessagingService {
     /** A conversation endpoint identity: a personal user, or a Business
      * Account whose canonical representative user id is stored alongside. */
     private record Endpoint(UUID userId, UUID businessAccountId) {
-        /** Canonical identity key — mirrors the schema ordering expression. */
+        /** Canonical identity key - mirrors the schema ordering expression. */
         String key() {
             return businessAccountId != null
                     ? "B:" + businessAccountId : "U:" + userId;
@@ -101,7 +109,7 @@ public class MessagingService {
 
     /**
      * Transaction-scoped advisory lock serialising quota checks per acting
-     * user — concurrent creates/sends by the same actor are evaluated
+     * user - concurrent creates/sends by the same actor are evaluated
      * one-at-a-time so count-then-insert cannot overshoot a limit. Device and
      * session independent, and identical for business acting since quotas key
      * on the acting user id.
@@ -141,7 +149,7 @@ public class MessagingService {
         }
     }
 
-    /** Caps outstanding outbound REQUESTED requests per acting user —
+    /** Caps outstanding outbound REQUESTED requests per acting user -
      * request spam is bounded regardless of how many recipients are tried. */
     private void checkPendingRequestCap(UUID actor) {
         int pending = Optional.ofNullable(jdbc.queryForObject(
@@ -155,7 +163,7 @@ public class MessagingService {
 
     /**
      * Maps trigger-level rejections to stable codes without leaking whether a
-     * resource exists — existence/publication/OPEN failures all surface as
+     * resource exists - existence/publication/OPEN failures all surface as
      * {@code CONTEXT_NOT_AVAILABLE} so unauthorized callers cannot probe ids.
      */
     private ResponseStatusException conversationRejected(
@@ -207,7 +215,7 @@ public class MessagingService {
             UUID recipientUserId, UUID recipientBusinessAccountId,
             Endpoint actorEndpoint, UUID actor) {
         if ("COMMUNITY_HELP_POST".equals(contextType)) {
-            // Counterparty is the post author — derived server-side, never
+            // Counterparty is the post author - derived server-side, never
             // trusted from the client.
             var post = feed.post(contextId)
                     .orElseThrow(() -> notFound("CONTEXT_NOT_FOUND"));
@@ -324,10 +332,16 @@ public class MessagingService {
             String pendingRequestDirection, Instant createdAt) {
     }
 
+    /** M4: metadata for one attachment (no download URL embedded - use the
+     * dedicated download-url endpoint with per-request authorization). */
+    public record AttachmentView(UUID assetId, String purpose, String mimeType,
+            Long sizeBytes) {
+    }
+
     public record MessageView(UUID id, UUID conversationId, long sequenceNo,
             UUID senderId, UUID senderBusinessAccountId, String body,
             String messageType, UUID replyToMessageId, Instant createdAt,
-            Instant editedAt) {
+            Instant editedAt, List<AttachmentView> attachments) {
     }
 
     public record MessageRequestView(UUID id, UUID conversationId,
@@ -352,7 +366,7 @@ public class MessagingService {
      * Loads a conversation and proves the actor currently occupies one of its
      * participant sides. Returns the actor's endpoint. Membership in a
      * business side is re-validated against live
-     * {@code business_account_members} state on every call — revocation
+     * {@code business_account_members} state on every call - revocation
      * removes access without deleting history.
      */
     private Endpoint requireSide(ConversationRow c, UUID actor) {
@@ -417,13 +431,13 @@ public class MessagingService {
 
     /**
      * Evaluates the recipient's DM privacy for a GENERAL conversation.
-     * Relationship checks only make sense between personal users — a business
+     * Relationship checks only make sense between personal users - a business
      * actor cannot satisfy MUTUAL_FOLLOWERS/COMMUNITY_MEMBERS and therefore
      * only qualifies for a message request (or direct under EVERYONE).
      */
     private DmPolicy dmPolicy(Endpoint actor, Endpoint recipient, UUID actorUser) {
         if (recipient.business()) {
-            // Business endpoints have no personal privacy settings — they are
+            // Business endpoints have no personal privacy settings - they are
             // contactable entities and receive direct conversations.
             return new DmPolicy(true, true);
         }
@@ -465,7 +479,7 @@ public class MessagingService {
     /**
      * INTERACTED_USERS approximation: mutual follow, or an already-accepted
      * prior conversation between the same personal users. Shared community
-     * membership is deliberately NOT counted — that is the separate
+     * membership is deliberately NOT counted - that is the separate
      * {@code COMMUNITY_MEMBERS} permission.
      */
     private boolean interacted(UUID a, UUID b) {
@@ -523,7 +537,7 @@ public class MessagingService {
         requireNotBlocked(self, other);
         requireNotDmMuted(actor);
 
-        // Canonical ordering — same expression as the schema CHECK.
+        // Canonical ordering - same expression as the schema CHECK.
         boolean swap = self.key().compareTo(other.key()) > 0;
         Endpoint a = swap ? other : self;
         Endpoint b = swap ? self : other;
@@ -533,7 +547,7 @@ public class MessagingService {
             return reuseConversation(existing.get(), actor, self, cmd);
         }
 
-        // Quota applies to genuinely new conversations only — retrieving an
+        // Quota applies to genuinely new conversations only - retrieving an
         // existing one is free. The advisory lock serialises this actor's
         // creates so the count-then-insert below is race-safe.
         lockActor(actor);
@@ -547,7 +561,7 @@ public class MessagingService {
                 throw forbidden("MESSAGE_REQUESTS_NOT_ALLOWED");
             }
         } else {
-            // Contextual contact: the resource owner opted in by publishing —
+            // Contextual contact: the resource owner opted in by publishing -
             // dm_permission governs GENERAL only per v10.12. Deployments can
             // tighten this via context-respects-dm-permission.
             accepted = true;
@@ -579,7 +593,7 @@ public class MessagingService {
             throw conversationRejected(e);
         }
         if (convId == null) {
-            // Concurrent create lost the race — reuse the winner's row.
+            // Concurrent create lost the race - reuse the winner's row.
             var won = findConversation(a, b, contextType, cmd.contextId())
                     .orElseThrow(() -> bad("CONVERSATION_CONFLICT"));
             return reuseConversation(won, actor, self, cmd);
@@ -595,7 +609,7 @@ public class MessagingService {
         if (cmd.initialMessage() != null && !cmd.initialMessage().isBlank()) {
             sendInternal(actor, requireConversation(convId), self,
                     cmd.initialMessage(), cmd.clientMessageId(), null,
-                    requestId);
+                    requestId, List.of());
         }
         return toView(requireConversation(convId), actor, self);
     }
@@ -603,7 +617,7 @@ public class MessagingService {
     /**
      * {@code sender_id}/{@code recipient_id} are acting users: for a business
      * side the schema trigger requires them to be active members of that
-     * business — so the sender is the acting member and the recipient the
+     * business - so the sender is the acting member and the recipient the
      * business's representative user.
      */
     private UUID insertMessageRequest(UUID convId, UUID actor, Endpoint sender,
@@ -630,7 +644,7 @@ public class MessagingService {
         }
         if (cmd.initialMessage() != null && !cmd.initialMessage().isBlank()) {
             sendInternal(actor, c, self, cmd.initialMessage(),
-                    cmd.clientMessageId(), null, null);
+                    cmd.clientMessageId(), null, null, List.of());
         }
         return toView(c, actor, self);
     }
@@ -638,7 +652,7 @@ public class MessagingService {
     /**
      * Re-opening a declined GENERAL conversation. The declined requester may
      * re-request only after {@code decline-cooldown} (re-evaluating privacy);
-     * the declined recipient re-engages freely — their own attempt is an
+     * the declined recipient re-engages freely - their own attempt is an
      * implicit accept. Non-request declined rows (shouldn't exist) fall back
      * to the plain view.
      */
@@ -695,7 +709,7 @@ public class MessagingService {
         ConversationRow reloaded = requireConversation(c.id());
         if (cmd.initialMessage() != null && !cmd.initialMessage().isBlank()) {
             sendInternal(actor, reloaded, self, cmd.initialMessage(),
-                    cmd.clientMessageId(), null, requestId);
+                    cmd.clientMessageId(), null, requestId, List.of());
         }
         return toView(reloaded, actor, self);
     }
@@ -750,7 +764,7 @@ public class MessagingService {
 
     /**
      * Module-API entry: context conversation creation for other modules
-     * (help-post responses, listing enquiries) — same checks as REST.
+     * (help-post responses, listing enquiries) - same checks as REST.
      */
     @Transactional
     public UUID ensureContextConversation(UUID actor,
@@ -765,7 +779,7 @@ public class MessagingService {
     // =================== listing / detail ===================
 
     /** SQL fragment matching conversations where {@code actor} occupies a
-     * participant side — personal endpoint match, or live active membership in
+     * participant side - personal endpoint match, or live active membership in
      * a business endpoint. Business ids are inlined (UUID literals, no user
      * input) to keep the query a single PreparedStatement. */
     private String mySidesSql(String alias, UUID actor, List<UUID> bizIds) {
@@ -907,7 +921,7 @@ public class MessagingService {
         Endpoint b = c.endpointB();
         // A business side is occupied by any active member; a personal side by
         // the endpoint user. The recorded participant side is the cursor row's
-        // side — fall back to live membership checks.
+        // side - fall back to live membership checks.
         if (a.businessAccountId() == null && actor.equals(a.userId())) {
             return a;
         }
@@ -1064,14 +1078,20 @@ public class MessagingService {
      */
     private MessageView sendInternal(UUID actor, ConversationRow c,
             Endpoint self, String body, String clientMessageId,
-            UUID replyToMessageId, UUID requestId) {
+            UUID replyToMessageId, UUID requestId, List<UUID> attachmentIds) {
+        boolean hasAttachments = attachmentIds != null && !attachmentIds.isEmpty();
         String text = body == null ? "" : body.trim();
-        if (text.isEmpty() || text.length() > MAX_BODY) {
-            throw bad("INVALID_MESSAGE_BODY");
+        if (!hasAttachments) {
+            if (text.isEmpty() || text.length() > MAX_BODY) {
+                throw bad("INVALID_MESSAGE_BODY");
+            }
+        } else {
+            if (text.length() > MAX_BODY) throw bad("INVALID_MESSAGE_BODY");
         }
         requireNotBlocked(c.endpointA(), c.endpointB());
         requireNotDmMuted(actor);
         requireReplyTarget(c.id(), replyToMessageId);
+        if (hasAttachments) validateAttachments(attachmentIds, actor);
 
         UUID messageRequestId = requestId;
         if (!"ACCEPTED".equals(c.status())) {
@@ -1098,23 +1118,32 @@ public class MessagingService {
             }
         }
 
-        // Idempotent replay — client_message_id is unique per sender.
+        // Idempotent replay - client_message_id is unique per sender.
         if (clientMessageId != null && !clientMessageId.isBlank()) {
             var prior = jdbc.query("SELECT id,sequence_no,created_at,"
-                            + "sender_business_account_id,body,"
+                            + "sender_business_account_id,body,message_type,"
                             + "reply_to_message_id,edited_at FROM direct_messages"
                             + " WHERE sender_id=? AND client_message_id=?",
-                    (rs, i) -> new MessageView(rs.getObject(1, UUID.class),
-                            c.id(), rs.getLong(2), actor,
-                            rs.getObject(4, UUID.class), rs.getString(5),
-                            "TEXT", rs.getObject(6, UUID.class),
-                            rs.getTimestamp(3).toInstant(), ts(rs, "edited_at")),
+                    (rs, i) -> {
+                        UUID priorId = rs.getObject(1, UUID.class);
+                        Map<UUID, List<AttachmentView>> atMap =
+                                loadAttachments(List.of(priorId));
+                        return new MessageView(priorId,
+                                c.id(), rs.getLong("sequence_no"), actor,
+                                rs.getObject("sender_business_account_id", UUID.class),
+                                rs.getString("body"),
+                                rs.getString("message_type"),
+                                rs.getObject("reply_to_message_id", UUID.class),
+                                rs.getTimestamp("created_at").toInstant(),
+                                ts(rs, "edited_at"),
+                                atMap.getOrDefault(priorId, List.of()));
+                    },
                     actor, clientMessageId).stream().findFirst();
-            if (prior.isPresent()) {
-                return prior.get();
-            }
+            if (prior.isPresent()) { return prior.get(); }
         }
 
+        String msgType = hasAttachments ? "MEDIA" : "TEXT";
+        String finalBody = (text == null || text.isEmpty()) ? null : text;
         UUID id = UUID.randomUUID();
         try {
             var row = jdbc.queryForMap(
@@ -1122,16 +1151,26 @@ public class MessagingService {
                             + "sender_business_account_id,message_request_id,"
                             + "client_message_id,body,message_type,"
                             + "reply_to_message_id)"
-                            + " VALUES(?,?,?,?,?,?,?, 'TEXT',?)"
+                            + " VALUES(?,?,?,?,?,?,?,?,?)"
                             + " RETURNING id,sequence_no,created_at",
                     id, c.id(), actor, self.businessAccountId(),
                     messageRequestId,
                     clientMessageId == null || clientMessageId.isBlank()
                             ? null : clientMessageId,
-                    text, replyToMessageId);
+                    finalBody, msgType, replyToMessageId);
             long seq = ((Number) row.get("sequence_no")).longValue();
             Instant createdAt = ((java.sql.Timestamp) row.get("created_at"))
                     .toInstant();
+            // M4: persist attachment associations
+            List<AttachmentView> savedAtts = List.of();
+            if (hasAttachments) {
+                for (int i = 0; i < attachmentIds.size(); i++) {
+                    jdbc.update("INSERT INTO direct_message_media"
+                            + "(message_id,media_id,sort_order) VALUES(?,?,?)",
+                            id, attachmentIds.get(i), i);
+                }
+                savedAtts = loadAttachments(List.of(id)).getOrDefault(id, List.of());
+            }
             enqueueOutbox(c, "MESSAGE_CREATED",
                     "{\"messageId\":\"" + id + "\",\"conversationId\":\""
                             + c.id() + "\",\"sequenceNo\":" + seq
@@ -1142,10 +1181,10 @@ public class MessagingService {
                             + ",\"createdAt\":\"" + createdAt + "\"}",
                     "dm-created:" + id);
             return new MessageView(id, c.id(), seq, actor,
-                    self.businessAccountId(), text, "TEXT", replyToMessageId,
-                    createdAt, null);
+                    self.businessAccountId(), finalBody, msgType,
+                    replyToMessageId, createdAt, null, savedAtts);
         } catch (DuplicateKeyException e) {
-            // sequence_no or client_message_id race — safe to surface 409.
+            // sequence_no or client_message_id race - safe to surface 409.
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "MESSAGE_CONFLICT", e);
         } catch (DataIntegrityViolationException e) {
@@ -1155,8 +1194,162 @@ public class MessagingService {
         }
     }
 
+
+    // =================== M4 attachment helpers ===================
+
     /**
-     * Transactional outbox event for realtime fan-out (schema §7.2 — the
+     * Validates that each attachment is owned by {@code owner}, has an
+     * allowed messaging purpose (MESSAGE_IMAGE or MESSAGE_DOCUMENT) and is
+     * READY. Enforces the per-message attachment count limit from config.
+     */
+    private void validateAttachments(List<UUID> attachmentIds, UUID owner) {
+        if (attachmentIds.size() > props.maxAttachmentsPerMessage()) {
+            throw bad("TOO_MANY_ATTACHMENTS");
+        }
+        for (UUID assetId : attachmentIds) {
+            var asset = media.asset(assetId)
+                    .orElseThrow(() -> bad("ATTACHMENT_NOT_FOUND:" + assetId));
+            if (!asset.ownerId().equals(owner)) {
+                throw forbidden("ATTACHMENT_NOT_OWNER:" + assetId);
+            }
+            if (!ATTACHMENT_PURPOSES.contains(asset.purpose())) {
+                throw bad("ATTACHMENT_INVALID_PURPOSE:" + assetId);
+            }
+            if (!"READY".equals(asset.status())) {
+                throw bad("ATTACHMENT_NOT_READY:" + assetId);
+            }
+        }
+    }
+
+    /** Batch-loads attachment metadata for the given message IDs. */
+    private Map<UUID, List<AttachmentView>> loadAttachments(List<UUID> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) return Map.of();
+        String ph = String.join(",",
+                Collections.nCopies(messageIds.size(), "?::uuid"));
+        var rows = jdbc.query(
+                "SELECT dmm.message_id,mo.id AS asset_id,mo.purpose,"
+                        + "mo.mime_type,mo.size_bytes"
+                        + " FROM direct_message_media dmm"
+                        + " JOIN media_objects mo ON mo.id=dmm.media_id"
+                        + " WHERE dmm.message_id IN (" + ph + ")"
+                        + " AND mo.deleted_at IS NULL"
+                        + " ORDER BY dmm.message_id,dmm.sort_order",
+                (rs, i) -> new Object[]{
+                        rs.getObject("message_id", UUID.class),
+                        rs.getObject("asset_id", UUID.class),
+                        rs.getString("purpose"), rs.getString("mime_type"),
+                        rs.getObject("size_bytes", Long.class)},
+                messageIds.toArray());
+        Map<UUID, List<AttachmentView>> result = new LinkedHashMap<>();
+        for (var row : rows) {
+            UUID msgId = (UUID) row[0];
+            result.computeIfAbsent(msgId, k -> new ArrayList<>()).add(
+                    new AttachmentView((UUID) row[1], (String) row[2],
+                            (String) row[3], (Long) row[4]));
+        }
+        return result;
+    }
+
+    /**
+     * M4: Short-lived presigned GET URL for a conversation attachment.
+     * Full authorization: actor must be an active participant, message must
+     * belong to the conversation and not be deleted, and the asset must be
+     * linked to that message through direct_message_media.
+     */
+    public String attachmentDownloadUrl(UUID actor, UUID conversationId,
+            UUID messageId, UUID assetId) {
+        var c = requireConversation(conversationId);
+        requireSide(c, actor);
+        Boolean msgOk = jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM direct_messages"
+                        + " WHERE id=? AND conversation_id=? AND deleted_at IS NULL)",
+                Boolean.class, messageId, conversationId);
+        if (!Boolean.TRUE.equals(msgOk)) throw notFound("MESSAGE_NOT_FOUND");
+        Boolean attOk = jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM direct_message_media dmm"
+                        + " JOIN media_objects mo ON mo.id=dmm.media_id"
+                        + " WHERE dmm.message_id=? AND dmm.media_id=?"
+                        + " AND mo.deleted_at IS NULL"
+                        + " AND mo.status='READY')",
+                Boolean.class, messageId, assetId);
+        if (!Boolean.TRUE.equals(attOk)) throw notFound("ATTACHMENT_NOT_FOUND");
+        return media.authorizedDownloadUrl(assetId);
+    }
+
+    // =================== M4 typing/presence participant helpers ===================
+
+    /** User IDs of all current participants (personal or business members)
+     * in the conversation - used by typing and presence fan-out. */
+    public Set<UUID> conversationParticipantUserIds(UUID conversationId) {
+        var sides = jdbc.query("SELECT participant_a_id,"
+                        + "participant_a_business_account_id,participant_b_id,"
+                        + "participant_b_business_account_id"
+                        + " FROM direct_conversations WHERE id=?",
+                (rs, i) -> new UUID[]{rs.getObject(1, UUID.class),
+                        rs.getObject(2, UUID.class),
+                        rs.getObject(3, UUID.class),
+                        rs.getObject(4, UUID.class)},
+                conversationId);
+        Set<UUID> out = new java.util.HashSet<>();
+        for (UUID[] s : sides) {
+            for (int k = 0; k < 2; k++) {
+                UUID user = s[k * 2]; UUID biz = s[k * 2 + 1];
+                if (biz == null) { if (user != null) out.add(user); }
+                else out.addAll(businesses.activeMemberIds(biz));
+            }
+        }
+        return out;
+    }
+
+    /** User IDs of all partners the user has ACCEPTED conversations with -
+     * used by presence to fan out OFFLINE when a heartbeat times out.
+     * Matches personal participants AND business-account participants where
+     * the user is an active member (not just the acting member). */
+    public Set<UUID> acceptedConversationPartnerIds(UUID userId) {
+        // Find business accounts the user is an active member of.
+        Set<UUID> myBizIds = new java.util.HashSet<>(
+                businesses.activeAccountIdsOf(userId));
+        String bizPh = myBizIds.isEmpty()
+                ? "NULL"  // IN (NULL) never matches � no active memberships
+                : String.join(",", java.util.Collections.nCopies(
+                        myBizIds.size(), "?::uuid"));
+
+        var params = new java.util.ArrayList<Object>();
+        params.add(userId); params.add(userId);
+        params.addAll(myBizIds); params.addAll(myBizIds);
+
+        var rows = jdbc.query(
+                "SELECT participant_a_id,participant_a_business_account_id,"
+                        + "participant_b_id,participant_b_business_account_id"
+                        + " FROM direct_conversations"
+                        + " WHERE status='ACCEPTED'"
+                        + " AND (participant_a_id=? OR participant_b_id=?"
+                        + " OR participant_a_business_account_id IN (" + bizPh + ")"
+                        + " OR participant_b_business_account_id IN (" + bizPh + "))",
+                (rs, i) -> new UUID[]{rs.getObject(1, UUID.class),
+                        rs.getObject(2, UUID.class),
+                        rs.getObject(3, UUID.class),
+                        rs.getObject(4, UUID.class)},
+                params.toArray());
+        Set<UUID> partners = new java.util.HashSet<>();
+        for (UUID[] s : rows) {
+            UUID aId=s[0],aBiz=s[1],bId=s[2],bBiz=s[3];
+            boolean userIsOnASide = (aBiz == null && userId.equals(aId))
+                    || (aBiz != null && myBizIds.contains(aBiz));
+            if (userIsOnASide) {
+                if (bBiz == null) { if (bId != null) partners.add(bId); }
+                else partners.addAll(businesses.activeMemberIds(bBiz));
+            } else {
+                if (aBiz == null) { if (aId != null) partners.add(aId); }
+                else partners.addAll(businesses.activeMemberIds(aBiz));
+            }
+        }
+        partners.remove(userId);  // never include self
+        return partners;
+    }
+
+    /**
+     * Transactional outbox event for realtime fan-out (schema §7.2 - the
      * event is persisted atomically with the durable change; the
      * {@code OutboxDispatcher} ships it to Ably after commit). Idempotent:
      * a repeated dedupe key is ignored rather than failing the transaction.
@@ -1187,15 +1380,25 @@ public class MessagingService {
                 dedupeKey);
     }
 
+    /** Backward-compatible overload � text-only send (no attachments). */
     @Transactional
     public MessageView sendMessage(UUID actor, UUID conversationId,
             String body, String clientMessageId, UUID replyToMessageId) {
+        return sendMessage(actor, conversationId, body, clientMessageId,
+                replyToMessageId, List.of());
+    }
+
+    @Transactional
+    public MessageView sendMessage(UUID actor, UUID conversationId,
+            String body, String clientMessageId, UUID replyToMessageId,
+            List<UUID> attachmentIds) {
         var c = requireConversation(conversationId);
         Endpoint self = requireSide(c, actor);
         lockActor(actor);
         checkSendRate(actor);
+        List<UUID> atts = attachmentIds == null ? List.of() : attachmentIds;
         return sendInternal(actor, c, self, body, clientMessageId,
-                replyToMessageId, null);
+                replyToMessageId, null, atts);
     }
 
     public MessagePage messages(UUID actor, UUID conversationId,
@@ -1216,12 +1419,28 @@ public class MessagingService {
                         rs.getObject("sender_business_account_id", UUID.class),
                         rs.getString("body"), rs.getString("message_type"),
                         rs.getObject("reply_to_message_id", UUID.class),
-                        ts(rs, "created_at"), ts(rs, "edited_at")),
+                        ts(rs, "created_at"), ts(rs, "edited_at"),
+                        List.of()),
                 conversationId, before, limit);
         String next = null;
-        var page = rows.size() > limit - 1 ? rows.subList(0, limit - 1) : rows;
+        List<MessageView> page = rows.size() > limit - 1
+                ? new ArrayList<>(rows.subList(0, limit - 1)) : new ArrayList<>(rows);
         if (rows.size() > limit - 1) {
             next = String.valueOf(page.get(page.size() - 1).sequenceNo());
+        }
+        // M4: batch-load attachments for MEDIA messages (avoids N+1).
+        List<UUID> mediaMsgIds = page.stream()
+                .filter(m -> "MEDIA".equals(m.messageType()))
+                .map(MessageView::id).toList();
+        if (!mediaMsgIds.isEmpty()) {
+            Map<UUID, List<AttachmentView>> attMap = loadAttachments(mediaMsgIds);
+            page = page.stream().map(m -> {
+                List<AttachmentView> atts = attMap.get(m.id());
+                return atts == null ? m : new MessageView(m.id(), m.conversationId(),
+                        m.sequenceNo(), m.senderId(), m.senderBusinessAccountId(),
+                        m.body(), m.messageType(), m.replyToMessageId(),
+                        m.createdAt(), m.editedAt(), atts);
+            }).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         }
         return new MessagePage(page, next);
     }
@@ -1266,7 +1485,7 @@ public class MessagingService {
         } catch (DataIntegrityViolationException e) {
             throw bad("READ_CURSOR_REJECTED");
         }
-        // Realtime read-receipt fan-out — the counterparty renders "read"
+        // Realtime read-receipt fan-out - the counterparty renders "read"
         // ticks from this; dedupe key makes a repeated mark idempotent.
         enqueueOutbox(c, "MESSAGE_READ",
                 "{\"conversationId\":\"" + c.id() + "\",\"readerId\":\""
@@ -1423,7 +1642,7 @@ public class MessagingService {
                         + "responded_at=now() WHERE id=?",
                 accept ? "ACCEPTED" : "DECLINED", requestId);
         if (!accept) {
-            // The acceptance trigger only covers ACCEPTED/CLOSED — mark the
+            // The acceptance trigger only covers ACCEPTED/CLOSED - mark the
             // conversation declined so no side can continue it.
             jdbc.update("UPDATE direct_conversations SET status='DECLINED',"
                     + " updated_at=now() WHERE id=?", convId);

@@ -4,10 +4,11 @@ import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Messaging policy limits (v10.12 M2 abuse protection). All values are
- * configurable under {@code diasporum.messaging.*} with env-var overrides in
- * application.yaml; the compact constructor pins the documented defaults so an
- * unset property can never silently disable enforcement.
+ * Messaging policy limits (v10.12 M2 abuse protection + M4 attachment limits).
+ * All values are configurable under {@code diasporum.messaging.*} with
+ * env-var overrides in application.yaml; the compact constructor pins the
+ * documented defaults so an unset property can never silently disable
+ * enforcement.
  *
  * <p>Quotas are keyed on the acting user id ({@code created_by}/
  * {@code sender_id}), so switching devices, sessions or acting through a
@@ -36,7 +37,18 @@ public record MessagingProperties(
          * must also allow the conversation. Default false: v10.12 treats
          * published-resource owners as contactable — {@code dm_permission}
          * governs GENERAL conversations only (blocks/mutes always apply). */
-        boolean contextRespectsDmPermission) {
+        boolean contextRespectsDmPermission,
+        /** M4: maximum number of attachments per message (images + documents
+         * combined). Backend is authoritative — the mobile app must validate
+         * against this value, but the backend enforces it regardless. */
+        int maxAttachmentsPerMessage,
+        /** M4: seconds before a typing indicator is considered stale and
+         * automatically hidden on the receiving side. The mobile clears the
+         * indicator after this duration without a TYPING_STARTED refresh. */
+        int typingExpirySeconds,
+        /** M4: seconds of heartbeat absence before a user is considered
+         * offline. The backend presence scheduler checks this interval. */
+        int presenceTimeoutSeconds) {
 
     public MessagingProperties {
         if (createPerHour <= 0) {
@@ -53,6 +65,15 @@ public record MessagingProperties(
         }
         if (declineCooldown == null) {
             declineCooldown = Duration.ofDays(30);
+        }
+        if (maxAttachmentsPerMessage <= 0) {
+            maxAttachmentsPerMessage = 4;
+        }
+        if (typingExpirySeconds <= 0) {
+            typingExpirySeconds = 8;
+        }
+        if (presenceTimeoutSeconds <= 0) {
+            presenceTimeoutSeconds = 60;
         }
     }
 }

@@ -420,3 +420,299 @@ none required production changes:
 - Messaging observability (metrics on send latency, request accept rates,
   outbox depth / publish lag, parked-event alerting).
 - Outbox operational tooling: replay parked rows, dashboard for `last_error`.
+
+---
+
+# M4 — Attachments, Typing, Presence, Read-Receipt UI
+
+Branch: `feature/messaging-m4`. Extension of M1–M3. All 230 existing tests pass.
+
+## M4 Implemented Functionality
+
+### Attachment Lifecycle (Features A + B)
+
+**Secure upload flow** — three-step presigned PUT to Cloudflare R2, reusing the
+existing media module (`MediaService`). No new infrastructure added.
+
+| Step | Endpoint / Action | Behaviour |
+|------|-------------------|-----------|
+| 1 | `POST /api/v1/media/uploads` | Authenticated request for upload session; backend validates MIME+size, returns `{assetId, uploadUrl}` (short-lived R2 presigned PUT). |
+| 2 | Mobile → R2 PUT | Client uploads bytes directly to `uploadUrl` with `Content-Type` matching declared MIME. |
+| 3 | `POST /api/v1/media/uploads/{assetId}/complete` | Backend verifies object exists via storage `head`, marks `status='READY'`. |
+| 4 | `POST /api/v1/conversations/{id}/messages` | `attachmentIds[]` links READY assets to the message inside one DB transaction (rows in `direct_message_media`). |
+
+**Attachment validation at send** — `MessagingService.validateAttachments`:
+- Every asset must be owned by the sender (`ATTACHMENT_NOT_OWNER`, 403).
+- Purpose must be `MESSAGE_IMAGE` or `MESSAGE_DOCUMENT` (`ATTACHMENT_INVALID_PURPOSE`, 400).
+- Status must be `READY` (`ATTACHMENT_NOT_READY`, 400) — incomplete uploads can never become attachments.
+- Count must be ≤ `diasporum.messaging.max-attachments-per-message` (`TOO_MANY_ATTACHMENTS`, 400; default 4, configurable).
+- Optional caption (body ≤ 10 000 chars) allowed; `message_type='MEDIA'` set automatically.
+
+**Download authorization** — `POST /api/v1/conversations/{convId}/messages/{msgId}/attachments/{assetId}/download-url`:
+- Caller must be an active participant (`requireSide`, 404 for non-participants — existence not leaked).
+- Message must be in the conversation and not soft-deleted.
+- Asset must be linked in `direct_message_media`.
+- Returns a short-lived presigned GET URL — never a permanent or public URL.
+
+**Idempotency** — `client_message_id` retry replays the exact same `MessageView`
+with `attachments` populated; `ON CONFLICT` on `direct_message_media` prevents
+duplicate rows on retry.
+
+**Attachment association** — `direct_message_media` join table (pre-existing in
+schema): `message_id` FK → `direct_messages` ON DELETE RESTRICT,
+`media_id` FK → `media_objects` ON DELETE RESTRICT, `sort_order` for
+client-side ordering. No new columns or tables required for basic linkage.
+
+### Typing Indicators (Feature C)
+
+- `POST /api/v1/conversations/{convId}/typing` — `{typing: bool}` →
+  `TYPING_STARTED`/`TYPING_STOPPED` published directly to Ably (bypasses outbox
+  since ephemeral).
+- Authorization: caller must be an active participant in an `ACCEPTED`
+  conversation (403 otherwise).
+- Fan-out to all other participants' `user:{id}` channels — never to the
+  caller's own channel (avoids echo).
+- No DB writes, no outbox rows, no persistence.
+- Mobile debounce: publish on keystroke, auto-stop after 5 s of inactivity,
+  hard-stop on send. Receiver-side auto-expiry after 8 s
+  (`typingExpirySeconds`, configurable).
+- When Ably is disabled (`ably.isUsable()==false`) calls are silently absorbed — REST continues to work.
+
+### Presence (Feature D)
+
+- `POST /api/v1/presence/heartbeat` — REST heartbeat every ~30 s.
+  `PresenceTracker` (in-memory `ConcurrentHashMap`) records `lastSeen`; first
+  heartbeat after absence publishes `PRESENCE_ONLINE` to all ACCEPTED
+  conversation partners' `user:{id}` channels.
+- `POST /api/v1/presence/offline` — explicit sign-out/background; publishes
+  `PRESENCE_OFFLINE` to partners.
+- `GET /api/v1/conversations/{id}/presence` — returns `{"userId": bool}` for
+  all participants; caller must be a participant (403).
+- Scheduled `PresenceService.expireStalePresence` (fixed-delay, configurable
+  `presenceCheckInterval`, default PT30S) evicts users idle for
+  `presenceTimeoutSeconds` (default 60 s) and publishes `PRESENCE_OFFLINE`.
+- Fully ephemeral — no PostgreSQL writes.
+- Single-backend-instance in-memory state (multi-instance deployment needs
+  Redis or similar if required later).
+
+### Read-Receipt UI (Feature E)
+
+- `MESSAGE_READ` event (already in M3) now tracked in `useThread.partnerReadSeqs`.
+- `conversation-screen.tsx`: sender-side `✓`/`✓✓` ticks — single tick for
+  sent, double tick (`a5f3fc` colour) once `lastReadSeq` ≥ `sequenceNo`.
+- Cursor-paginated history correctly shows read state for older messages.
+- Reconnect → `load()` refetches message list + read cursors.
+
+## Database Migrations Added
+
+| File | Purpose |
+|------|---------|
+| `V6__messaging_m4_attachments.sql` | Extend `media_objects.purpose` CHECK to accept `MESSAGE_IMAGE` and `MESSAGE_DOCUMENT`. Applied cleanly. |
+
+## New REST API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/conversations/{id}/typing` | Publish typing-started/stopped |
+| `POST` | `/api/v1/presence/heartbeat` | Presence heartbeat |
+| `POST` | `/api/v1/presence/offline` | Explicit offline signal |
+| `GET`  | `/api/v1/conversations/{id}/presence` | Participant online status |
+| `POST` | `/api/v1/conversations/{cid}/messages/{mid}/attachments/{aid}/download-url` | Short-lived presigned GET URL |
+
+## Ably Events Added
+
+| Event | Channel | Payload | Persisted? |
+|-------|---------|---------|------------|
+| `TYPING_STARTED` | `user:{id}` | `{type,conversationId,userId}` | No |
+| `TYPING_STOPPED` | `user:{id}` | `{type,conversationId,userId}` | No |
+| `PRESENCE_ONLINE` | `user:{id}` | `{type,userId,online:true}` | No |
+| `PRESENCE_OFFLINE` | `user:{id}` | `{type,userId,online:false}` | No |
+
+Existing events (`MESSAGE_CREATED`, `MESSAGE_READ`, `CONVERSATION_UPDATED`)
+unchanged and still durable via the transactional outbox.
+
+## Configuration Added (`application.yaml`)
+
+```yaml
+diasporum.messaging:
+  max-attachments-per-message: ${DIASPORUM_MSG_MAX_ATTACHMENTS:4}
+  typing-expiry-seconds:       ${DIASPORUM_MSG_TYPING_EXPIRY:8}
+  presence-timeout-seconds:    ${DIASPORUM_MSG_PRESENCE_TIMEOUT:60}
+  presence-check-interval:     ${DIASPORUM_MSG_PRESENCE_CHECK_INTERVAL:PT30S}
+```
+
+## Security and Authorization
+
+- Backend is authoritative for every attachment decision — mobile client
+  validation is UX-level only and never trusted.
+- `media_objects.owner_user_id` checked against the authenticated principal.
+- `requireSide` returns 404 (not 403) for non-participants — conversation
+  existence not leaked.
+- Business-account actors can attach files the same way; membership is
+  re-validated per operation.
+- `direct_message_media` rows written inside the `@Transactional sendMessage`
+  scope — atomic with `direct_messages` insert.
+- `authorizedDownloadUrl` issues a presigned GET only after full conversation
+  + message + attachment chain verification.
+
+## Files Changed
+
+### Backend
+| File | Change |
+|------|--------|
+| `messaging/internal/application/MessagingService.java` | `sendMessage` attachmentIds param; `sendInternal` MEDIA type + `direct_message_media` inserts; `validateAttachments`, `loadAttachments`, `attachmentDownloadUrl`, `conversationParticipantUserIds`, `acceptedConversationPartnerIds`; `AttachmentView` record; `MessageView` extended with `attachments`. |
+| `messaging/internal/application/MessagingProperties.java` | `maxAttachmentsPerMessage`, `typingExpirySeconds`, `presenceTimeoutSeconds` |
+| `messaging/internal/application/TypingService.java` | **New** — ephemeral typing publish |
+| `messaging/internal/application/PresenceService.java` | **New** — heartbeat tracker + Ably fan-out |
+| `messaging/internal/application/PresenceTracker.java` | **New** — `ConcurrentHashMap` last-seen store |
+| `messaging/internal/api/rest/Requests.java` | `SendMessageRequest` + `TypingRequest` |
+| `messaging/internal/api/rest/DirectMessageController.java` | `attachmentIds` in send; download-url endpoint |
+| `messaging/internal/api/rest/TypingController.java` | **New** |
+| `messaging/internal/api/rest/PresenceController.java` | **New** |
+| `media/internal/application/MediaService.java` | `MESSAGE_I
+
+---
+
+# M4 � Attachments, Typing, Presence, Read-Receipt UI
+
+Branch: `feature/messaging-m4`. Extension of M1-M3. All 230 existing tests pass.
+
+## M4 Implemented Functionality
+
+### Attachment Lifecycle (Features A + B)
+
+Secure upload flow - three-step presigned PUT to Cloudflare R2, reusing the
+existing media module (MediaService). No new infrastructure added.
+
+Step 1: POST /api/v1/media/uploads - returns {assetId, uploadUrl} short-lived R2 presigned PUT.
+Step 2: Mobile uploads bytes directly to uploadUrl.
+Step 3: POST /api/v1/media/uploads/{assetId}/complete - verifies via storage head, marks READY.
+Step 4: POST /api/v1/conversations/{id}/messages - attachmentIds[] links READY assets in one DB transaction.
+
+Attachment validation at send (validateAttachments):
+- Asset must be owned by sender (403 ATTACHMENT_NOT_OWNER).
+- Purpose must be MESSAGE_IMAGE or MESSAGE_DOCUMENT (400 ATTACHMENT_INVALID_PURPOSE).
+- Status must be READY (400 ATTACHMENT_NOT_READY).
+- Count must be <= diasporum.messaging.max-attachments-per-message (400 TOO_MANY_ATTACHMENTS, default 4).
+- Optional caption; message_type=MEDIA set automatically.
+
+Download authorization:
+POST /api/v1/conversations/{convId}/messages/{msgId}/attachments/{assetId}/download-url
+- Caller must be active participant (404 for non-participants - existence not leaked).
+- Message must be in conversation, not soft-deleted.
+- Asset must be linked in direct_message_media.
+- Returns short-lived presigned GET URL only.
+
+Idempotency: client_message_id retry replays exact MessageView with attachments
+populated; ON CONFLICT on direct_message_media prevents duplicates.
+
+### Typing Indicators (Feature C)
+
+POST /api/v1/conversations/{convId}/typing {typing: bool}
+- Publishes TYPING_STARTED/TYPING_STOPPED directly to Ably (bypasses outbox - ephemeral).
+- Caller must be active participant in ACCEPTED conversation (403).
+- Fan-out to other participants user:{id} channels (never own channel).
+- No DB writes, no persistence.
+- Mobile debounce: 5s auto-stop, hard-stop on send.
+- Receiver-side auto-expiry after 8s (typingExpirySeconds, configurable).
+- When Ably disabled: calls silently absorbed.
+
+### Presence (Feature D)
+
+POST /api/v1/presence/heartbeat - updates lastSeen, publishes PRESENCE_ONLINE on first call.
+POST /api/v1/presence/offline - explicit sign-out, publishes PRESENCE_OFFLINE.
+GET /api/v1/conversations/{id}/presence - returns {"userId": bool}; participant check required.
+Scheduled expireStalePresence (default 30s interval) evicts idle users (>60s) and publishes PRESENCE_OFFLINE.
+Fully ephemeral - no PostgreSQL writes. Single-instance in-memory (PresenceTracker ConcurrentHashMap).
+
+### Read-Receipt UI (Feature E)
+
+MESSAGE_READ event tracked in useThread.partnerReadSeqs.
+Sender-side ticks: single tick sent, double tick (a5f3fc) once lastReadSeq >= sequenceNo.
+Reconnect -> load() refetches message list and read cursors.
+
+## Database Migrations
+
+V6__messaging_m4_attachments.sql: extends media_objects.purpose CHECK to accept
+MESSAGE_IMAGE and MESSAGE_DOCUMENT. Applied cleanly (6 migrations total).
+
+## New REST Endpoints
+
+POST /api/v1/conversations/{id}/typing
+POST /api/v1/presence/heartbeat
+POST /api/v1/presence/offline
+GET  /api/v1/conversations/{id}/presence
+POST /api/v1/conversations/{cid}/messages/{mid}/attachments/{aid}/download-url
+
+## New Ably Events
+
+TYPING_STARTED  -> user:{id}   {type, conversationId, userId}
+TYPING_STOPPED  -> user:{id}   {type, conversationId, userId}
+PRESENCE_ONLINE -> user:{id}   {type, userId, online: true}
+PRESENCE_OFFLINE -> user:{id}  {type, userId, online: false}
+Existing MESSAGE_CREATED, MESSAGE_READ, CONVERSATION_UPDATED unchanged.
+
+## Configuration Added
+
+diasporum.messaging.max-attachments-per-message   DIASPORUM_MSG_MAX_ATTACHMENTS       default 4
+diasporum.messaging.typing-expiry-seconds          DIASPORUM_MSG_TYPING_EXPIRY          default 8
+diasporum.messaging.presence-timeout-seconds       DIASPORUM_MSG_PRESENCE_TIMEOUT       default 60
+diasporum.messaging.presence-check-interval        DIASPORUM_MSG_PRESENCE_CHECK_INTERVAL default PT30S
+
+## Security and Authorization
+
+- Backend authoritative for all attachment decisions.
+- media_objects.owner_user_id checked against authenticated principal.
+- requireSide returns 404 for non-participants (existence not leaked).
+- Business-account actors: membership re-validated per operation.
+- direct_message_media inserts inside @Transactional sendMessage - atomic.
+- authorizedDownloadUrl: full conv+message+attachment chain verified.
+- No credentials, keys, or permanent URLs exposed to clients.
+
+## Files Changed
+
+Backend:
+  MessagingService.java        - attachmentIds, AttachmentView, MEDIA type, loadAttachments, validateAttachments, attachmentDownloadUrl, conversationParticipantUserIds, acceptedConversationPartnerIds
+  MessagingProperties.java     - maxAttachmentsPerMessage, typingExpirySeconds, presenceTimeoutSeconds
+  TypingService.java           - NEW
+  PresenceService.java         - NEW
+  PresenceTracker.java         - NEW
+  Requests.java                - SendMessageRequest + TypingRequest
+  DirectMessageController.java - attachmentIds, download-url endpoint
+  TypingController.java        - NEW
+  PresenceController.java      - NEW
+  MediaService.java            - MESSAGE_IMAGE, MESSAGE_DOCUMENT purposes
+  application.yaml             - M4 properties
+  V6__messaging_m4_attachments.sql - NEW
+
+Mobile:
+  messaging-types.ts           - AttachmentView, PendingAttachment, extended event types
+  messaging-api.ts             - attachmentIds, sendTyping, heartbeat, goOffline, conversationPresence, attachmentDownloadUrl
+  media-api.ts                 - NEW
+  realtime-service.ts          - new event types
+  use-thread.ts                - typing, presence, readSeqs, attachmentIds send
+  use-attachments.ts           - NEW
+  conversation-screen.tsx      - attachment bar, typing indicator, presence dot, read ticks
+  components/typing-indicator.tsx - NEW
+  components/presence-dot.tsx     - NEW
+  components/image-bubble.tsx     - NEW
+  components/document-bubble.tsx  - NEW
+  components/attachment-preview-bar.tsx - NEW
+
+Tests:
+  MessagingAttachmentIntegrationTest.java - NEW, 13 tests
+
+## Test Results
+
+Backend ./mvnw test:   230 tests, 0 failures (all M1-M3 unchanged + 13 new M4 pass)
+Mobile npx tsc:        0 errors
+Mobile npx expo lint:  0 M4 errors (11 pre-existing in community-drawer.tsx, untouched)
+Mobile npx jest:       165 pass, 1 pre-existing failure (events-ui timeout, unrelated)
+
+## Known Limitations
+
+- expo-media-library not installed (camera-roll write-back not implemented; view-only fullscreen works).
+- Presence is single-instance in-memory; multi-pod needs Redis.
+- Attachment preview strips pending items only; uploaded image bytes not cached post-send.
+- Image editing UI (edited_at field exists) deferred.
+- Push notifications out of scope.
