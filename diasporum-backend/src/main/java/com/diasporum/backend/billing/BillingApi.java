@@ -2,7 +2,7 @@ package com.diasporum.backend.billing;
 
 import java.util.UUID;
 
-/** Public billing entitlement operations for consumer modules. */
+/** Public provider-neutral entitlement operations for consumer modules. */
 public interface BillingApi {
 
     /**
@@ -14,7 +14,23 @@ public interface BillingApi {
     EntitlementDecision consumePersonalQuota(UUID userId, String featureKey,
             String targetType, UUID targetId, String idempotencyKey);
 
+    /**
+     * Atomically consumes one configured entitlement. Repeating the same
+     * idempotency key is safe. NOT_CONFIGURED lets a feature follow its
+     * approved rollout behavior without inventing a grant or payment flow.
+     */
+    ConsumptionResult consume(UUID userId, UUID businessAccountId,
+            String featureKey, String targetType, UUID targetId,
+            String idempotencyKey);
+
     record EntitlementDecision(boolean allowed, String reason,
             long remaining) {
+    }
+
+    enum ConsumptionResult {
+        CONSUMED,
+        ALREADY_CONSUMED,
+        NOT_CONFIGURED,
+        ENTITLEMENT_REQUIRED
     }
 }
