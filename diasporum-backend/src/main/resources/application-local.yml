@@ -21,6 +21,11 @@ spring:
     # migrations. On an empty schema (e.g. Testcontainers) V1 applies normally.
     baseline-on-migrate: true
     baseline-version: 1
+    # Feature branches each number their migration as the "next" version, but
+    # PRs merge in a different order (e.g. V10 landed before V9). Without this,
+    # a dev DB that already applied the later version fails validation on the
+    # late-arriving migration ("resolved migration not applied to database").
+    out-of-order: true
 
 management:
   health:
