@@ -152,7 +152,6 @@ export default function HomeFeedScreen() {
         selected={feed.categoryId}
         onSelect={feed.setCategory}
       />
-      <View style={[styles.divider, { backgroundColor: theme.border }]} />
     </View>
   );
 
@@ -250,7 +249,6 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   safeArea: { flex: 1 },
   content: { flex: 1 },
-  divider: { height: StyleSheet.hairlineWidth, marginTop: Spacing.one },
   footer: { paddingVertical: Spacing.four },
   footerText: {
     textAlign: "center",
