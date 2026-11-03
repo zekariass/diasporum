@@ -56,6 +56,13 @@ diasporum:
     # access (native mobile clients are unaffected — CORS is not enforced on
     # non-browser requests).
     allowed-origins: ${DIASPORUM_CORS_ALLOWED_ORIGINS:}
+  feed:
+    polls:
+      # Poll creations per user per rolling hour, based on feed_posts rows.
+      create-per-hour: ${DIASPORUM_POLL_CREATE_PER_HOUR:10}
+      # New current-vote rows per user per rolling minute. Retries, changes and
+      # withdrawals do not create rows and therefore do not consume this quota.
+      vote-per-minute: ${DIASPORUM_POLL_VOTE_PER_MINUTE:120}
   # Direct-messaging policy limits (M2 abuse protection). Enforced
   # server-side in MessagingService, keyed on the acting user so devices,
   # sessions and business acting cannot bypass them. Values are rolling

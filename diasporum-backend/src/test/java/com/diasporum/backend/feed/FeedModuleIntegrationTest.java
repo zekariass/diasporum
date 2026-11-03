@@ -199,20 +199,16 @@ class FeedModuleIntegrationTest {
 
     @Test
     void pollsCreateVoteResults() {
-        var r = service.createPoll(u1, community, category, "Q?",
+        var created = service.createPoll(u1, community, category, "Q?",
                 List.of("Yes", "No"), null);
-        var post = (FeedService.PostRow) r.get("post");
-        assertEquals("POLL", post.postType());
-        var poll = service.poll(post.id(), u2);
-        var options = (List<java.util.Map<String, Object>>) poll.get("options");
-        assertEquals(2, options.size());
-        UUID optId = UUID.fromString((String) options.get(0).get("id"));
+        assertEquals("POLL", service.getPost(u1, created.postId()).postType());
+        var poll = service.poll(created.postId(), u2);
+        assertEquals(2, poll.options().size());
+        UUID optId = poll.options().get(0).id();
         service.vote(u2, optId, false);
-        assertEquals(1, ((List<?>) service.poll(post.id(), u2)
-                .get("myVotes")).size());
+        assertEquals(1, service.poll(created.postId(), u2).myVotes().size());
         assertThrows(ResponseStatusException.class,
-                () -> service.vote(u2, UUID.fromString(
-                        (String) options.get(1).get("id")), false));  // change off
+                () -> service.vote(u2, poll.options().get(1).id(), false));
     }
 
     @Test
@@ -279,14 +275,13 @@ class FeedModuleIntegrationTest {
 
     @Test
     void draftsHiddenFromOthers() {
-        var r = service.createPoll(u1, community, category, "Q?",
+        var created = service.createPoll(u1, community, category, "Q?",
                 List.of("Yes", "No"), null);
-        var post = (FeedService.PostRow) r.get("post");
         // DRAFT->published internally; simulate draft for the check:
-        jdbc.update("UPDATE feed_posts SET status='DRAFT' WHERE id=?", post.id());
+        jdbc.update("UPDATE feed_posts SET status='DRAFT' WHERE id=?", created.postId());
         assertThrows(ResponseStatusException.class,
-                () -> service.getPost(u2, post.id()));         // author-only
-        service.getPost(u1, post.id());                      // author OK
+                () -> service.getPost(u2, created.postId()));  // author-only
+        service.getPost(u1, created.postId());                 // author OK
     }
 
     @Test
@@ -307,24 +302,17 @@ class FeedModuleIntegrationTest {
 
     @Test
     void concurrentVoteIsIdempotent() throws Exception {
-        var r = service.createPoll(u1, community, category, "Q?",
+        var created = service.createPoll(u1, community, category, "Q?",
                 List.of("Yes", "No"), null);
-        var post = (FeedService.PostRow) r.get("post");
-        var opts = (List<java.util.Map<String, Object>>) service
-                .poll(post.id(), u2).get("options");
-        UUID optId = UUID.fromString((String) opts.get(0).get("id"));
+        UUID optId = service.poll(created.postId(), u2).options().get(0).id();
         var pool = java.util.concurrent.Executors.newFixedThreadPool(4);
         var latch = new java.util.concurrent.CountDownLatch(1);
         var outcomes = new java.util.concurrent.atomic.AtomicInteger();
         var futures = java.util.stream.IntStream.range(0, 4)
                 .mapToObj(i -> pool.submit(() -> {
                     latch.await();
-                    try {
-                        service.vote(u2, optId, false);
-                        outcomes.incrementAndGet();      // won the race
-                    } catch (org.springframework.dao.DuplicateKeyException e) {
-                        // lost — DB trigger correctly rejects; acceptable
-                    }
+                    service.vote(u2, optId, false);
+                    outcomes.incrementAndGet();
                     return null;
                 })).toList();
         latch.countDown();
@@ -332,9 +320,8 @@ class FeedModuleIntegrationTest {
             f.get();
         }
         pool.shutdown();
-        assertEquals(1, outcomes.get());                 // exactly one winner
-        assertEquals(1, ((List<?>) service.poll(post.id(), u2)
-                .get("myVotes")).size());                // exactly one row
+        assertEquals(4, outcomes.get());
+        assertEquals(1, service.poll(created.postId(), u2).myVotes().size());
     }
 
     private void socialFollow(UUID a, UUID b) {

@@ -5,7 +5,14 @@ import com.diasporum.backend.feed.internal.application.FeedService.CommentPage;
 import com.diasporum.backend.feed.internal.application.FeedService.CommentRow;
 import com.diasporum.backend.feed.internal.application.FeedService.FeedPage;
 import com.diasporum.backend.feed.internal.application.FeedService.PostRow;
+import com.diasporum.backend.feed.internal.api.rest.PollRequests.CreatePollRequest;
+import com.diasporum.backend.feed.internal.api.rest.PollRequests.ReportPostRequest;
+import com.diasporum.backend.feed.internal.api.rest.PollRequests.UpdatePollRequest;
+import com.diasporum.backend.feed.internal.api.rest.PollRequests.VoteRequest;
+import com.diasporum.backend.feed.internal.api.rest.PollResponses.PollResponse;
+import com.diasporum.backend.feed.internal.api.rest.PollResponses.ReportResponse;
 import com.diasporum.backend.identity.IdentityApi;
+import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +29,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -87,6 +95,14 @@ public class FeedController {
     @DeleteMapping("/posts/{postId}")
     public void delete(@AuthenticationPrincipal DiasporumUserPrincipal principal, @PathVariable UUID postId) {
         service.deletePost(principal.userId(), postId);
+    }
+
+    @PostMapping("/posts/{postId}/reports")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ReportResponse report(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID postId, @Valid @RequestBody ReportPostRequest request) {
+        return new ReportResponse(service.reportPost(principal.userId(), postId,
+                request.reason(), request.details()));
     }
 
     // ---- feeds ----
@@ -212,33 +228,44 @@ public class FeedController {
     // ---- polls ----
 
     @PostMapping("/polls")
-    public Map<String, Object> createPoll(@AuthenticationPrincipal DiasporumUserPrincipal principal,
-            @RequestBody Map<String, Object> b) {
-        return service.createPoll(principal.userId(),
-                UUID.fromString((String) b.get("communityId")),
-                uuid(b, "categoryId"),
-                (String) b.get("question"),
-                ((List<?>) b.get("options")).stream().map(Object::toString).toList(),
-                b.get("closesAt") == null ? null
-                        : Instant.parse(b.get("closesAt").toString()));
+    @ResponseStatus(HttpStatus.CREATED)
+    public PollResponse createPoll(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @Valid @RequestBody CreatePollRequest request) {
+        return service.createPoll(principal.userId(), request.communityId(),
+                request.categoryId(), request.question(), request.options(),
+                request.maxOptions(), request.closesAt(), request.allowMultiple(),
+                request.allowVoteChange(), request.allowVoteWithdraw(),
+                request.anonymousVoting(), request.resultsVisibility().name());
     }
 
     @GetMapping("/polls/{postId}")
-    public Map<String, Object> poll(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+    public PollResponse poll(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @PathVariable UUID postId) {
         return service.poll(postId, principal.userId());
     }
 
+    @PatchMapping("/polls/{postId}")
+    public PollResponse updatePoll(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID postId, @Valid @RequestBody UpdatePollRequest request) {
+        return service.updatePoll(principal.userId(), postId, request.question(),
+                request.options(), request.maxOptions(), request.closesAt(),
+                request.allowMultiple(), request.allowVoteChange(),
+                request.allowVoteWithdraw(), request.anonymousVoting(),
+                request.resultsVisibility() == null ? null
+                        : request.resultsVisibility().name());
+    }
+
     @PostMapping("/polls/options/{optionId}/vote")
-    public void vote(@AuthenticationPrincipal DiasporumUserPrincipal principal, @PathVariable UUID optionId,
-            @RequestBody(required = false) Map<String, Object> b) {
-        try {
-            service.vote(principal.userId(), optionId,
-                    b != null && Boolean.TRUE.equals(b.get("withdraw")));
-        } catch (org.springframework.dao.DuplicateKeyException e) {
-            // One-option-per-user trigger: racing/duplicate vote → 409.
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "VOTE_CONFLICT", e);
-        }
+    public PollResponse vote(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID optionId,
+            @RequestBody(required = false) VoteRequest request) {
+        return service.vote(principal.userId(), optionId,
+                request != null && request.withdraw());
+    }
+
+    @PostMapping("/polls/{postId}/close")
+    public PollResponse closePoll(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID postId) {
+        return service.closePoll(principal.userId(), postId);
     }
 }

@@ -112,17 +112,47 @@ describe('feedApi', () => {
       expect.anything());
   });
 
-  it('createPoll posts question and options', async () => {
-    await api.createPoll({ communityId: 'c1', question: 'Best city?', options: ['A', 'B'] });
-    expect(client.post).toHaveBeenCalledWith('/api/v1/feed/polls',
-      { communityId: 'c1', question: 'Best city?', options: ['A', 'B'] },
-      expect.anything());
+  it('createPoll posts the complete typed Poll contract', async () => {
+    const request = {
+      communityId: 'c1', categoryId: 'cat1', question: 'Best city?', options: ['A', 'B'],
+      maxOptions: 8, allowMultiple: true, allowVoteChange: true,
+      allowVoteWithdraw: true, anonymousVoting: true, resultsVisibility: 'IMMEDIATE' as const,
+    };
+    await api.createPoll(request);
+    expect(client.post).toHaveBeenCalledWith('/api/v1/feed/polls', request,
+      expect.objectContaining({ authenticated: true }));
   });
 
   it('vote posts to option endpoint', async () => {
     await api.vote('opt1', false);
     expect(client.post).toHaveBeenCalledWith('/api/v1/feed/polls/options/opt1/vote',
       { withdraw: false }, expect.anything());
+  });
+
+  it('getPoll hits the Poll detail endpoint', async () => {
+    await api.getPoll('p1');
+    expect(client.get).toHaveBeenCalledWith('/api/v1/feed/polls/p1',
+      expect.objectContaining({ authenticated: true }));
+  });
+
+  it('updatePoll patches the Poll endpoint', async () => {
+    const request = { question: 'Updated?', options: ['A', 'B', 'C'], maxOptions: 6 };
+    await api.updatePoll('p1', request);
+    expect(client.patch).toHaveBeenCalledWith('/api/v1/feed/polls/p1', request,
+      expect.objectContaining({ authenticated: true }));
+  });
+
+  it('closePoll posts an empty close request', async () => {
+    await api.closePoll('p1');
+    expect(client.post).toHaveBeenCalledWith('/api/v1/feed/polls/p1/close', {},
+      expect.objectContaining({ authenticated: true }));
+  });
+
+  it('reportPost uses the shared post report endpoint', async () => {
+    await api.reportPost('p1', { reason: 'SPAM', details: 'Repeated unsolicited content' });
+    expect(client.post).toHaveBeenCalledWith('/api/v1/feed/posts/p1/reports',
+      { reason: 'SPAM', details: 'Repeated unsolicited content' },
+      expect.objectContaining({ authenticated: true }));
   });
 
   it('recordView swallows errors silently', async () => {
