@@ -1,8 +1,8 @@
 /**
- * FeatureNav — horizontal scrollable strip of Diasporum modules.
- * Stateless: caller tracks the active key and handles selection.
- * Implemented features update content in-place on the home screen;
- * unimplemented ones show a "coming soon" alert raised by the caller.
+ * FeatureNav — horizontal scrollable feature category strip.
+ * Modern underline-tab style: icon stacked above a short label, active item
+ * uses a filled icon variant in the brand colour with a 3 px indicator bar.
+ * Stateless: caller owns activeKey and handles onSelect.
  */
 import React from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
@@ -10,31 +10,35 @@ import { Ionicons } from "@expo/vector-icons";
 import type { ComponentProps } from "react";
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
-import { BrandColors } from "@/shared/theme/colors";
 import { Spacing } from "@/shared/theme/spacing";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 
-export const FEATURES: { key: string; icon: IconName; label: string }[] = [
-  { key: "feed", icon: "home-outline", label: "Feed" },
-  { key: "reels", icon: "play-outline", label: "Vids" },
-  { key: "people", icon: "people-outline", label: "People" },
-  { key: "dating", icon: "heart-outline", label: "Matchmaking / Dating" },
-  { key: "help", icon: "hand-left-outline", label: "Community Help & Offers" },
-  { key: "services", icon: "construct-outline", label: "Service Marketplace" },
-  { key: "property", icon: "business-outline", label: "Property" },
-  { key: "vehicle", icon: "car-outline", label: "Vehicle" },
-  { key: "event", icon: "calendar-outline", label: "Events" },
-  { key: "spare-bag", icon: "bag-handle-outline", label: "Spare Bag" },
-  { key: "business", icon: "storefront-outline", label: "Business" },
-  { key: "jobs", icon: "briefcase-outline", label: "Jobs" },
-  { key: "poll", icon: "stats-chart-outline", label: "Polls" },
+interface Feature {
+  key: string;
+  icon: IconName;       // outline — inactive
+  activeIcon: IconName; // filled — active
+  label: string;
+}
+
+export const FEATURES: Feature[] = [
+  { key: "feed",      icon: "home-outline",          activeIcon: "home",           label: "Feed" },
+  { key: "reels",     icon: "play-circle-outline",   activeIcon: "play-circle",    label: "Vids" },
+  { key: "people",    icon: "people-outline",         activeIcon: "people",         label: "People" },
+  { key: "dating",    icon: "heart-outline",          activeIcon: "heart",          label: "Dating" },
+  { key: "property",  icon: "business-outline",       activeIcon: "business",       label: "Property" },
+  { key: "vehicle",   icon: "car-outline",            activeIcon: "car",            label: "Vehicles" },
+  { key: "event",     icon: "calendar-outline",       activeIcon: "calendar",       label: "Events" },
+  { key: "spare-bag", icon: "bag-handle-outline",     activeIcon: "bag-handle",     label: "Spare Bag" },
+  { key: "business",  icon: "storefront-outline",     activeIcon: "storefront",     label: "Business" },
+  { key: "jobs",      icon: "briefcase-outline",      activeIcon: "briefcase",      label: "Jobs" },
+  { key: "poll",      icon: "stats-chart-outline",    activeIcon: "stats-chart",    label: "Polls" },
+  { key: "help",      icon: "hand-left-outline",      activeIcon: "hand-left",      label: "Help" },
+  { key: "services",  icon: "construct-outline",      activeIcon: "construct",      label: "Services" },
 ];
 
 interface FeatureNavProps {
-  /** Currently active feature key */
   activeKey: string;
-  /** Called when the user taps a feature button */
   onSelect: (key: string) => void;
 }
 
@@ -50,7 +54,8 @@ export function FeatureNav({ activeKey, onSelect }: FeatureNavProps) {
       >
         {FEATURES.map((feature) => {
           const active = feature.key === activeKey;
-          const color = active ? BrandColors.white : theme.textSecondary;
+          const iconColor = active ? theme.primary : theme.textSecondary;
+
           return (
             <Pressable
               key={feature.key}
@@ -60,21 +65,44 @@ export function FeatureNav({ activeKey, onSelect }: FeatureNavProps) {
               accessibilityState={{ selected: active }}
               style={({ pressed }) => [
                 styles.item,
-                {
-                  backgroundColor: active
-                    ? BrandColors.primary
-                    : theme.backgroundElement,
-                  borderColor: active ? BrandColors.primary : theme.border,
-                },
                 pressed && styles.itemPressed,
               ]}
             >
-              <Ionicons name={feature.icon} size={17} color={color} />
+              {/* Icon in a subtle tinted bubble when active */}
+              <View
+                style={[
+                  styles.iconWrap,
+                  active && {
+                    backgroundColor: theme.primarySurface,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={active ? feature.activeIcon : feature.icon}
+                  size={22}
+                  color={iconColor}
+                />
+              </View>
+
+              {/* Label */}
               <ThemedText
-                style={[styles.label, { color }, active && styles.activeLabel]}
+                style={[
+                  styles.label,
+                  { color: active ? theme.primary : theme.textSecondary },
+                  active && styles.activeLabel,
+                ]}
+                numberOfLines={1}
               >
                 {feature.label}
               </ThemedText>
+
+              {/* Active indicator bar */}
+              <View
+                style={[
+                  styles.indicator,
+                  { backgroundColor: active ? theme.primary : "transparent" },
+                ]}
+              />
             </Pressable>
           );
         })}
@@ -83,26 +111,50 @@ export function FeatureNav({ activeKey, onSelect }: FeatureNavProps) {
   );
 }
 
+const ICON_BUBBLE = 40;
+
 const styles = StyleSheet.create({
-  wrap: { borderBottomWidth: StyleSheet.hairlineWidth },
+  wrap: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
   strip: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
+    alignItems: "flex-end",
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.two,
+    gap: Spacing.px,
   },
   item: {
-    minHeight: 38,
-    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Spacing.two,
+    minWidth: 58,
+    gap: 4,
+  },
+  itemPressed: {
+    opacity: 0.65,
+    transform: [{ scale: 0.94 }],
+  },
+  iconWrap: {
+    width: ICON_BUBBLE,
+    height: ICON_BUBBLE,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    gap: 7,
-    borderWidth: 1,
-    borderRadius: 20,
-    paddingHorizontal: 14,
   },
-  itemPressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
-  label: { fontSize: 12, lineHeight: 16, fontWeight: "600" },
-  activeLabel: { fontWeight: "700" },
+  label: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  activeLabel: {
+    fontWeight: "700",
+  },
+  indicator: {
+    height: 3,
+    width: 24,
+    borderRadius: 2,
+    marginTop: 3,
+    marginBottom: -StyleSheet.hairlineWidth, // sit flush on the bottom border
+  },
 });
