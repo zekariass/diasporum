@@ -1,5 +1,6 @@
 /**
  * Profile tab — displays the user's own profile from backend state.
+ * Avatar and name/handle are laid out side by side in a compact header row.
  * Provides navigation to edit profile.
  */
 
@@ -18,6 +19,101 @@ import { useSession } from "@/core/session/session-provider";
 import { BrandColors } from "@/shared/theme/colors";
 import { Spacing, BorderRadius } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
+import { MediaImage } from "@/features/feed/components/media-image";
+
+const AVATAR_SIZE = 72;
+
+function AvatarLetter({ letter }: { letter: string }) {
+  return (
+    <View style={[styles.avatar, { backgroundColor: BrandColors.primary }]}>
+      <ThemedText style={styles.avatarLetter}>{letter}</ThemedText>
+    </View>
+  );
+}
+
+function IdentityBlock({
+  displayName,
+  username,
+  bio,
+  avatarMediaId,
+  completed,
+}: {
+  displayName: string;
+  username: string;
+  bio: string | null;
+  avatarMediaId: string | null;
+  completed: boolean;
+}) {
+  const theme = useTheme();
+  const router = useRouter();
+
+  return (
+    <View style={styles.identityBlock}>
+      {/* Avatar — left */}
+      <View style={styles.avatarWrap}>
+        {avatarMediaId ? (
+          <MediaImage
+            mediaId={avatarMediaId}
+            style={styles.avatarImage}
+          />
+        ) : (
+          <AvatarLetter
+            letter={(displayName ?? username ?? "?")[0].toUpperCase()}
+          />
+        )}
+      </View>
+
+      {/* Name / handle / bio — right */}
+      <View style={styles.identityText}>
+        <View style={styles.nameRow}>
+          <ThemedText type="subtitle" numberOfLines={1}>
+            {displayName ?? "No name set"}
+          </ThemedText>
+          {completed ? (
+            <Ionicons
+              name="checkmark-circle"
+              size={16}
+              color={BrandColors.primary}
+              style={styles.verifyIcon}
+            />
+          ) : null}
+        </View>
+
+        <ThemedText themeColor="textSecondary" style={styles.username}>
+          @{username ?? "username"}
+        </ThemedText>
+
+        {bio ? (
+          <ThemedText
+            themeColor="textSecondary"
+            style={styles.bio}
+            numberOfLines={2}
+          >
+            {bio}
+          </ThemedText>
+        ) : null}
+
+        <Pressable
+          onPress={() => router.push("/(app)/profile/edit" as never)}
+          accessibilityRole="button"
+          accessibilityLabel="Edit profile"
+          style={({ pressed }) => [
+            styles.editPill,
+            { borderColor: theme.border },
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="pencil-outline" size={12} color={theme.primary} />
+          <ThemedText
+            style={[styles.editPillText, { color: theme.primary }]}
+          >
+            Edit profile
+          </ThemedText>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
 
 export default function ProfileTabScreen() {
   const theme = useTheme();
@@ -25,6 +121,41 @@ export default function ProfileTabScreen() {
   const { logout } = useAuth();
   const { session } = useSession();
   const profile = session?.profile;
+
+  const quickLinks = [
+    {
+      icon: "briefcase" as const,
+      label: "Business Workspace",
+      description: "Manage your businesses, listings and team.",
+      cta: "Manage Business Accounts",
+      route: "/(app)/business",
+      accent: true,
+    },
+    {
+      icon: "heart" as const,
+      label: "Matchmaking",
+      description: "Discover compatible adults with privacy-safe profiles.",
+      cta: "Open Matchmaking",
+      route: "/(app)/matchmaking",
+      accent: true,
+    },
+    {
+      icon: "briefcase-outline" as const,
+      label: "Jobs",
+      description: "Discover opportunities and manage your listings.",
+      cta: "Explore jobs",
+      route: "/(app)/jobs",
+      accent: false,
+    },
+    {
+      icon: "car-outline" as const,
+      label: "Vehicles",
+      description: "Discover vehicles and manage your listings.",
+      cta: "Explore vehicles",
+      route: "/(app)/vehicles",
+      accent: false,
+    },
+  ];
 
   return (
     <ThemedView style={styles.root}>
@@ -36,10 +167,10 @@ export default function ProfileTabScreen() {
             onPress={() => router.push("/(app)/profile/edit")}
             accessibilityRole="button"
             accessibilityLabel="Edit profile"
-            style={({ pressed }) => [styles.editBtn, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.headerEditBtn, pressed && styles.pressed]}
           >
             <ThemedText
-              style={[styles.editBtnText, { color: BrandColors.primary }]}
+              style={[styles.headerEditText, { color: BrandColors.primary }]}
             >
               Edit
             </ThemedText>
@@ -47,143 +178,69 @@ export default function ProfileTabScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll}>
-          {/* Avatar + name */}
-          <View style={styles.identityBlock}>
-            <View
-              style={[styles.avatar, { backgroundColor: BrandColors.primary }]}
-              accessibilityRole="image"
-              accessibilityLabel="Profile photo"
-            >
-              <ThemedText style={styles.avatarLetter}>
-                {(profile?.displayName ??
-                  profile?.username ??
-                  "?")[0].toUpperCase()}
-              </ThemedText>
-            </View>
-            <ThemedText type="subtitle" style={styles.displayName}>
-              {profile?.displayName ?? "No name set"}
-            </ThemedText>
-            <ThemedText themeColor="textSecondary" style={styles.username}>
-              @{profile?.username ?? "username"}
-            </ThemedText>
-            {profile?.bio ? (
-              <ThemedText style={styles.bio} themeColor="textSecondary">
-                {profile.bio}
-              </ThemedText>
-            ) : null}
-          </View>
+          {/* Avatar + name side by side */}
+          <IdentityBlock
+            displayName={profile?.displayName ?? "No name set"}
+            username={profile?.username ?? "username"}
+            bio={profile?.bio ?? null}
+            avatarMediaId={profile?.avatarMediaId ?? null}
+            completed={profile?.profileCompleted ?? false}
+          />
 
-          <Pressable
-            onPress={() => router.push("/(app)/business" as never)}
-            accessibilityRole="button"
-            accessibilityLabel="Manage Business Accounts"
-            style={({ pressed }) => [
-              styles.businessCard,
-              { backgroundColor: theme.primarySurface },
-              pressed && styles.pressed,
-            ]}
-          >
-            <View
-              style={[
-                styles.businessIcon,
-                { backgroundColor: theme.background },
-              ]}
-            >
-              <Ionicons name="briefcase" size={25} color={theme.primary} />
-            </View>
-            <View style={styles.businessCopy}>
-              <ThemedText style={styles.businessTitle}>
-                Business Workspace
-              </ThemedText>
-              <ThemedText
-                style={styles.businessDescription}
-                themeColor="textSecondary"
+          {/* Quick links */}
+          {quickLinks.map(
+            ({ icon, label, description, cta, route, accent }) => (
+              <Pressable
+                key={label}
+                onPress={() => router.push(route as never)}
+                accessibilityRole="button"
+                accessibilityLabel={cta}
+                style={({ pressed }) => [
+                  styles.businessCard,
+                  {
+                    backgroundColor: accent
+                      ? theme.primarySurface
+                      : theme.backgroundElement,
+                  },
+                  pressed && styles.pressed,
+                ]}
               >
-                Manage your businesses, listings and team.
-              </ThemedText>
-              <ThemedText
-                style={[styles.businessAction, { color: theme.primary }]}
-              >
-                Manage Business Accounts
-              </ThemedText>
-            </View>
-            <Ionicons name="chevron-forward" size={21} color={theme.primary} />
-          </Pressable>
-
-          <Pressable
-            onPress={() => router.push("/(app)/matchmaking" as never)}
-            accessibilityRole="button"
-            accessibilityLabel="Open Matchmaking"
-            style={({ pressed }) => [
-              styles.businessCard,
-              { backgroundColor: theme.primarySurface },
-              pressed && styles.pressed,
-            ]}
-          >
-            <View style={[styles.businessIcon, { backgroundColor: theme.background }]}>
-              <Ionicons name="heart" size={25} color={theme.primary} />
-            </View>
-            <View style={styles.businessCopy}>
-              <ThemedText style={styles.businessTitle}>Matchmaking</ThemedText>
-              <ThemedText style={styles.businessDescription} themeColor="textSecondary">
-                Discover compatible adults with privacy-safe profiles.
-              </ThemedText>
-              <ThemedText style={[styles.businessAction, { color: theme.primary }]}>
-                Open Matchmaking
-              </ThemedText>
-            </View>
-            <Ionicons name="chevron-forward" size={21} color={theme.primary} />
-          </Pressable>
-
-          <Pressable
-            onPress={() => router.push("/(app)/jobs" as never)}
-            accessibilityRole="button"
-            accessibilityLabel="Explore jobs"
-            style={({ pressed }) => [
-              styles.businessCard,
-              { backgroundColor: theme.backgroundElement },
-              pressed && styles.pressed,
-            ]}
-          >
-            <View style={[styles.businessIcon, { backgroundColor: theme.primarySurface }]}>
-              <Ionicons name="briefcase-outline" size={25} color={theme.primary} />
-            </View>
-            <View style={styles.businessCopy}>
-              <ThemedText style={styles.businessTitle}>Jobs</ThemedText>
-              <ThemedText style={styles.businessDescription} themeColor="textSecondary">
-                Discover opportunities and manage your listings.
-              </ThemedText>
-              <ThemedText style={[styles.businessAction, { color: theme.primary }]}>
-                Explore jobs
-              </ThemedText>
-            </View>
-            <Ionicons name="chevron-forward" size={21} color={theme.primary} />
-          </Pressable>
-
-          <Pressable
-            onPress={() => router.push("/(app)/vehicles" as never)}
-            accessibilityRole="button"
-            accessibilityLabel="Explore vehicles"
-            style={({ pressed }) => [
-              styles.businessCard,
-              { backgroundColor: theme.backgroundElement },
-              pressed && styles.pressed,
-            ]}
-          >
-            <View style={[styles.businessIcon, { backgroundColor: theme.primarySurface }]}>
-              <Ionicons name="car-outline" size={25} color={theme.primary} />
-            </View>
-            <View style={styles.businessCopy}>
-              <ThemedText style={styles.businessTitle}>Vehicles</ThemedText>
-              <ThemedText style={styles.businessDescription} themeColor="textSecondary">
-                Discover vehicles and manage your listings.
-              </ThemedText>
-              <ThemedText style={[styles.businessAction, { color: theme.primary }]}>
-                Explore vehicles
-              </ThemedText>
-            </View>
-            <Ionicons name="chevron-forward" size={21} color={theme.primary} />
-          </Pressable>
+                <View
+                  style={[
+                    styles.businessIcon,
+                    {
+                      backgroundColor: accent
+                        ? theme.background
+                        : theme.primarySurface,
+                    },
+                  ]}
+                >
+                  <Ionicons name={icon} size={25} color={theme.primary} />
+                </View>
+                <View style={styles.businessCopy}>
+                  <ThemedText style={styles.businessTitle}>
+                    {label}
+                  </ThemedText>
+                  <ThemedText
+                    style={styles.businessDescription}
+                    themeColor="textSecondary"
+                  >
+                    {description}
+                  </ThemedText>
+                  <ThemedText
+                    style={[styles.businessAction, { color: theme.primary }]}
+                  >
+                    {cta}
+                  </ThemedText>
+                </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={21}
+                  color={theme.primary}
+                />
+              </Pressable>
+            ),
+          )}
 
           {/* Details */}
           <View
@@ -255,36 +312,73 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.three,
     paddingBottom: Spacing.two,
   },
-  editBtn: { padding: 4 },
-  editBtnText: { fontSize: 15, fontWeight: "600" },
+  headerEditBtn: { padding: 4 },
+  headerEditText: { fontSize: 15, fontWeight: "600" },
   pressed: { opacity: 0.7 },
   scroll: {
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.five,
     gap: Spacing.four,
   },
+
+  /* ── Identity block ── */
   identityBlock: {
-    alignItems: "center",
-    gap: Spacing.one,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: Spacing.three,
     paddingTop: Spacing.two,
   },
+  avatarWrap: {
+    width: AVATAR_SIZE,
+    height: AVATAR_SIZE,
+    borderRadius: AVATAR_SIZE / 2,
+    overflow: "hidden",
+    flexShrink: 0,
+  },
   avatar: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: AVATAR_SIZE,
+    height: AVATAR_SIZE,
+    borderRadius: AVATAR_SIZE / 2,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: Spacing.two,
   },
-  avatarLetter: { fontSize: 36, fontWeight: "700", color: "#FFFFFF" },
-  displayName: { textAlign: "center" },
-  username: { fontSize: 14 },
+  avatarLetter: { fontSize: 28, fontWeight: "700", color: "#FFFFFF" },
+  avatarImage: {
+    width: AVATAR_SIZE,
+    height: AVATAR_SIZE,
+    borderRadius: AVATAR_SIZE / 2,
+  },
+  identityText: {
+    flex: 1,
+    gap: 3,
+    paddingTop: 2,
+  },
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  verifyIcon: { marginTop: 1 },
+  username: { fontSize: 13 },
   bio: {
-    textAlign: "center",
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  editPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 5,
+    borderWidth: 1,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 5,
     marginTop: Spacing.one,
   },
+  editPillText: { fontSize: 11, fontWeight: "600" },
+
+  /* ── Cards ── */
   businessCard: {
     flexDirection: "row",
     alignItems: "center",
