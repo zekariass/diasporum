@@ -34,7 +34,13 @@ import { BrandColors } from "@/shared/theme/colors";
 import { Spacing, BorderRadius } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
 import { ApiError } from "@/core/api/api-error";
-import type { HelpKind } from "../types/feed-types";
+import type { CategoryView, HelpKind } from "../types/feed-types";
+import {
+  createPollRequest,
+  emptyPollFormValue,
+  PollForm,
+  validatePollForm,
+} from "../components/poll-form";
 
 type ComposerMode = "general" | "poll" | "help" | "announcement";
 type AttachmentKind = "image" | "video" | "document";
@@ -98,11 +104,13 @@ export default function CreatePostScreen() {
   const feedApi = React.useMemo(() => createFeedApi(apiClient), [apiClient]);
 
   const [mode, setMode] = useState<ComposerMode>(
-    params.mode === "help" ? "help" : "general",
+    params.mode === "help" ? "help" : params.mode === "poll" ? "poll" : "general",
   );
   const [body, setBody] = useState("");
   const [helpKind, setHelpKind] = useState<HelpKind>("REQUEST");
-  const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [poll, setPoll] = useState(emptyPollFormValue);
+  const [categories, setCategories] = useState<CategoryView[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
@@ -116,13 +124,30 @@ export default function CreatePostScreen() {
       (m.role === "MODERATOR" || m.role === "ADMIN"),
   );
 
-  function addPollOption() {
-    if (pollOptions.length < 10) setPollOptions((p) => [...p, ""]);
-  }
-  function removePollOption(i: number) {
-    if (pollOptions.length > 2)
-      setPollOptions((p) => p.filter((_, x) => x !== i));
-  }
+  React.useEffect(() => {
+    if (mode !== "poll" || !communityId) return;
+    let cancelled = false;
+    async function loadCategories() {
+      setCategories([]);
+      setCategoriesLoading(true);
+      try {
+        const community = await feedApi.communityDetail(communityId);
+        if (!community.destinationCountryId) {
+          throw new Error("Missing destination country");
+        }
+        const response = await feedApi.feedCategories(community.destinationCountryId);
+        if (!cancelled) setCategories(response.items.filter((category) => category.active));
+      } catch {
+        if (!cancelled) setError("Failed to load FEED categories.");
+      } finally {
+        if (!cancelled) setCategoriesLoading(false);
+      }
+    }
+    void loadCategories();
+    return () => {
+      cancelled = true;
+    };
+  }, [communityId, feedApi, mode]);
 
   function addAttachments(incoming: ComposerAttachment[]) {
     const allowedTypes = (kind: AttachmentKind) =>
@@ -267,9 +292,7 @@ export default function CreatePostScreen() {
   function validate(): string | null {
     if (!communityId) return "No active community.";
     if (mode === "poll") {
-      if (!body.trim()) return "Enter a poll question.";
-      if (pollOptions.some((o) => !o.trim()))
-        return "All poll options must be filled.";
+      return validatePollForm(poll);
     } else if (!body.trim()) return "Write something first.";
     return null;
   }
@@ -285,11 +308,7 @@ export default function CreatePostScreen() {
     const mediaIds: string[] = [];
     try {
       if (mode === "poll") {
-        await feedApi.createPoll({
-          communityId,
-          question: body.trim(),
-          options: pollOptions.map((o) => o.trim()),
-        });
+        await feedApi.createPoll(createPollRequest(poll, communityId));
       } else if (mode === "help") {
         await feedApi.createHelpPost({
           communityId,
@@ -369,12 +388,16 @@ export default function CreatePostScreen() {
           <ThemedText style={styles.navTitle}>New post</ThemedText>
           <Pressable
             onPress={handleSubmit}
-            disabled={submitting || !body.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Publish post"
+            disabled={
+              submitting || (mode === "poll" ? !poll.question.trim() : !body.trim())
+            }
             style={[
               styles.postBtn,
               {
                 backgroundColor:
-                  submitting || !body.trim()
+                  submitting || (mode === "poll" ? !poll.question.trim() : !body.trim())
                     ? theme.border
                     : BrandColors.primary,
               },
@@ -505,21 +528,28 @@ export default function CreatePostScreen() {
               </View>
             )}
 
-            {/* Text input */}
-            <TextInput
-              style={[styles.textInput, { color: theme.text }]}
-              placeholder={
-                mode === "poll"
-                  ? "What's the question?"
-                  : "What's happening in your community?"
-              }
-              placeholderTextColor={theme.textSecondary}
-              value={body}
-              onChangeText={setBody}
-              multiline
-              autoFocus
-              maxLength={4000}
-            />
+            {/* Poll form / text input */}
+            {mode === "poll" ? (
+              <PollForm
+                value={poll}
+                onChange={setPoll}
+                categories={categories}
+                loadingCategories={categoriesLoading}
+                showCategory
+                disabled={submitting}
+              />
+            ) : (
+              <TextInput
+                style={[styles.textInput, { color: theme.text }]}
+                placeholder="What's happening in your community?"
+                placeholderTextColor={theme.textSecondary}
+                value={body}
+                onChangeText={setBody}
+                multiline
+                autoFocus
+                maxLength={4000}
+              />
+            )}
 
             {/* Attachment previews */}
             {supportsAttachments && attachments.length > 0 && (
@@ -592,62 +622,6 @@ export default function CreatePostScreen() {
                   );
                 })}
               </ScrollView>
-            )}
-
-            {/* Poll options */}
-            {mode === "poll" && (
-              <View style={styles.pollOptions}>
-                {pollOptions.map((opt, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      styles.pollOptionRow,
-                      { backgroundColor: theme.backgroundElement },
-                    ]}
-                  >
-                    <TextInput
-                      style={[styles.pollOptionInput, { color: theme.text }]}
-                      placeholder={`Option ${i + 1}`}
-                      placeholderTextColor={theme.textSecondary}
-                      value={opt}
-                      onChangeText={(v) =>
-                        setPollOptions((p) =>
-                          p.map((o, x) => (x === i ? v : o)),
-                        )
-                      }
-                      maxLength={120}
-                    />
-                    {pollOptions.length > 2 && (
-                      <Pressable
-                        onPress={() => removePollOption(i)}
-                        hitSlop={8}
-                      >
-                        <ThemedText
-                          style={{ color: BrandColors.error, fontSize: 18 }}
-                        >
-                          ✕
-                        </ThemedText>
-                      </Pressable>
-                    )}
-                  </View>
-                ))}
-                {pollOptions.length < 10 && (
-                  <Pressable
-                    onPress={addPollOption}
-                    style={styles.addOptionBtn}
-                  >
-                    <ThemedText
-                      style={{
-                        color: BrandColors.primary,
-                        fontSize: 14,
-                        fontWeight: "600",
-                      }}
-                    >
-                      + Add option
-                    </ThemedText>
-                  </Pressable>
-                )}
-              </View>
             )}
 
             {supportsAttachments && (
@@ -778,16 +752,6 @@ const styles = StyleSheet.create({
     minHeight: 120,
     textAlignVertical: "top",
   },
-  pollOptions: { gap: Spacing.two },
-  pollOptionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 10,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: 4,
-  },
-  pollOptionInput: { flex: 1, fontSize: 14, paddingVertical: 8 },
-  addOptionBtn: { alignSelf: "flex-start", paddingVertical: 4 },
   attachmentList: { gap: Spacing.two, paddingVertical: Spacing.one },
   attachmentCard: {
     width: 132,

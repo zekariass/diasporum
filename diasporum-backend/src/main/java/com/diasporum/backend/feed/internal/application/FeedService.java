@@ -1,18 +1,26 @@
 package com.diasporum.backend.feed.internal.application;
 
 import com.diasporum.backend.community.CommunityApi;
+import com.diasporum.backend.feed.internal.api.rest.PollResponses.PollOptionResponse;
+import com.diasporum.backend.feed.internal.api.rest.PollResponses.PollResponse;
+import com.diasporum.backend.feed.internal.api.rest.PollResponses.ResultsVisibility;
+import com.diasporum.backend.feed.internal.domain.PollRules;
 import com.diasporum.backend.identity.IdentityApi;
 import com.diasporum.backend.media.MediaApi;
+import com.diasporum.backend.moderation.ModerationApi;
 import com.diasporum.backend.social.SocialApi;
 import com.diasporum.backend.taxonomy.TaxonomyApi;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -46,16 +54,24 @@ public class FeedService {
     private final SocialApi social;
     private final MediaApi media;
     private final TaxonomyApi taxonomy;
+    private final ModerationApi moderation;
+    private final int pollCreatePerHour;
+    private final int pollVotePerMinute;
 
     public FeedService(JdbcTemplate jdbc, IdentityApi identity,
             CommunityApi community, SocialApi social, MediaApi media,
-            TaxonomyApi taxonomy) {
+            TaxonomyApi taxonomy, ModerationApi moderation,
+            @Value("${diasporum.feed.polls.create-per-hour:10}") int pollCreatePerHour,
+            @Value("${diasporum.feed.polls.vote-per-minute:120}") int pollVotePerMinute) {
         this.jdbc = jdbc;
         this.identity = identity;
         this.community = community;
         this.social = social;
         this.media = media;
         this.taxonomy = taxonomy;
+        this.moderation = moderation;
+        this.pollCreatePerHour = Math.max(1, pollCreatePerHour);
+        this.pollVotePerMinute = Math.max(1, pollVotePerMinute);
     }
 
     // =================== row types ===================
@@ -113,14 +129,40 @@ public class FeedService {
         return new ResponseStatusException(HttpStatus.FORBIDDEN, code);
     }
 
+    private static ResponseStatusException conflict(String code) {
+        return new ResponseStatusException(HttpStatus.CONFLICT, code);
+    }
+
+    private static ResponseStatusException tooMany(String code) {
+        return new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, code);
+    }
+
+    private static <T> T validated(Supplier<T> validation) {
+        try {
+            return validation.get();
+        } catch (IllegalArgumentException e) {
+            throw bad(e.getMessage());
+        }
+    }
+
     // =================== post lifecycle ===================
 
     @Transactional
     public PostRow createPost(UUID authorId, UUID communityId, String type,
             String title, String body, String linkUrl, String scope,
             UUID categoryId, List<UUID> mediaIds) {
+        return createPost(authorId, communityId, type, title, body, linkUrl,
+                scope, categoryId, mediaIds, false);
+    }
+
+    private PostRow createPost(UUID authorId, UUID communityId, String type,
+            String title, String body, String linkUrl, String scope,
+            UUID categoryId, List<UUID> mediaIds, boolean pollWorkflow) {
         if (!POST_TYPES.contains(type)) {
             throw bad("INVALID_POST_TYPE");
+        }
+        if ("POLL".equals(type) && !pollWorkflow) {
+            throw bad("POLL_USE_POLL_ENDPOINT");
         }
         if (!VISIBILITIES.contains(scope)) {
             throw bad("INVALID_VISIBILITY");
@@ -206,9 +248,11 @@ public class FeedService {
                 && !community.isModeratorOrAbove(actor, p.communityId())) {
             throw forbidden("NOT_AUTHOR");
         }
+        String normalizedBody = body != null && "POLL".equals(p.postType())
+                ? validated(() -> PollRules.question(body)) : body;
         jdbc.update("UPDATE feed_posts SET title=COALESCE(?,title),"
                 + " body=COALESCE(?,body), link_url=COALESCE(?,link_url),"
-                + " updated_at=now() WHERE id=?", title, body, linkUrl, postId);
+                + " updated_at=now() WHERE id=?", title, normalizedBody, linkUrl, postId);
         return requirePost(postId);
     }
 
@@ -286,6 +330,9 @@ public class FeedService {
                             rs.getString("name")), catIds.toArray())
                     .forEach(e -> catNames.put(e.getKey(), e.getValue()));
         }
+        var pollIds = posts.stream().filter(p -> "POLL".equals(p.postType()))
+                .map(PostRow::id).toList();
+        var polls = pollResponses(viewer, pollIds);
         var cache = new java.util.HashMap<UUID, Boolean>();
         var out = new ArrayList<FeedItem>();
         for (var p : posts) {
@@ -302,6 +349,9 @@ public class FeedService {
                 if (cn != null) {
                     payload.put("categoryName", cn);
                 }
+            }
+            if ("POLL".equals(p.postType()) && polls.containsKey(p.id())) {
+                payload.put("poll", polls.get(p.id()));
             }
             out.add(new FeedItem("FEED_POST:" + p.id(), p.postType(), "feed",
                     p.id(), authors.get(p.authorId()), p.communityId(),
@@ -695,112 +745,386 @@ public class FeedService {
 
     // =================== polls ===================
 
-    @Transactional
-    public Map<String, Object> createPoll(UUID author, UUID communityId,
-            UUID categoryId, String question, List<String> options,
-            Instant closesAt) {
-        if (options == null || options.size() < 2 || options.size() > 20) {
-            throw bad("INVALID_OPTIONS");
-        }
-        var p = createPost(author, communityId, "POLL", null, question, null,
-                "COMMUNITY", categoryId, null);
-        jdbc.update("INSERT INTO feed_polls(post_id,closes_at,max_options)"
-                        + " VALUES(?,?,?)", p.id(),
-                closesAt == null ? null : java.sql.Timestamp.from(closesAt),
-                options.size());
-        int i = 0;
-        for (var opt : options) {
-            jdbc.update("INSERT INTO feed_poll_options(id,post_id,option_text,"
-                    + "sort_order) VALUES(?,?,?,?)",
-                    UUID.randomUUID(), p.id(), opt.trim(), i++);
-        }
-        publish(p.id());
-        return Map.of("post", requirePost(p.id()), "options", options);
+    private record LockedPoll(Instant closesAt, Instant closedAt,
+            boolean allowMultiple, boolean allowVoteChange,
+            boolean allowVoteWithdraw, boolean anonymousVoting,
+            String resultsVisibility, int maxOptions, Instant databaseNow,
+            PollRules.Status status) {
     }
 
-    public Map<String, Object> poll(UUID postId, UUID viewer) {
+    private record PollOptionSnapshot(UUID id, String text, int sortOrder,
+            long voteCount, boolean myVote) {
+    }
+
+    private static final class PollBuilder {
+        private UUID postId;
+        private String question;
+        private Instant closesAt;
+        private Instant closedAt;
+        private boolean allowMultiple;
+        private boolean allowVoteChange;
+        private boolean allowVoteWithdraw;
+        private boolean anonymousVoting;
+        private int maxOptions;
+        private String visibility;
+        private long totalVoters;
+        private long totalVotes;
+        private PollRules.Status status;
+        private final List<PollOptionSnapshot> options = new ArrayList<>();
+
+        private PollResponse build() {
+            var myVotes = options.stream().filter(PollOptionSnapshot::myVote)
+                    .map(PollOptionSnapshot::id).toList();
+            boolean visible = PollRules.resultsVisible(visibility,
+                    !myVotes.isEmpty(), status);
+            var responseOptions = options.stream().map(o ->
+                    new PollOptionResponse(o.id(), o.text(), o.sortOrder(),
+                            visible ? o.voteCount() : null,
+                            visible ? PollRules.percentage(o.voteCount(), totalVoters)
+                                    : null)).toList();
+            return new PollResponse(postId, question, status, closesAt, closedAt,
+                    allowMultiple, allowVoteChange, allowVoteWithdraw,
+                    anonymousVoting, maxOptions, ResultsVisibility.valueOf(visibility),
+                    visible, visible ? totalVoters : null,
+                    visible ? totalVotes : null, myVotes, responseOptions);
+        }
+    }
+
+    private Instant databaseNow() {
+        return jdbc.queryForObject("SELECT now()", Instant.class);
+    }
+
+    private void lockActor(String namespace, UUID actor) {
+        jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended("
+                + "? || ?::text, 0))", Object.class, namespace, actor);
+    }
+
+    private void checkCreateRate(UUID author) {
+        lockActor("diasporum.feed.polls.create.", author);
+        int created = Optional.ofNullable(jdbc.queryForObject(
+                "SELECT count(*) FROM feed_posts WHERE author_id=?"
+                        + " AND post_type='POLL'"
+                        + " AND created_at > now() - interval '1 hour'",
+                Integer.class, author)).orElse(0);
+        if (created >= pollCreatePerHour) {
+            throw tooMany("POLL_CREATE_RATE_LIMIT");
+        }
+    }
+
+    private void checkVoteRate(UUID voter) {
+        lockActor("diasporum.feed.polls.vote.", voter);
+        int votes = Optional.ofNullable(jdbc.queryForObject(
+                "SELECT count(*) FROM feed_poll_votes WHERE user_id=?"
+                        + " AND created_at > now() - interval '1 minute'",
+                Integer.class, voter)).orElse(0);
+        if (votes >= pollVotePerMinute) {
+            throw tooMany("POLL_VOTE_RATE_LIMIT");
+        }
+    }
+
+    @Transactional
+    public PollResponse createPoll(UUID author, UUID communityId, UUID categoryId,
+            String question, List<String> options, Instant closesAt) {
+        return createPoll(author, communityId, categoryId, question, options, null,
+                closesAt, false, false, false, false, "AFTER_VOTING");
+    }
+
+    @Transactional
+    public PollResponse createPoll(UUID author, UUID communityId, UUID categoryId,
+            String question, List<String> options, Integer maxOptions,
+            Instant closesAt, boolean allowMultiple, boolean allowVoteChange,
+            boolean allowVoteWithdraw, boolean anonymousVoting,
+            String resultsVisibility) {
+        checkCreateRate(author);
+        String normalizedQuestion = validated(() -> PollRules.question(question));
+        var normalizedOptions = validated(
+                () -> PollRules.options(options, maxOptions));
+        Instant deadline = validated(
+                () -> PollRules.futureDeadline(closesAt, databaseNow()));
+        String visibility = validated(() -> ResultsVisibility.valueOf(
+                resultsVisibility == null ? "AFTER_VOTING" : resultsVisibility).name());
+        var parent = createPost(author, communityId, "POLL", null,
+                normalizedQuestion, null, "COMMUNITY", categoryId, null, true);
+        jdbc.update("INSERT INTO feed_polls(post_id,closes_at,max_options,"
+                        + "allow_multiple,allow_vote_change,allow_vote_withdraw,"
+                        + "anonymous_voting,results_visibility) VALUES(?,?,?,?,?,?,?,?)",
+                parent.id(), deadline == null ? null : java.sql.Timestamp.from(deadline),
+                normalizedOptions.maxOptions(), allowMultiple, allowVoteChange,
+                allowVoteWithdraw, anonymousVoting, visibility);
+        int order = 0;
+        for (String option : normalizedOptions.values()) {
+            jdbc.update("INSERT INTO feed_poll_options(id,post_id,option_text,"
+                    + "sort_order) VALUES(?,?,?,?)", UUID.randomUUID(), parent.id(),
+                    option, order++);
+        }
+        publish(parent.id());
+        return poll(parent.id(), author);
+    }
+
+    public PollResponse poll(UUID postId, UUID viewer) {
         requireViewable(viewer, requirePost(postId));
-        var poll = jdbc.query("SELECT closes_at,closed_at,allow_multiple,"
-                        + "allow_vote_change,allow_vote_withdraw,results_visibility"
-                        + " FROM feed_polls WHERE post_id=?",
-                (rs, i) -> Map.of("closesAt", rs.getTimestamp("closes_at") == null
-                                ? "" : rs.getTimestamp("closes_at").toString(),
-                        "closed", rs.getTimestamp("closed_at") != null,
-                        "allowMultiple", rs.getBoolean("allow_multiple"),
-                        "allowVoteChange", rs.getBoolean("allow_vote_change"),
-                        "allowVoteWithdraw", rs.getBoolean("allow_vote_withdraw"),
-                        "resultsVisibility", rs.getString("results_visibility")),
-                postId).stream().findFirst()
+        var response = pollResponses(viewer, List.of(postId)).get(postId);
+        if (response == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "POLL_NOT_FOUND");
+        }
+        return response;
+    }
+
+    /** One statement provides a consistent metadata/vote snapshot for every Poll. */
+    private Map<UUID, PollResponse> pollResponses(UUID viewer, List<UUID> postIds) {
+        if (postIds.isEmpty()) {
+            return Map.of();
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(
+                postIds.size(), "?::uuid"));
+        String sql = "WITH current_votes AS MATERIALIZED ("
+                + " SELECT v.option_id,v.user_id,o.post_id FROM feed_poll_votes v"
+                + " JOIN feed_poll_options o ON o.id=v.option_id"
+                + " WHERE o.post_id IN (" + placeholders + ")),"
+                + " totals AS (SELECT post_id,count(DISTINCT user_id) total_voters,"
+                + " count(*) total_votes FROM current_votes GROUP BY post_id)"
+                + " SELECT p.post_id,f.body question,p.closes_at,p.closed_at,"
+                + " p.allow_multiple,p.allow_vote_change,p.allow_vote_withdraw,"
+                + " p.anonymous_voting,p.max_options,p.results_visibility,now() db_now,"
+                + " o.id option_id,o.option_text,o.sort_order,"
+                + " (SELECT count(*) FROM current_votes cv WHERE cv.option_id=o.id) vote_count,"
+                + " COALESCE(t.total_voters,0) total_voters,"
+                + " COALESCE(t.total_votes,0) total_votes,"
+                + " EXISTS(SELECT 1 FROM current_votes cv WHERE cv.option_id=o.id"
+                + " AND cv.user_id=?) my_vote"
+                + " FROM feed_polls p JOIN feed_posts f ON f.id=p.post_id"
+                + " LEFT JOIN feed_poll_options o ON o.post_id=p.post_id"
+                + " LEFT JOIN totals t ON t.post_id=p.post_id"
+                + " WHERE p.post_id IN (" + placeholders + ")"
+                + " ORDER BY p.post_id,o.sort_order";
+        var args = new ArrayList<>();
+        args.addAll(postIds);
+        args.add(viewer);
+        args.addAll(postIds);
+        Map<UUID, PollBuilder> builders = jdbc.query(sql, rs -> {
+            Map<UUID, PollBuilder> result = new LinkedHashMap<>();
+            while (rs.next()) {
+                UUID postId = rs.getObject("post_id", UUID.class);
+                var b = result.computeIfAbsent(postId, ignored -> new PollBuilder());
+                if (b.postId == null) {
+                    b.postId = postId;
+                    b.question = rs.getString("question");
+                    b.closesAt = ts(rs, "closes_at");
+                    b.closedAt = ts(rs, "closed_at");
+                    b.allowMultiple = rs.getBoolean("allow_multiple");
+                    b.allowVoteChange = rs.getBoolean("allow_vote_change");
+                    b.allowVoteWithdraw = rs.getBoolean("allow_vote_withdraw");
+                    b.anonymousVoting = rs.getBoolean("anonymous_voting");
+                    b.maxOptions = rs.getInt("max_options");
+                    b.visibility = rs.getString("results_visibility");
+                    b.totalVoters = rs.getLong("total_voters");
+                    b.totalVotes = rs.getLong("total_votes");
+                    b.status = PollRules.status(b.closesAt, b.closedAt,
+                            ts(rs, "db_now"));
+                }
+                UUID optionId = rs.getObject("option_id", UUID.class);
+                if (optionId != null) {
+                    b.options.add(new PollOptionSnapshot(optionId,
+                            rs.getString("option_text"), rs.getInt("sort_order"),
+                            rs.getLong("vote_count"), rs.getBoolean("my_vote")));
+                }
+            }
+            return result;
+        }, args.toArray());
+        Map<UUID, PollResponse> responses = new LinkedHashMap<>();
+        builders.forEach((id, builder) -> responses.put(id, builder.build()));
+        return responses;
+    }
+
+    private LockedPoll lockPoll(UUID postId) {
+        return jdbc.query("SELECT closes_at,closed_at,allow_multiple,"
+                        + "allow_vote_change,allow_vote_withdraw,anonymous_voting,"
+                        + "results_visibility,max_options,now() db_now"
+                        + " FROM feed_polls WHERE post_id=? FOR UPDATE",
+                (rs, i) -> {
+                    Instant closesAt = ts(rs, "closes_at");
+                    Instant closedAt = ts(rs, "closed_at");
+                    Instant now = ts(rs, "db_now");
+                    return new LockedPoll(closesAt, closedAt,
+                            rs.getBoolean("allow_multiple"),
+                            rs.getBoolean("allow_vote_change"),
+                            rs.getBoolean("allow_vote_withdraw"),
+                            rs.getBoolean("anonymous_voting"),
+                            rs.getString("results_visibility"), rs.getInt("max_options"),
+                            now, PollRules.status(closesAt, closedAt, now));
+                }, postId).stream().findFirst()
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "POLL_NOT_FOUND"));
-        var myVotes = jdbc.queryForList("SELECT v.option_id FROM feed_poll_votes v"
+    }
+
+    private void requirePollManager(UUID actor, PostRow post) {
+        if (!post.authorId().equals(actor)
+                && !community.isModeratorOrAbove(actor, post.communityId())) {
+            throw forbidden("NOT_POLL_MANAGER");
+        }
+    }
+
+    private boolean hasVotes(UUID postId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM feed_poll_votes v"
                         + " JOIN feed_poll_options o ON o.id=v.option_id"
-                        + " WHERE v.user_id=? AND o.post_id=?",
-                UUID.class, viewer, postId);
-        // results_visibility: IMMEDIATE always; AFTER_VOTING only if voted;
-        // AFTER_CLOSE only when closed — otherwise counts stay hidden.
-        String vis = (String) poll.get("resultsVisibility");
-        boolean showCounts = "IMMEDIATE".equals(vis)
-                || ("AFTER_VOTING".equals(vis) && !myVotes.isEmpty())
-                || ("AFTER_CLOSE".equals(vis) && (Boolean) poll.get("closed"));
-        var options = jdbc.query("SELECT id,option_text,sort_order"
-                        + (showCounts ? ",(SELECT count(*) FROM feed_poll_votes v"
-                                + " WHERE v.option_id=o.id) AS votes" : ",0 AS votes")
-                        + " FROM feed_poll_options o WHERE post_id=?"
-                        + " ORDER BY sort_order",
-                (rs, i) -> Map.of("id", rs.getObject("id", UUID.class).toString(),
-                        "text", rs.getString("option_text"),
-                        "sort", rs.getInt("sort_order"),
-                        "votes", rs.getInt("votes")), postId);
-        return Map.of("poll", poll, "options", options, "myVotes", myVotes,
-                "resultsVisible", showCounts);
+                        + " WHERE o.post_id=?)", Boolean.class, postId));
+    }
+
+    private List<UUID> currentVotes(UUID postId, UUID voter) {
+        return jdbc.queryForList("SELECT v.option_id FROM feed_poll_votes v"
+                + " JOIN feed_poll_options o ON o.id=v.option_id"
+                + " WHERE o.post_id=? AND v.user_id=? ORDER BY o.sort_order",
+                UUID.class, postId, voter);
     }
 
     @Transactional
-    public void vote(UUID voter, UUID optionId, boolean withdraw) {
-        var opt = jdbc.query("SELECT post_id FROM feed_poll_options WHERE id=?",
-                (rs, i) -> rs.getObject(1, UUID.class), optionId)
-                .stream().findFirst()
+    public PollResponse updatePoll(UUID actor, UUID postId, String question,
+            List<String> options, Integer maxOptions, Instant closesAt,
+            Boolean allowMultiple, Boolean allowVoteChange,
+            Boolean allowVoteWithdraw, Boolean anonymousVoting,
+            String resultsVisibility) {
+        var parent = requirePost(postId);
+        requirePollManager(actor, parent);
+        var current = lockPoll(postId);
+        boolean voted = hasVotes(postId);
+        boolean policyChange = maxOptions != null || allowMultiple != null
+                || allowVoteChange != null || allowVoteWithdraw != null
+                || anonymousVoting != null || resultsVisibility != null;
+        if (voted && options != null) {
+            throw conflict("POLL_OPTIONS_LOCKED");
+        }
+        if (voted && policyChange) {
+            throw conflict("POLL_POLICY_LOCKED");
+        }
+        if (closesAt != null && current.status() != PollRules.Status.ACTIVE) {
+            throw conflict("POLL_NOT_ACTIVE");
+        }
+        String normalizedQuestion = question == null ? null
+                : validated(() -> PollRules.question(question));
+        int targetMax = maxOptions == null ? current.maxOptions() : maxOptions;
+        PollRules.ValidatedOptions normalizedOptions = null;
+        if (options != null) {
+            normalizedOptions = validated(() -> PollRules.options(options, targetMax));
+        } else {
+            int optionCount = jdbc.queryForObject("SELECT count(*) FROM"
+                    + " feed_poll_options WHERE post_id=?", Integer.class, postId);
+            validated(() -> {
+                PollRules.validateMaxOptions(targetMax, optionCount);
+                return null;
+            });
+        }
+        Instant deadline = closesAt == null ? null : validated(
+                () -> PollRules.futureDeadline(closesAt, current.databaseNow()));
+        String visibility = resultsVisibility == null ? null : validated(
+                () -> ResultsVisibility.valueOf(resultsVisibility).name());
+        if (normalizedQuestion != null) {
+            jdbc.update("UPDATE feed_posts SET body=?,updated_at=now() WHERE id=?",
+                    normalizedQuestion, postId);
+        }
+        List<UUID> existingIds = options == null ? List.of() : jdbc.queryForList(
+                "SELECT id FROM feed_poll_options WHERE post_id=? ORDER BY sort_order",
+                UUID.class, postId);
+        if (normalizedOptions != null) {
+            int common = Math.min(existingIds.size(), normalizedOptions.values().size());
+            for (int i = 0; i < common; i++) {
+                jdbc.update("UPDATE feed_poll_options SET option_text=? WHERE id=?",
+                        normalizedOptions.values().get(i), existingIds.get(i));
+            }
+            for (int i = existingIds.size() - 1;
+                    i >= normalizedOptions.values().size(); i--) {
+                jdbc.update("DELETE FROM feed_poll_options WHERE id=?", existingIds.get(i));
+            }
+        }
+        jdbc.update("UPDATE feed_polls SET max_options=?,"
+                + "allow_multiple=COALESCE(?,allow_multiple),"
+                + "allow_vote_change=COALESCE(?,allow_vote_change),"
+                + "allow_vote_withdraw=COALESCE(?,allow_vote_withdraw),"
+                + "anonymous_voting=COALESCE(?,anonymous_voting),"
+                + "results_visibility=COALESCE(?,results_visibility),"
+                + "closes_at=COALESCE(?::timestamptz,closes_at) WHERE post_id=?",
+                targetMax, allowMultiple, allowVoteChange, allowVoteWithdraw,
+                anonymousVoting, visibility,
+                deadline == null ? null : java.sql.Timestamp.from(deadline), postId);
+        if (normalizedOptions != null) {
+            for (int i = existingIds.size(); i < normalizedOptions.values().size(); i++) {
+                jdbc.update("INSERT INTO feed_poll_options(id,post_id,option_text,"
+                        + "sort_order) VALUES(?,?,?,?)", UUID.randomUUID(), postId,
+                        normalizedOptions.values().get(i), i);
+            }
+        }
+        return poll(postId, actor);
+    }
+
+    @Transactional
+    public PollResponse vote(UUID voter, UUID optionId, boolean withdraw) {
+        UUID postId = jdbc.query("SELECT post_id FROM feed_poll_options WHERE id=?",
+                (rs, i) -> rs.getObject(1, UUID.class), optionId).stream().findFirst()
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "OPTION_NOT_FOUND"));
-        UUID postId = opt;
-        var poll = poll(postId, voter);
-        @SuppressWarnings("unchecked")
-        var p = (Map<String, Object>) poll.get("poll");
-        if ((Boolean) p.get("closed")) {
-            throw bad("POLL_CLOSED");
-        }
-        var closesAt = (String) p.get("closesAt");
-        if (!closesAt.isEmpty() && Instant.parse(closesAt).isBefore(Instant.now())) {
-            throw bad("POLL_CLOSED");
-        }
         requireViewable(voter, requirePost(postId));
-        @SuppressWarnings("unchecked")
-        var myVotes = (List<UUID>) poll.get("myVotes");
+        var current = lockPoll(postId);
+        jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended("
+                + "?::text || ':' || ?::text, 0))", Object.class, postId, voter);
+        if (current.status() != PollRules.Status.ACTIVE) {
+            throw conflict("POLL_CLOSED");
+        }
+        var myVotes = currentVotes(postId, voter);
         if (withdraw) {
-            if (!(Boolean) p.get("allowVoteWithdraw")) {
-                throw bad("WITHDRAW_NOT_ALLOWED");
+            if (!myVotes.contains(optionId)) {
+                return poll(postId, voter);
+            }
+            if (!current.allowVoteWithdraw()) {
+                throw conflict("WITHDRAW_NOT_ALLOWED");
             }
             jdbc.update("DELETE FROM feed_poll_votes WHERE option_id=? AND user_id=?",
                     optionId, voter);
-            return;
+            return poll(postId, voter);
         }
-        if (!myVotes.isEmpty() && !(Boolean) p.get("allowVoteChange")
-                && !(Boolean) p.get("allowMultiple")) {
-            throw bad("ALREADY_VOTED");
+        if (myVotes.contains(optionId)) {
+            return poll(postId, voter);
         }
-        if (!myVotes.isEmpty() && !(Boolean) p.get("allowMultiple")
-                && (Boolean) p.get("allowVoteChange")) {
-            // Change: remove the old vote(s) on this poll before inserting —
-            // otherwise a non-multiple poll would end with two votes.
-            jdbc.update("DELETE FROM feed_poll_votes v USING feed_poll_options o"
-                    + " WHERE v.option_id=o.id AND o.post_id=? AND v.user_id=?",
-                    postId, voter);
+        try {
+            if (!current.allowMultiple() && !myVotes.isEmpty()) {
+                if (!current.allowVoteChange()) {
+                    throw conflict("ALREADY_VOTED");
+                }
+                jdbc.update("UPDATE feed_poll_votes SET option_id=?"
+                        + " WHERE option_id=? AND user_id=?", optionId,
+                        myVotes.get(0), voter);
+            } else {
+                checkVoteRate(voter);
+                jdbc.update("INSERT INTO feed_poll_votes(option_id,user_id) VALUES(?,?)",
+                        optionId, voter);
+            }
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            throw conflict("VOTE_CONFLICT");
         }
-        // PK + one-option-per-user trigger protect integrity; a racing insert
-        // loses with DuplicateKeyException which the controller maps to 409.
-        jdbc.update("INSERT INTO feed_poll_votes(option_id,user_id) VALUES(?,?)"
-                + " ON CONFLICT DO NOTHING", optionId, voter);
+        return poll(postId, voter);
+    }
+
+    @Transactional
+    public PollResponse closePoll(UUID actor, UUID postId) {
+        var parent = requirePost(postId);
+        requirePollManager(actor, parent);
+        var current = lockPoll(postId);
+        if (current.closedAt() != null) {
+            return poll(postId, actor);
+        }
+        if (current.status() != PollRules.Status.ACTIVE) {
+            throw conflict("POLL_NOT_ACTIVE");
+        }
+        jdbc.update("UPDATE feed_polls SET closed_at=now(),closed_by=? WHERE post_id=?",
+                actor, postId);
+        return poll(postId, actor);
+    }
+
+    public UUID reportPost(UUID actor, UUID postId, String reason, String details) {
+        var post = requirePost(postId);
+        requireViewable(actor, post);
+        return moderation.createReport(new ModerationApi.CreateReportCommand(actor,
+                post.countryId(), post.communityId(), "FEED_POST", postId,
+                reason, details));
     }
 
     // =================== FeedApi surface ===================

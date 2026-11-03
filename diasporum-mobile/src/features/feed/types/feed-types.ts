@@ -30,7 +30,7 @@ export interface FeedItem {
   viewerReaction: ReactionKey | null;
   viewed: boolean;
   saved: boolean;
-  payload: Record<string, unknown>;
+  payload: FeedPayload;
 }
 
 // ---- CommunitySummary (TaxonomyApi.CommunityView — serialized by /me/communities/*) ----
@@ -80,6 +80,7 @@ export interface PostRow {
   title: string | null;
   body: string | null;
   linkUrl: string | null;
+  categoryId: string | null;
   commentsEnabled: boolean;
   commentCount: number;
   reactionCount: number;
@@ -129,10 +130,77 @@ export interface CreateHelpPostRequest {
   expiresAt?: string;
 }
 
+export type PollStatus = 'ACTIVE' | 'EXPIRED' | 'CLOSED';
+export type PollResultsVisibility = 'IMMEDIATE' | 'AFTER_VOTING' | 'AFTER_CLOSE';
+export type ReportReason = 'SPAM' | 'SCAM' | 'HARASSMENT' | 'HATE'
+  | 'SEXUAL_MISCONDUCT' | 'MISINFORMATION' | 'IMPERSONATION' | 'PRIVACY' | 'OTHER';
+
+export interface PollOption {
+  id: string;
+  text: string;
+  sortOrder: number;
+  voteCount: number | null;
+  percentage: number | null;
+}
+
+export interface Poll {
+  postId: string;
+  question: string;
+  status: PollStatus;
+  closesAt: string | null;
+  closedAt: string | null;
+  allowMultiple: boolean;
+  allowVoteChange: boolean;
+  allowVoteWithdraw: boolean;
+  anonymousVoting: boolean;
+  maxOptions: number;
+  resultsVisibility: PollResultsVisibility;
+  resultsVisible: boolean;
+  totalVoters: number | null;
+  totalVotes: number | null;
+  myVotes: string[];
+  options: PollOption[];
+}
+
+export interface FeedPayload extends Record<string, unknown> {
+  categoryId?: string;
+  categoryName?: string;
+  helpKind?: HelpKind;
+  helpStatus?: HelpStatus;
+  poll?: Poll;
+}
+
 export interface CreatePollRequest {
   communityId: string;
-  categoryId?: string;
+  categoryId: string;
   question: string;
   options: string[];
+  maxOptions?: number;
   closesAt?: string;
+  allowMultiple?: boolean;
+  allowVoteChange?: boolean;
+  allowVoteWithdraw?: boolean;
+  anonymousVoting?: boolean;
+  resultsVisibility?: PollResultsVisibility;
+}
+
+export interface UpdatePollRequest {
+  question?: string;
+  options?: string[];
+  maxOptions?: number;
+  closesAt?: string;
+  allowMultiple?: boolean;
+  allowVoteChange?: boolean;
+  allowVoteWithdraw?: boolean;
+  anonymousVoting?: boolean;
+  resultsVisibility?: PollResultsVisibility;
+}
+
+export interface ReportPostRequest {
+  reason: ReportReason;
+  details?: string;
+}
+
+export interface ReportResponse {
+  reportId: string;
 }

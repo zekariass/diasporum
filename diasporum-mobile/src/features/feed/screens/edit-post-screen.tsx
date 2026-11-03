@@ -25,6 +25,14 @@ import { BrandColors } from '@/shared/theme/colors';
 import { Spacing } from '@/shared/theme/spacing';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError } from '@/core/api/api-error';
+import type { Poll, PostType } from '../types/feed-types';
+import {
+  emptyPollFormValue,
+  pollFormValueFromPoll,
+  PollForm,
+  updatePollRequest,
+  validatePollForm,
+} from '../components/poll-form';
 
 export default function EditPostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -41,42 +49,80 @@ export default function EditPostScreen() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [postType, setPostType] = useState<PostType | null>(null);
+  const [poll, setPoll] = useState<Poll | null>(null);
+  const [pollValue, setPollValue] = useState(emptyPollFormValue);
+  const [pollConfigurationLocked, setPollConfigurationLocked] = useState(false);
 
   const myId = session?.me.id ?? '';
+  const memberships = session?.memberships;
 
   const load = useCallback(async () => {
     try {
       const p = await feedApi.getPost(id);
-      if (p.authorId !== myId) {
+      const canManagePoll = p.postType === 'POLL' && memberships?.some(
+        membership => membership.communityId === p.communityId
+          && (membership.role === 'MODERATOR' || membership.role === 'COMMUNITY_ADMIN'),
+      );
+      if (p.authorId !== myId && !canManagePoll) {
         setError('You can only edit your own posts.');
         return;
       }
+      setPostType(p.postType);
       setTitle(p.title ?? '');
       setBody(p.body ?? '');
       setLinkUrl(p.linkUrl ?? '');
+      if (p.postType === 'POLL') {
+        const loadedPoll = await feedApi.getPoll(id);
+        setPoll(loadedPoll);
+        setPollValue(pollFormValueFromPoll(loadedPoll));
+        setPollConfigurationLocked(
+          (loadedPoll.totalVoters ?? 0) > 0 || loadedPoll.myVotes.length > 0,
+        );
+      }
       setError(null);
     } catch (err) {
       setError(ApiError.isApiError(err) ? err.userMessage : 'Failed to load post.');
     } finally {
       setLoading(false);
     }
-  }, [feedApi, id, myId]);
+  }, [feedApi, id, memberships, myId]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
+  const pollReadOnly = postType === 'POLL' && poll?.status !== 'ACTIVE';
+
   async function handleSave() {
+    if (pollReadOnly) return;
+    if (postType === 'POLL') {
+      const validationError = validatePollForm(pollValue, false);
+      if (validationError) {
+        setSaveError(validationError);
+        return;
+      }
+    }
     setSaving(true);
     setSaveError(null);
     try {
-      await feedApi.updatePost(id, {
-        title: title.trim() || undefined,
-        body: body.trim() || undefined,
-        linkUrl: linkUrl.trim() || undefined,
-      });
+      if (postType === 'POLL') {
+        const updated = await feedApi.updatePoll(id,
+          updatePollRequest(pollValue, !pollConfigurationLocked));
+        setPoll(updated);
+        setPollValue(pollFormValueFromPoll(updated));
+      } else {
+        await feedApi.updatePost(id, {
+          title: title.trim() || undefined,
+          body: body.trim() || undefined,
+          linkUrl: linkUrl.trim() || undefined,
+        });
+      }
       setSaved(true);
       setTimeout(() => safeBack(), 1200);
     } catch (err) {
+      if (postType === 'POLL' && ApiError.isApiError(err) && err.httpStatus === 409) {
+        setPollConfigurationLocked(true);
+      }
       setSaveError(ApiError.isApiError(err) ? err.userMessage : 'Failed to save.');
     } finally {
       setSaving(false);
@@ -96,39 +142,54 @@ export default function EditPostScreen() {
             <Pressable onPress={() => safeBack()} hitSlop={8}>
               <ThemedText style={{ color: theme.textSecondary }}>Cancel</ThemedText>
             </Pressable>
-            <ThemedText style={styles.navTitle}>Edit post</ThemedText>
+            <ThemedText style={styles.navTitle}>{postType === 'POLL' ? 'Edit poll' : 'Edit post'}</ThemedText>
             <View style={{ width: 50 }} />
           </View>
           <ScrollView contentContainerStyle={styles.scroll}
             keyboardShouldPersistTaps="handled">
-            <ThemedText style={styles.label}>Title</ThemedText>
-            <TextInput
-              style={[styles.input, { backgroundColor: theme.backgroundElement, borderColor: theme.border, color: theme.text }]}
-              value={title} onChangeText={setTitle}
-              placeholder="Title (optional)" placeholderTextColor={theme.textSecondary}
-              maxLength={200}
-            />
-            <ThemedText style={styles.label}>Body</ThemedText>
-            <TextInput
-              style={[styles.input, styles.bodyInput, { backgroundColor: theme.backgroundElement, borderColor: theme.border, color: theme.text }]}
-              value={body} onChangeText={setBody}
-              placeholder="What's on your mind?" placeholderTextColor={theme.textSecondary}
-              multiline numberOfLines={6} maxLength={4000}
-            />
-            <ThemedText style={styles.label}>Link URL</ThemedText>
-            <TextInput
-              style={[styles.input, { backgroundColor: theme.backgroundElement, borderColor: theme.border, color: theme.text }]}
-              value={linkUrl} onChangeText={setLinkUrl}
-              placeholder="https://… (optional)" placeholderTextColor={theme.textSecondary}
-              autoCapitalize="none" autoCorrect={false} keyboardType="url"
-            />
+            {postType === 'POLL' ? (
+              <PollForm
+                value={pollValue}
+                onChange={setPollValue}
+                configurationLocked={pollConfigurationLocked}
+                readOnly={pollReadOnly}
+                disabled={saving}
+                allowDeadlineClear={false}
+              />
+            ) : (
+              <>
+                <ThemedText style={styles.label}>Title</ThemedText>
+                <TextInput
+                  style={[styles.input, { backgroundColor: theme.backgroundElement, borderColor: theme.border, color: theme.text }]}
+                  value={title} onChangeText={setTitle}
+                  placeholder="Title (optional)" placeholderTextColor={theme.textSecondary}
+                  maxLength={200}
+                />
+                <ThemedText style={styles.label}>Body</ThemedText>
+                <TextInput
+                  style={[styles.input, styles.bodyInput, { backgroundColor: theme.backgroundElement, borderColor: theme.border, color: theme.text }]}
+                  value={body} onChangeText={setBody}
+                  placeholder="What's on your mind?" placeholderTextColor={theme.textSecondary}
+                  multiline numberOfLines={6} maxLength={4000}
+                />
+                <ThemedText style={styles.label}>Link URL</ThemedText>
+                <TextInput
+                  style={[styles.input, { backgroundColor: theme.backgroundElement, borderColor: theme.border, color: theme.text }]}
+                  value={linkUrl} onChangeText={setLinkUrl}
+                  placeholder="https://… (optional)" placeholderTextColor={theme.textSecondary}
+                  autoCapitalize="none" autoCorrect={false} keyboardType="url"
+                />
+              </>
+            )}
             {saveError && <ThemedText style={styles.error}>{saveError}</ThemedText>}
             {saved && <ThemedText style={styles.savedText}>Saved ✓</ThemedText>}
           </ScrollView>
-          <View style={styles.footer}>
-            <PrimaryButton label="Save changes" onPress={handleSave}
-              loading={saving} disabled={saving} />
-          </View>
+          {!pollReadOnly ? (
+            <View style={styles.footer}>
+              <PrimaryButton label="Save changes" onPress={handleSave}
+                loading={saving} disabled={saving} />
+            </View>
+          ) : null}
         </SafeAreaView>
       </KeyboardAvoidingView>
     </ThemedView>

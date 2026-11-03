@@ -19,12 +19,13 @@ import { LoadingScreen } from '@/shared/components/loading-screen';
 import { ErrorState } from '@/shared/components/error-state';
 import { useSession } from '@/core/session/session-provider';
 import { createFeedApi } from '../services/feed-api';
-import type { CommentRow, PostRow } from '../types/feed-types';
+import type { CommentRow, Poll, PostRow } from '../types/feed-types';
 import { timeAgo } from '../utils/time-ago';
 import { BrandColors } from '@/shared/theme/colors';
 import { Spacing } from '@/shared/theme/spacing';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError } from '@/core/api/api-error';
+import { PollCard } from '../components/poll-card';
 
 export default function PostDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -34,6 +35,7 @@ export default function PostDetailScreen() {
   const feedApi = React.useMemo(() => createFeedApi(apiClient), [apiClient]);
 
   const [post, setPost] = useState<PostRow | null>(null);
+  const [poll, setPoll] = useState<Poll | null>(null);
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -53,7 +55,9 @@ export default function PostDetailScreen() {
         feedApi.getPost(id),
         feedApi.comments(id, 0),
       ]);
+      const loadedPoll = p.postType === 'POLL' ? await feedApi.getPoll(id) : null;
       setPost(p);
+      setPoll(loadedPoll);
       setComments(c.items);
       setPage(0);
       setHasMore(c.items.length === 20);
@@ -153,7 +157,10 @@ export default function PostDetailScreen() {
                   </View>
                 </View>
                 {post.title ? <ThemedText style={styles.postTitle}>{post.title}</ThemedText> : null}
-                {post.body ? <ThemedText style={styles.postBody}>{post.body}</ThemedText> : null}
+                {post.body && !poll ? <ThemedText style={styles.postBody}>{post.body}</ThemedText> : null}
+                {poll ? (
+                  <PollCard poll={poll} onVote={feedApi.vote} onChange={setPoll} />
+                ) : null}
                 <View style={styles.postStats}>
                   <ThemedText style={styles.statText} themeColor="textSecondary">
                     💬 {post.commentCount} · ♥ {post.reactionCount}

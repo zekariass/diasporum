@@ -42,17 +42,30 @@ import { createFeedApi } from "../services/feed-api";
 import { useSession } from "@/core/session/session-provider";
 import { Spacing } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
-import type { FeedItem } from "../types/feed-types";
+import type { FeedItem, Poll, ReportReason } from "../types/feed-types";
+import { ApiError } from "@/core/api/api-error";
 
 /** Features that navigate to a separate route rather than swapping inline */
 const ROUTE_FEATURES: Record<string, string> = {
   people: "/(app)/(tabs)/explore",
   reels: "/(app)/(tabs)/reels",
-  poll: "/(app)/posts/create",
+  poll: "/(app)/posts/create?mode=poll",
 };
 
 /** Unimplemented features — show an alert */
 const COMING_SOON = new Set(["help", "services"]);
+
+const REPORT_REASONS: ReportReason[] = [
+  "SPAM",
+  "SCAM",
+  "HARASSMENT",
+  "HATE",
+  "SEXUAL_MISCONDUCT",
+  "MISINFORMATION",
+  "IMPERSONATION",
+  "PRIVACY",
+  "OTHER",
+];
 
 export default function HomeFeedScreen() {
   const theme = useTheme();
@@ -103,24 +116,71 @@ export default function HomeFeedScreen() {
     [activeFeature, fadeAnim, router],
   );
 
+  const updatePoll = useCallback((item: FeedItem, poll: Poll) => {
+    feed.updatePost(item.sourceId, {
+      payload: { ...item.payload, poll },
+    });
+  }, [feed]);
+
+  const closePoll = useCallback(async (item: FeedItem) => {
+    try {
+      const updated = await feedApi.closePoll(item.sourceId);
+      updatePoll(item, updated);
+    } catch (cause) {
+      Alert.alert(
+        "Could not close poll",
+        ApiError.isApiError(cause) ? cause.userMessage : "Please try again.",
+      );
+    }
+  }, [feedApi, updatePoll]);
+
+  const reportPoll = useCallback((item: FeedItem) => {
+    Alert.alert("Report poll", "Why are you reporting this poll?", [
+      ...REPORT_REASONS.map((reason) => ({
+        text: reason.toLowerCase().replaceAll("_", " "),
+        onPress: () => {
+          void feedApi.reportPost(item.sourceId, { reason })
+            .then(() => Alert.alert("Report submitted", "Our moderation team will review it."))
+            .catch((cause) => Alert.alert(
+              "Could not report poll",
+              ApiError.isApiError(cause) ? cause.userMessage : "Please try again.",
+            ));
+        },
+      })),
+      { text: "Cancel", style: "cancel" as const },
+    ]);
+  }, [feedApi]);
+
   // ── Feed content ──────────────────────────────────────────────────────────
 
   const renderFeedItem = useCallback(
-    ({ item }: { item: FeedItem }) => (
-      <PostItem
-        item={item}
-        isOwner={item.author?.id === session?.me.id}
-        onPress={() => router.push(`/(app)/posts/${item.sourceId}` as never)}
-        onComment={() => router.push(`/(app)/posts/${item.sourceId}` as never)}
-        onReact={(r) => void feed.react(item.sourceId, r)}
-        onSave={() => void feed.toggleSave(item.sourceId)}
-        onEdit={() =>
-          router.push(`/(app)/posts/edit/${item.sourceId}` as never)
-        }
-        onDelete={() => void feed.deletePost(item.sourceId)}
-      />
-    ),
-    [feed, router, session?.me.id],
+    ({ item }: { item: FeedItem }) => {
+      const isOwner = item.author?.id === session?.me.id;
+      const canManage = isOwner || session?.memberships.some(
+        membership => membership.communityId === item.communityId
+          && (membership.role === "MODERATOR" || membership.role === "COMMUNITY_ADMIN"),
+      );
+      return (
+        <PostItem
+          item={item}
+          isOwner={isOwner}
+          canManage={canManage}
+          onPress={() => router.push(`/(app)/posts/${item.sourceId}` as never)}
+          onComment={() => router.push(`/(app)/posts/${item.sourceId}` as never)}
+          onReact={(r) => void feed.react(item.sourceId, r)}
+          onSave={() => void feed.toggleSave(item.sourceId)}
+          onEdit={() =>
+            router.push(`/(app)/posts/edit/${item.sourceId}` as never)
+          }
+          onDelete={() => void feed.deletePost(item.sourceId)}
+          onPollVote={item.contentType === "POLL" ? feedApi.vote : undefined}
+          onPollChange={(poll) => updatePoll(item, poll)}
+          onClosePoll={() => void closePoll(item)}
+          onReport={() => reportPoll(item)}
+        />
+      );
+    },
+    [closePoll, feed, feedApi, reportPoll, router, session?.me.id, session?.memberships, updatePoll],
   );
 
   const keyExtractor = useCallback((i: FeedItem) => i.itemId, []);

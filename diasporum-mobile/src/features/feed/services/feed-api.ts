@@ -7,7 +7,8 @@
 import type { ApiClient } from '@/core/api/api-client';
 import type {
   CommentPage, CommentRow, CreateHelpPostRequest, CreatePollRequest,
-  CreatePostRequest, FeedPage, PostRow, ReactionKey,
+  CreatePostRequest, FeedPage, Poll, PostRow, ReactionKey, ReportPostRequest,
+  ReportResponse, UpdatePollRequest,
 } from '../types/feed-types';
 
 export function createFeedApi(client: ApiClient) {
@@ -122,12 +123,21 @@ export function createFeedApi(client: ApiClient) {
 
     // ---- polls ----
     createPoll: (req: CreatePollRequest) =>
-      client.post('/api/v1/feed/polls', req, { authenticated: true }),
+      client.post<Poll>('/api/v1/feed/polls', req, { authenticated: true }),
 
     getPoll: (postId: string) =>
-      client.get<Record<string, unknown>>(`/api/v1/feed/polls/${postId}`, { authenticated: true }),
+      client.get<Poll>(`/api/v1/feed/polls/${postId}`, { authenticated: true }),
+
+    updatePoll: (postId: string, req: UpdatePollRequest) =>
+      client.patch<Poll>(`/api/v1/feed/polls/${postId}`, req, { authenticated: true }),
 
     vote: (optionId: string, withdraw = false) =>
-      client.post(`/api/v1/feed/polls/options/${optionId}/vote`, { withdraw }, { authenticated: true }),
+      client.post<Poll>(`/api/v1/feed/polls/options/${optionId}/vote`, { withdraw }, { authenticated: true }),
+
+    closePoll: (postId: string) =>
+      client.post<Poll>(`/api/v1/feed/polls/${postId}/close`, {}, { authenticated: true }),
+
+    reportPost: (postId: string, req: ReportPostRequest) =>
+      client.post<ReportResponse>(`/api/v1/feed/posts/${postId}/reports`, req, { authenticated: true }),
   };
 }

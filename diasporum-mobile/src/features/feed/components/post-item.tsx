@@ -12,10 +12,11 @@ import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
 import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
-import type { FeedItem, ReactionKey } from "../types/feed-types";
+import type { FeedItem, Poll, ReactionKey } from "../types/feed-types";
 import { timeAgo } from "../utils/time-ago";
 import { Avatar } from "./avatar";
 import { MediaImage } from "./media-image";
+import { PollCard } from "./poll-card";
 
 const TYPE_LABEL: Record<string, string> = {
   ANNOUNCEMENT: "Announcement",
@@ -33,12 +34,17 @@ const MAX_RATIO = 1.91; // wide landscape
 interface Props {
   item: FeedItem;
   isOwner?: boolean;
+  canManage?: boolean;
   onPress?: () => void;
   onComment?: () => void;
   onReact?: (r: ReactionKey) => void;
   onSave?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  onPollVote?: (optionId: string, withdraw: boolean) => Promise<Poll>;
+  onPollChange?: (poll: Poll) => void;
+  onClosePoll?: () => void;
+  onReport?: () => void;
 }
 
 function compact(n: number): string {
@@ -100,20 +106,27 @@ function PostMedia({ mediaIds }: { mediaIds: string[] }) {
 export const PostItem = React.memo(function PostItem({
   item,
   isOwner = false,
+  canManage = isOwner,
   onPress,
   onComment,
   onReact,
   onSave,
   onEdit,
   onDelete,
+  onPollVote,
+  onPollChange,
+  onClosePoll,
+  onReport,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
   const theme = useTheme();
   const typeLabel = TYPE_LABEL[item.contentType];
   const helpKind = item.payload?.helpKind as string | undefined;
   const helpStatus = item.payload?.helpStatus as string | undefined;
   const categoryName = item.payload?.categoryName as string | undefined;
+  const poll = item.contentType === "POLL" ? item.payload.poll : undefined;
   const handle = item.author?.username ?? item.author?.displayName ?? "member";
   const reacted = !!item.viewerReaction;
 
@@ -127,6 +140,7 @@ export const PostItem = React.memo(function PostItem({
   const closeMenu = () => {
     setMenuOpen(false);
     setConfirmDelete(false);
+    setConfirmClose(false);
   };
 
   return (
@@ -199,8 +213,11 @@ export const PostItem = React.memo(function PostItem({
             {item.title}
           </ThemedText>
         ) : null}
-        {item.body ? (
+        {item.body && !poll ? (
           <ThemedText style={styles.text}>{item.body}</ThemedText>
+        ) : null}
+        {poll ? (
+          <PollCard poll={poll} onVote={onPollVote} onChange={onPollChange} />
         ) : null}
 
         {/* Media */}
@@ -217,16 +234,18 @@ export const PostItem = React.memo(function PostItem({
               },
             ]}
           >
-            {confirmDelete ? (
+            {confirmDelete || confirmClose ? (
               <>
                 <ThemedText style={styles.confirmText}>
-                  Delete this post?
+                  {confirmClose
+                    ? "Close this poll? This cannot be undone."
+                    : "Delete this post?"}
                 </ThemedText>
                 <View style={styles.confirmRow}>
                   <Pressable
                     onPress={closeMenu}
                     style={styles.confirmBtn}
-                    accessibilityLabel="Cancel delete"
+                    accessibilityLabel={confirmClose ? "Cancel close" : "Cancel delete"}
                   >
                     <ThemedText style={{ color: theme.textSecondary }}>
                       Cancel
@@ -235,12 +254,15 @@ export const PostItem = React.memo(function PostItem({
                   <Pressable
                     onPress={() => {
                       closeMenu();
-                      onDelete?.();
+                      if (confirmClose) onClosePoll?.();
+                      else onDelete?.();
                     }}
                     style={[styles.confirmBtn, styles.deleteBtn]}
-                    accessibilityLabel="Confirm delete"
+                    accessibilityLabel={confirmClose ? "Confirm close poll" : "Confirm delete"}
                   >
-                    <ThemedText style={styles.deleteBtnText}>Delete</ThemedText>
+                    <ThemedText style={styles.deleteBtnText}>
+                      {confirmClose ? "Close poll" : "Delete"}
+                    </ThemedText>
                   </Pressable>
                 </View>
               </>
@@ -263,7 +285,7 @@ export const PostItem = React.memo(function PostItem({
                     {item.saved ? "Unsave" : "Save"}
                   </ThemedText>
                 </Pressable>
-                {isOwner && onEdit ? (
+                {canManage && onEdit ? (
                   <Pressable
                     onPress={() => {
                       closeMenu();
@@ -280,7 +302,7 @@ export const PostItem = React.memo(function PostItem({
                     <ThemedText style={styles.menuText}>Edit</ThemedText>
                   </Pressable>
                 ) : null}
-                {isOwner && onDelete ? (
+                {canManage && onDelete ? (
                   <Pressable
                     onPress={() => setConfirmDelete(true)}
                     style={styles.menuItem}
@@ -295,6 +317,31 @@ export const PostItem = React.memo(function PostItem({
                       style={[styles.menuText, { color: theme.error }]}
                     >
                       Delete
+                    </ThemedText>
+                  </Pressable>
+                ) : null}
+                {canManage && poll?.status === "ACTIVE" && onClosePoll ? (
+                  <Pressable
+                    onPress={() => setConfirmClose(true)}
+                    style={styles.menuItem}
+                    accessibilityLabel="Close poll"
+                  >
+                    <Ionicons name="lock-closed-outline" size={18} color={theme.text} />
+                    <ThemedText style={styles.menuText}>Close poll</ThemedText>
+                  </Pressable>
+                ) : null}
+                {!isOwner && item.contentType === "POLL" && onReport ? (
+                  <Pressable
+                    onPress={() => {
+                      closeMenu();
+                      onReport();
+                    }}
+                    style={styles.menuItem}
+                    accessibilityLabel="Report poll"
+                  >
+                    <Ionicons name="flag-outline" size={18} color={theme.error} />
+                    <ThemedText style={[styles.menuText, { color: theme.error }]}>
+                      Report
                     </ThemedText>
                   </Pressable>
                 ) : null}
