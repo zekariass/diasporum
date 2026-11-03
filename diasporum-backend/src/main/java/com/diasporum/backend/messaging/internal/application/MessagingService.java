@@ -5,6 +5,8 @@ import com.diasporum.backend.community.CommunityApi;
 import com.diasporum.backend.feed.FeedApi;
 import com.diasporum.backend.identity.IdentityApi;
 import com.diasporum.backend.media.MediaApi;
+import com.diasporum.backend.servicemarketplace.ServiceMarketplaceApi;
+import com.diasporum.backend.servicemarketplace.ServiceMarketplaceApi.ServiceConversationContext;
 import com.diasporum.backend.social.SocialApi;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -57,12 +59,13 @@ public class MessagingService {
     private final BusinessAccountsApi businesses;
     private final FeedApi feed;
     private final MediaApi media;
+    private final ServiceMarketplaceApi serviceMarketplace;
     private final MessagingProperties props;
 
     public MessagingService(JdbcTemplate jdbc, IdentityApi identity,
             SocialApi social, CommunityApi community,
             BusinessAccountsApi businesses, FeedApi feed, MediaApi media,
-            MessagingProperties props) {
+            ServiceMarketplaceApi serviceMarketplace, MessagingProperties props) {
         this.jdbc = jdbc;
         this.identity = identity;
         this.social = social;
@@ -70,6 +73,7 @@ public class MessagingService {
         this.businesses = businesses;
         this.feed = feed;
         this.media = media;
+        this.serviceMarketplace = serviceMarketplace;
         this.props = props;
     }
 
@@ -370,23 +374,40 @@ public class MessagingService {
      * removes access without deleting history.
      */
     private Endpoint requireSide(ConversationRow c, UUID actor) {
+        Endpoint self = null;
         // Personal sides: the endpoint user id itself must match.
         if (c.participantABizId() == null && actor.equals(c.participantAId())) {
-            return c.endpointA();
-        }
-        if (c.participantBBizId() == null && actor.equals(c.participantBId())) {
-            return c.endpointB();
-        }
-        // Business sides: live active membership decides.
-        if (c.participantABizId() != null
+            self = c.endpointA();
+        } else if (c.participantBBizId() == null && actor.equals(c.participantBId())) {
+            self = c.endpointB();
+        } else if (c.participantABizId() != null
                 && businesses.isActiveMember(actor, c.participantABizId())) {
-            return c.endpointA();
-        }
-        if (c.participantBBizId() != null
+            self = c.endpointA();
+        } else if (c.participantBBizId() != null
                 && businesses.isActiveMember(actor, c.participantBBizId())) {
-            return c.endpointB();
+            self = c.endpointB();
         }
-        throw notFound("CONVERSATION_NOT_FOUND");
+        if (self == null || !serviceConversationAccessible(actor, c)) {
+            throw notFound("CONVERSATION_NOT_FOUND");
+        }
+        return self;
+    }
+
+    private boolean serviceConversationAccessible(UUID actor, ConversationRow c) {
+        return !"SERVICE_REQUEST".equals(c.contextType())
+                || serviceMarketplace.canAccessServiceConversation(actor,
+                        new ServiceConversationContext(c.id(), c.contextId(), c.participantAId(),
+                                c.participantABizId(), c.participantBId(), c.participantBBizId()));
+    }
+
+    private void requireServiceContext(UUID actor, String contextType, UUID contextId,
+            Endpoint a, Endpoint b) {
+        if ("SERVICE_REQUEST".equals(contextType)
+                && !serviceMarketplace.canAccessServiceConversation(actor,
+                        new ServiceConversationContext(null, contextId, a.userId(),
+                                a.businessAccountId(), b.userId(), b.businessAccountId()))) {
+            throw forbidden("SERVICE_LEAD_ACCESS_REQUIRED");
+        }
     }
 
     private ConversationRow requireConversation(UUID id) {
@@ -543,6 +564,7 @@ public class MessagingService {
         boolean swap = self.key().compareTo(other.key()) > 0;
         Endpoint a = swap ? other : self;
         Endpoint b = swap ? self : other;
+        requireServiceContext(actor, contextType, cmd.contextId(), a, b);
 
         var existing = findConversation(a, b, contextType, cmd.contextId());
         if (existing.isPresent()) {
@@ -898,11 +920,13 @@ public class MessagingService {
             next = sort.toEpochMilli() + "_" + last.id();
         }
 
-        var items = page.stream().map(r -> toView((ConversationRow) r[0],
-                actor, null, (Long) r[1], (Instant) r[2], (Instant) r[3],
-                (long) r[4], (UUID) r[5],
-                requestDirection(actor, resolveSide((ConversationRow) r[0],
-                        actor, null), (UUID) r[6], (UUID) r[7]))).toList();
+        var items = page.stream()
+                .filter(r -> serviceConversationAccessible(actor, (ConversationRow) r[0]))
+                .map(r -> toView((ConversationRow) r[0],
+                        actor, null, (Long) r[1], (Instant) r[2], (Instant) r[3],
+                        (long) r[4], (UUID) r[5],
+                        requestDirection(actor, resolveSide((ConversationRow) r[0],
+                                actor, null), (UUID) r[6], (UUID) r[7]))).toList();
         return new ConversationPage(items, next);
     }
 

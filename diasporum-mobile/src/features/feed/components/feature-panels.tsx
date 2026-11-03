@@ -64,6 +64,10 @@ import { createDirectoryApi } from "@/features/business-directory/services/direc
 import { BusinessCard } from "@/features/business-directory/components/business-card";
 import type { Business } from "@/features/business-directory/types/directory-types";
 
+import { createServiceMarketplaceApi } from "@/features/services/services/service-marketplace-api";
+import { ProviderCard } from "@/features/services/components/service-ui";
+import type { ServiceProvider } from "@/features/services/types/service-marketplace-types";
+
 // ─── shared helpers ───────────────────────────────────────────────────────────
 
 const COLUMN_GAP = Spacing.two;
@@ -985,6 +989,74 @@ export function BusinessPanel() {
           showsVerticalScrollIndicator={false}
         />
       )}
+    </ThemedView>
+  );
+}
+
+// ─── Service Marketplace ─────────────────────────────────────────────────────
+
+export function ServicesPanel() {
+  const { apiClient } = useSession();
+  const api = useMemo(() => createServiceMarketplaceApi(apiClient), [apiClient]);
+  const [items, setItems] = useState<ServiceProvider[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loadingRef = useRef(false);
+
+  const load = useCallback((nextCursor?: string) => {
+    if (loadingRef.current) return Promise.resolve();
+    loadingRef.current = true;
+    return api.discoverProviders({ sort: "NEWEST" }, nextCursor, 10)
+      .then((page) => {
+        setItems((current) => {
+          if (!nextCursor) return page.items;
+          const ids = new Set(current.map((item) => item.id));
+          return [...current, ...page.items.filter((item) => !ids.has(item.id))];
+        });
+        setCursor(page.nextCursor);
+        setError(null);
+      })
+      .catch((cause: unknown) => {
+        setError(ApiError.isApiError(cause) ? cause.userMessage : "Could not load service providers.");
+      })
+      .finally(() => {
+        loadingRef.current = false;
+        setLoading(false);
+        setRefreshing(false);
+        setLoadingMore(false);
+      });
+  }, [api]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <ThemedView style={panelStyles.root}>
+      <PanelHeader title="Services" icon="construct-outline" route="/(app)/services"
+        createRoute="/(app)/services/requests/create" createLabel="Request a service" />
+      {loading ? <ActivityIndicator style={panelStyles.loader} color={BrandColors.primary} />
+        : error && items.length === 0 ? <PanelError message={error} onRetry={() => { setLoading(true); void load(); }} />
+          : <FlatList
+            data={items}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={panelStyles.listContent}
+            renderItem={({ item }) => <ProviderCard provider={item} />}
+            onEndReached={() => {
+              if (cursor && !loadingRef.current) {
+                setLoadingMore(true);
+                void load(cursor);
+              }
+            }}
+            onEndReachedThreshold={0.4}
+            refreshControl={<RefreshControl refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); void load(); }} tintColor={BrandColors.primary} />}
+            ListEmptyComponent={<PanelEmpty icon="construct-outline" message="No service providers yet." />}
+            ListFooterComponent={loadingMore
+              ? <ActivityIndicator style={panelStyles.footer} color={BrandColors.primary} /> : undefined}
+            showsVerticalScrollIndicator={false}
+          />}
     </ThemedView>
   );
 }

@@ -35,6 +35,7 @@ public class MediaService {
             Map.entry("PROPERTY", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("SPARE_BAG_LISTING", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("VEHICLE", List.of("image/jpeg", "image/png", "image/webp")),
+            Map.entry("SERVICE_REQUEST", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("FEED_VIDEO", List.of("video/mp4", "video/quicktime")),
             Map.entry("MESSAGE_AUDIO", List.of("audio/mpeg", "audio/ogg", "audio/mp4")),
             Map.entry("DOCUMENT", List.of("application/pdf", "application/msword",

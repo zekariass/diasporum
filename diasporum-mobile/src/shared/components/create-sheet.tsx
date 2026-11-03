@@ -74,6 +74,7 @@ const OPTIONS: CreateOption[] = [
     description: "Find someone for a service you need",
     icon: "construct-outline",
     color: "#EA580C",
+    route: "/(app)/services/requests/create",
   },
   {
     key: "event",

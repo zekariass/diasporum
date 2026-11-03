@@ -36,6 +36,7 @@ import {
   JobsPanel,
   SpareBagPanel,
   BusinessPanel,
+  ServicesPanel,
 } from "../components/feature-panels";
 import { useFeed } from "../hooks/use-feed";
 import { createFeedApi } from "../services/feed-api";
@@ -52,7 +53,7 @@ const ROUTE_FEATURES: Record<string, string> = {
 };
 
 /** Unimplemented features — show an alert */
-const COMING_SOON = new Set(["help", "services"]);
+const COMING_SOON = new Set(["help"]);
 
 export default function HomeFeedScreen() {
   const theme = useTheme();
@@ -238,6 +239,8 @@ export default function HomeFeedScreen() {
             <SpareBagPanel />
           ) : activeFeature === "business" ? (
             <BusinessPanel />
+          ) : activeFeature === "services" ? (
+            <ServicesPanel />
           ) : null}
         </Animated.View>
       </SafeAreaView>

@@ -1,10 +1,21 @@
 package com.diasporum.backend.servicemarketplace;
 
-/**
- * Public API of the service marketplace module: provider discovery, service requests, paid lead-access grants. Other modules call this interface only.
- *
- * <p>Methods are added as use cases land; consumers depend on this
- * interface so implementations stay swappable and internals encapsulated.
- */
+import java.util.UUID;
+
+/** Public cross-module authorization contract for service conversations. */
 public interface ServiceMarketplaceApi {
+
+    /**
+     * Revalidates participant identities, live business membership and the
+     * active chat-enabled lead grant for a SERVICE_REQUEST conversation.
+     */
+    boolean canAccessServiceConversation(UUID actorUserId,
+            ServiceConversationContext conversation);
+
+    /** Messaging-owned participant shape; no messaging internal types leak. */
+    record ServiceConversationContext(UUID conversationId,
+            UUID serviceRequestId, UUID participantAUserId,
+            UUID participantABusinessAccountId, UUID participantBUserId,
+            UUID participantBBusinessAccountId) {
+    }
 }

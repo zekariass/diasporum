@@ -423,7 +423,8 @@ public class BillingService implements BillingApi {
                         + "AND e.feature_id=? AND e.enabled FOR UPDATE",
                 (rs, i) -> new VEntitlement(rs.getObject("quantity_limit", Long.class),
                         rs.getString("reset_period"),
-                        rs.getObject("current_period_start", Instant.class)),
+                        rs.getTimestamp("current_period_start") == null ? null
+                                : rs.getTimestamp("current_period_start").toInstant()),
                 accountId, featureId).stream().findFirst().orElse(null);
         if (entitlement == null) {
             return new VAllowance(null, null, null);
@@ -441,7 +442,7 @@ public class BillingService implements BillingApi {
                         + "=?" + (windowStart == null ? "" : " AND occurred_at>=?"),
                 Long.class, windowStart == null
                         ? new Object[]{featureId, accountId}
-                        : new Object[]{featureId, accountId, windowStart});
+                        : new Object[]{featureId, accountId, Timestamp.from(windowStart)});
         return new VAllowance(null, entitlement, used == null ? 0 : used);
     }
 
