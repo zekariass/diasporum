@@ -190,6 +190,49 @@ function MatchmakingGridCard({ profile }: { profile: PublicMatchmakingProfile })
   );
 }
 
+/** Shown when the user has no dating profile yet (403 from discover). */
+function MatchmakingNoProfile() {
+  const theme = useTheme();
+  const router = useRouter();
+  return (
+    <View style={noProfileStyles.wrap}>
+      <View
+        style={[
+          noProfileStyles.iconCircle,
+          { backgroundColor: theme.primarySurface },
+        ]}
+      >
+        <Ionicons name="heart" size={40} color={theme.primary} />
+      </View>
+      <ThemedText type="subtitle" style={noProfileStyles.title}>
+        Find your match
+      </ThemedText>
+      <ThemedText
+        themeColor="textSecondary"
+        style={noProfileStyles.body}
+      >
+        You don&apos;t have a dating profile yet. Create one to start
+        discovering compatible people.
+      </ThemedText>
+      <Pressable
+        onPress={() => router.push("/(app)/matchmaking/setup" as never)}
+        accessibilityRole="button"
+        accessibilityLabel="Create dating profile"
+        style={({ pressed }) => [
+          noProfileStyles.btn,
+          { backgroundColor: theme.primary },
+          pressed && { opacity: 0.82 },
+        ]}
+      >
+        <Ionicons name="add-circle-outline" size={18} color={BrandColors.white} />
+        <ThemedText style={noProfileStyles.btnText}>
+          Create dating profile
+        </ThemedText>
+      </Pressable>
+    </View>
+  );
+}
+
 export function MatchmakingPanel() {
   const api = useMatchmakingApi();
   const router = useRouter();
@@ -199,6 +242,8 @@ export function MatchmakingPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** True when the 403 response indicates no dating profile exists yet. */
+  const [noProfile, setNoProfile] = useState(false);
   const loadingRef = useRef(false);
   const theme = useTheme();
 
@@ -216,13 +261,22 @@ export function MatchmakingPanel() {
           });
           setCursor(page.nextCursor ?? null);
           setError(null);
+          setNoProfile(false);
         })
         .catch((err: unknown) => {
-          setError(
-            ApiError.isApiError(err)
-              ? err.userMessage
-              : "Could not load profiles.",
-          );
+          // 403 from /discover means the user has no active dating profile.
+          // Show the create-profile prompt instead of a generic error.
+          if (ApiError.isApiError(err) && err.isForbidden) {
+            setNoProfile(true);
+            setError(null);
+          } else {
+            setNoProfile(false);
+            setError(
+              ApiError.isApiError(err)
+                ? err.userMessage
+                : "Could not load profiles.",
+            );
+          }
         })
         .finally(() => {
           loadingRef.current = false;
@@ -244,11 +298,13 @@ export function MatchmakingPanel() {
         title="Matchmaking"
         icon="heart-outline"
         route="/(app)/matchmaking"
-        createRoute="/(app)/matchmaking/setup"
+        createRoute={noProfile ? undefined : "/(app)/matchmaking/setup"}
         createLabel="Set up profile"
       />
       {loading ? (
         <ActivityIndicator style={panelStyles.loader} color={theme.primary} />
+      ) : noProfile ? (
+        <MatchmakingNoProfile />
       ) : error && items.length === 0 ? (
         <PanelError message={error} onRetry={() => { setLoading(true); void load(); }} />
       ) : (
@@ -981,6 +1037,44 @@ const panelStyles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   fullScreenText: { fontSize: 14, fontWeight: "600" },
+});
+
+const noProfileStyles = StyleSheet.create({
+  wrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: Spacing.five,
+    gap: Spacing.three,
+  },
+  iconCircle: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: Spacing.two,
+  },
+  title: { textAlign: "center" },
+  body: {
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: "center",
+  },
+  btn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.one,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two + 4,
+    borderRadius: BorderRadius.full,
+    marginTop: Spacing.two,
+  },
+  btnText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: BrandColors.white,
+  },
 });
 
 const gridCardStyles = StyleSheet.create({
