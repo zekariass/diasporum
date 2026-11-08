@@ -14,12 +14,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.diasporum.backend.businessaccounts.internal.application.BusinessAccountService;
+import com.diasporum.backend.businessdirectory.internal.application.BusinessDirectoryService;
 import com.diasporum.backend.community.internal.application.CommunityService;
 import com.diasporum.backend.identity.IdentityTestSupport;
 import com.diasporum.backend.propertylistings.internal.application.PropertyDiscoveryService;
 import com.diasporum.backend.propertylistings.internal.application.PropertyEngagementService;
+import com.diasporum.backend.propertylistings.internal.application.PropertyExpiryWorker;
 import com.diasporum.backend.propertylistings.internal.application.PropertyLifecycleService;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.AddressInput;
+import com.diasporum.backend.propertylistings.internal.application.PropertyModels.BrowseOptions;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.ContactInput;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.PropertyCommand;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.PropertyDetail;
@@ -27,6 +30,7 @@ import com.diasporum.backend.propertylistings.internal.application.PropertyModel
 import com.diasporum.backend.propertylistings.internal.application.PropertyQueryService;
 import com.diasporum.backend.security.DiasporumUserPrincipal;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -70,7 +74,9 @@ class PropertyMarketplaceIntegrationTest {
     @Autowired PropertyQueryService query;
     @Autowired PropertyDiscoveryService discovery;
     @Autowired PropertyEngagementService engagement;
+    @Autowired PropertyExpiryWorker expiryWorker;
     @Autowired BusinessAccountService businessService;
+    @Autowired BusinessDirectoryService directory;
     @Autowired CommunityService communities;
     @Autowired ApplicationContext ctx;
     @Autowired JdbcTemplate jdbc;
@@ -262,7 +268,7 @@ class PropertyMarketplaceIntegrationTest {
         assertEquals(1, filtered.items().size());
         assertEquals("Large Berlin apartment", filtered.items().get(0).property().title());
         var nearby = discovery.discover(member, new SearchCriteria(null, null, null, null,
-                null, null, null, null, null, null, null, null, 52.52, 13.40, 10.0),
+                null, null, null, null, null, null, null, null, 52.52, 13.40, 10.0, null),
                 null, 20);
         assertEquals(2, nearby.items().size());
         assertEquals(0, discovery.discover(abroad, criteria(null, null, null, null, null),
@@ -275,8 +281,8 @@ class PropertyMarketplaceIntegrationTest {
         engagement.unsave(member, id);
         engagement.unsave(member, id);
         assertEquals(0, discovery.saved(member, null, 20).items().size());
-        assertEquals(3, discovery.mine(owner, null, null, null, 20).items().size());
-        assertEquals(1, discovery.mine(owner, "PUBLISHED", null, null, 1).items().size());
+        assertEquals(3, discovery.mine(owner, null, null, null, null, 20).items().size());
+        assertEquals(1, discovery.mine(owner, "PUBLISHED", null, null, null, 1).items().size());
     }
 
     @Test
@@ -348,6 +354,119 @@ class PropertyMarketplaceIntegrationTest {
     }
 
     @Test
+    void cityOnlyListingPublishesWithoutDiscoveryPoint() {
+        PropertyDetail draft = lifecycle.create(owner, command(owner, null,
+                "City only flat", new BigDecimal("800"), 1, null, null));
+        UUID id = draft.item().property().id();
+        assertNull(draft.item().location().latitude());
+        assertEquals("Berlin", draft.item().location().city());
+        lifecycle.attachMedia(owner, id, media(owner, "city"));
+        PropertyDetail pub = lifecycle.publish(owner, id);
+        assertEquals("PUBLISHED", pub.item().property().status());
+        assertNull(pub.item().location().latitude());
+        assertEquals(1, discovery.discover(member,
+                criteria("Berlin", "RENT", null, null, null), null, 20).items().size());
+        assertEquals(0, discovery.discover(member, new SearchCriteria(null, null, null,
+                null, null, null, null, null, null, null, null, null, 52.52, 13.40,
+                50.0, null), null, 20).items().size());
+    }
+
+    @Test
+    void privateAddressAndAudienceOnlyVisibleToManagers() {
+        PropertyDetail listing = published(owner, null, "Private flat",
+                new BigDecimal("900"), 1, 52.520008, 13.404954);
+        UUID id = listing.item().property().id();
+        PropertyDetail managerView = query.detail(owner, id);
+        assertEquals("1 Private Street", managerView.privateAddress().addressLine1());
+        assertEquals("10115", managerView.privateAddress().postalCode());
+        assertEquals(52.520008, managerView.privateAddress().latitude());
+        assertNull(query.detail(member, id).privateAddress());
+        assertTrue(query.detail(member, id).communityIds().isEmpty());
+
+        PropertyDetail audience = lifecycle.create(owner, new PropertyCommand(destination,
+                null, null, null, propertyType, "SELECTED_COMMUNITIES", "RENT", "Audience flat",
+                "Integration property description", Map.of(), new BigDecimal("700"),
+                "EUR", "MONTH", new AddressInput(null, null, "Berlin", null, null, null,
+                null, null), 1, 1, 1, new BigDecimal("40"), "SQM", null, null, null,
+                null, null, null, null, List.of(community), List.of(), null));
+        UUID audienceId = audience.item().property().id();
+        lifecycle.attachMedia(owner, audienceId, media(owner, "audience"));
+        lifecycle.publish(owner, audienceId);
+        assertEquals(List.of(community), query.detail(owner, audienceId).communityIds());
+        assertTrue(query.detail(member, audienceId).communityIds().isEmpty());
+    }
+
+    @Test
+    void expiryTransitionsAndReopen() {
+        PropertyDetail listing = published(owner, null, "Expiring flat",
+                new BigDecimal("950"), 1, 52.52, 13.40);
+        UUID id = listing.item().property().id();
+        jdbc.update("UPDATE property_listings SET expires_at=now()-interval '1 hour'"
+                + " WHERE id=?", id);
+        // Lazy expiry on first touch: public viewers no longer see the listing.
+        assertThrows(ResponseStatusException.class, () -> query.detail(member, id));
+        assertEquals("EXPIRED", jdbc.queryForObject("SELECT status FROM property_listings"
+                + " WHERE id=?", String.class, id));
+        assertEquals("EXPIRED", query.detail(owner, id).item().property().status());
+        PropertyDetail reopened = lifecycle.reopen(owner, id);
+        assertEquals("PUBLISHED", reopened.item().property().status());
+        assertTrue(reopened.item().property().expiresAt().isAfter(Instant.now()));
+
+        // Scheduled worker sweeps untouched expired rows.
+        jdbc.update("UPDATE property_listings SET expires_at=now()-interval '1 hour'"
+                + " WHERE id=?", id);
+        assertEquals(1, expiryWorker.expire());
+        assertEquals("EXPIRED", jdbc.queryForObject("SELECT status FROM property_listings"
+                + " WHERE id=?", String.class, id));
+    }
+
+    @Test
+    void terminalSaleAndRentalOutcomes() {
+        PropertyDetail rent = published(owner, null, "Rental outcome",
+                new BigDecimal("1000"), 1, 52.52, 13.40);
+        UUID rentId = rent.item().property().id();
+        assertThrows(ResponseStatusException.class, () -> lifecycle.sold(owner, rentId));
+        assertEquals("RENTED", lifecycle.rented(owner, rentId).item().property().status());
+        assertEquals("RENTED", lifecycle.rented(owner, rentId).item().property().status());
+        assertThrows(ResponseStatusException.class, () -> lifecycle.update(owner, rentId,
+                command(owner, null, "No edits", new BigDecimal("1000"), 1, 52.52, 13.40)));
+        assertThrows(ResponseStatusException.class, () -> lifecycle.close(owner, rentId));
+        assertThrows(ResponseStatusException.class, () -> lifecycle.pause(owner, rentId));
+        assertThrows(ResponseStatusException.class, () -> lifecycle.reopen(owner, rentId));
+        assertThrows(ResponseStatusException.class, () -> query.detail(member, rentId));
+
+        PropertyDetail sale = lifecycle.create(owner, new PropertyCommand(destination,
+                null, null, null, propertyType, "COUNTRY", "SALE", "Sale outcome",
+                "Integration property description", Map.of(), new BigDecimal("250000"),
+                "EUR", "TOTAL", new AddressInput("2 Sale Street", null, "Berlin",
+                "Berlin", "10116", null, 52.51, 13.41), 3, 2, 1, new BigDecimal("90"),
+                "SQM", null, null, null, null, null, "FREEHOLD", "GOOD", null,
+                List.of(), null));
+        UUID saleId = sale.item().property().id();
+        lifecycle.attachMedia(owner, saleId, media(owner, "sale"));
+        lifecycle.publish(owner, saleId);
+        assertThrows(ResponseStatusException.class,
+                () -> lifecycle.rented(owner, saleId));
+        assertEquals("SOLD", lifecycle.sold(owner, saleId).item().property().status());
+        assertEquals("SOLD", lifecycle.sold(owner, saleId).item().property().status());
+    }
+
+    @Test
+    void enquiryNotifiesOwnerOnce() {
+        PropertyDetail listing = published(owner, null, "Notify me",
+                new BigDecimal("800"), 1, 52.52, 13.40);
+        UUID id = listing.item().property().id();
+        engagement.enquiry(member, id);
+        engagement.enquiry(member, id); // reused conversation must not re-notify
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications"
+                + " WHERE recipient_user_id=? AND type='PROPERTY_ENQUIRY'"
+                + " AND target_id=?", Integer.class, owner, id));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM notifications"
+                + " WHERE recipient_user_id=? AND type='PROPERTY_ENQUIRY'",
+                Integer.class, member));
+    }
+
+    @Test
     void httpCreateDiscoveryAndValidation() throws Exception {
         String body = """
                 {"countryId":"%s","propertyTypeId":"%s","visibilityScope":"COUNTRY",
@@ -379,8 +498,192 @@ class PropertyMarketplaceIntegrationTest {
         mvc.perform(get("/api/v1/properties")).andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void priceSortUsesStableCursorsAndCountsBeforePagination() {
+        published(owner, null, "Low", new BigDecimal("900"), 1, null, null);
+        published(owner, null, "Tie one", new BigDecimal("1200"), 2, null, null);
+        published(owner, null, "Tie two", new BigDecimal("1200"), 2, null, null);
+        published(owner, null, "High", new BigDecimal("1800"), 3, null, null);
+        for (String sort : List.of("NEWEST", "PRICE_ASC", "PRICE_DESC")) {
+            var options = sortOptions(sort);
+            var expected = discovery.discover(member, null, null, 20, options).items();
+            var ids = new java.util.ArrayList<UUID>();
+            String cursor = null;
+            do {
+                var page = discovery.discover(member, null, cursor, 1, options);
+                assertEquals(4L, page.totalCount());
+                page.items().forEach(item -> ids.add(item.property().id()));
+                cursor = page.nextCursor();
+                assertTrue(ids.size() <= 4, "Cursor must advance across tied prices");
+            } while (cursor != null);
+            assertEquals(expected.stream().map(item -> item.property().id()).toList(), ids);
+            assertEquals(4, new java.util.HashSet<>(ids).size());
+            if ("PRICE_ASC".equals(sort)) assertEquals("Low", expected.getFirst().property().title());
+            if ("PRICE_DESC".equals(sort)) assertEquals("High", expected.getFirst().property().title());
+        }
+        var filtered = discovery.discover(member, criteria(null, null, new BigDecimal("1200"), null, null), null, 1);
+        assertEquals(3L, filtered.totalCount());
+        assertEquals(0L, discovery.discover(member, criteria(null, null, null, null, "Missing"), null, 1).totalCount());
+        var first = discovery.discover(member, null, null, 1, sortOptions("PRICE_ASC"));
+        assertEquals(HttpStatus.BAD_REQUEST, assertThrows(ResponseStatusException.class,
+                () -> discovery.discover(member, null, first.nextCursor(), 1, sortOptions("PRICE_DESC"))).getStatusCode());
+    }
+
+    @Test
+    void advancedFiltersAndLocationSearchUseTheSameCountPredicate() throws Exception {
+        UUID match = published(owner, null, "Matching", new BigDecimal("1000"), 2, null, null).item().property().id();
+        UUID other = published(owner, null, "Other", new BigDecimal("1500"), 3, null, null).item().property().id();
+        jdbc.update("UPDATE property_listings SET currency_code='USD',floor_area=100,"
+                + "rental_deposit=900,bills_included=false,minimum_tenancy_months=12,bathrooms=2 WHERE id=?", other);
+        mvc.perform(get("/api/v1/properties").with(as(member))
+                        .param("listingPurpose", "RENT").param("sort", "PRICE_ASC")
+                        .param("currencyCode", "EUR").param("pricePeriod", "MONTH")
+                        .param("minFloorArea", "50").param("maxFloorArea", "60").param("floorAreaUnit", "SQM")
+                        .param("availableBy", LocalDate.now().plusDays(10).toString())
+                        .param("maxDeposit", "500").param("billsIncluded", "true")
+                        .param("maxTenancyMonths", "6").param("maxBathrooms", "1")
+                        .param("conditionKey", "GOOD").param("tenure", "assured_shorthold"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalCount").value(1))
+                .andExpect(jsonPath("$.items[0].property.id").value(match.toString()));
+        mvc.perform(get("/api/v1/properties").with(as(member)).param("billsIncluded", "false"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalCount").value(1))
+                .andExpect(jsonPath("$.items[0].property.id").value(other.toString()));
+        assertEquals(2L, discovery.discover(member, criteria(null, null, null, null, "berlin"), null, 20).totalCount());
+        assertEquals(2L, discovery.discover(member, criteria("ber", null, null, null, null), null, 20).totalCount());
+        assertEquals(0L, discovery.discover(member, criteria(null, null, null, null, "Private Street"), null, 20).totalCount());
+        for (var parameter : Map.of("sort", "UNSUPPORTED", "minFloorArea", "20", "currencyCode", "bad",
+                "maxDeposit", "-1", "maxBathrooms", "-1", "cursor", "malformed", "availableBy", "not-a-date").entrySet()) {
+            mvc.perform(get("/api/v1/properties").with(as(member)).param(parameter.getKey(), parameter.getValue()))
+                    .andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
+    void countryBoundaryAppliesToEveryPublicScopeAndEntryPoint() throws Exception {
+        for (String scope : List.of("COUNTRY", "COMMUNITY", "SELECTED_COMMUNITIES")) {
+            UUID id = published(owner, null, scope, new BigDecimal("1000"), 2, null, null).item().property().id();
+            jdbc.update("UPDATE property_listings SET visibility_scope=?::visibility_scope,community_id=? WHERE id=?",
+                    scope, "COMMUNITY".equals(scope) ? community : null, id);
+            if ("SELECTED_COMMUNITIES".equals(scope)) {
+                jdbc.update("INSERT INTO property_listing_communities(property_listing_id,community_id) VALUES(?,?)", id, community);
+            }
+            engagement.save(member, id);
+        }
+        assertEquals(3L, discovery.discover(member, null, null, 20).totalCount());
+        assertEquals(3, discovery.saved(member, null, 20).items().size());
+        jdbc.update("UPDATE profiles SET current_country_id=? WHERE id=?", origin, member);
+        // Membership deliberately remains active after moving country.
+        assertEquals(0L, discovery.discover(member, null, null, 20).totalCount());
+        mvc.perform(get("/api/v1/properties").with(as(member)).param("communityId", community.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalCount").value(0));
+        assertTrue(discovery.saved(member, null, 20).items().isEmpty());
+        for (UUID id : jdbc.queryForList("SELECT id FROM property_listings", UUID.class)) {
+            assertPublicAccessDenied(member, id);
+            assertNotNull(query.detail(owner, id));
+        }
+    }
+
+    @Test
+    void revokedMembershipAndInactiveCommunityCannotLeakListingsOrSavedItems() throws Exception {
+        UUID id = published(owner, null, "Community only", new BigDecimal("1000"), 2, null, null).item().property().id();
+        jdbc.update("UPDATE property_listings SET visibility_scope='COMMUNITY',community_id=? WHERE id=?", community, id);
+        engagement.save(member, id);
+        communities.leave(member, community);
+        assertEquals(0L, discovery.discover(member, null, null, 20).totalCount());
+        assertTrue(discovery.saved(member, null, 20).items().isEmpty());
+        assertPublicAccessDenied(member, id);
+        communities.join(member, community);
+        jdbc.update("UPDATE communities SET is_active=false WHERE id=?", community);
+        assertEquals(0L, discovery.discover(member, null, null, 20).totalCount());
+        assertTrue(discovery.saved(member, null, 20).items().isEmpty());
+        assertPublicAccessDenied(member, id);
+    }
+
+    @Test
+    void disabledContactsAndExactAddressAreAbsentFromPublicPayload() throws Exception {
+        UUID id = published(owner, null, "Private contacts", new BigDecimal("900"), 1, 52.520008, 13.404954).item().property().id();
+        jdbc.update("UPDATE property_listing_contacts SET phone='+491234',whatsapp='+495678',"
+                + "show_phone=false,show_whatsapp=false WHERE property_listing_id=?", id);
+        mvc.perform(get("/api/v1/properties/" + id).with(as(member)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contact.phone").doesNotExist())
+                .andExpect(jsonPath("$.contact.whatsapp").doesNotExist())
+                .andExpect(jsonPath("$.contact.email").value(owner + "@example.com"))
+                .andExpect(jsonPath("$.privateAddress").doesNotExist())
+                .andExpect(jsonPath("$.item.location.countryName").value("Germany"))
+                .andExpect(jsonPath("$.item.location.latitude").value(52.52))
+                .andExpect(jsonPath("$.item.location.longitude").value(13.40));
+        assertEquals("+491234", query.detail(owner, id).contact().phone());
+    }
+
+    @Test
+    void individualAdvertiserUsesPublicAvatarProjection() throws Exception {
+        UUID id = published(owner, null, "Advertiser photo", new BigDecimal("900"), 1, null, null).item().property().id();
+        UUID avatar = media(owner, "avatar");
+        jdbc.update("UPDATE media_objects SET purpose='AVATAR' WHERE id=?", avatar);
+        jdbc.update("INSERT INTO profile_media(user_id,media_id,variant) VALUES(?,?,'AVATAR')", owner, avatar);
+        mvc.perform(get("/api/v1/properties/" + id).with(as(member)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.owner.avatarMediaId").value(avatar.toString()));
+        jdbc.update("UPDATE users SET account_status='SUSPENDED' WHERE id=?", owner);
+        try {
+            assertNull(query.detail(member, id).owner().avatarMediaId());
+        } finally {
+            jdbc.update("UPDATE users SET account_status='ACTIVE' WHERE id=?", owner);
+        }
+    }
+
+    @Test
+    void businessAdvertiserLogoRespectsProfileVisibilityAndLifecycle() throws Exception {
+        var account = businessService.create(owner, "Property agency");
+        UUID category = UUID.randomUUID();
+        jdbc.update("INSERT INTO business_categories(id,country_id,name,slug) VALUES(?,?,'Property agency','property-agency')", category, destination);
+        var business = directory.create(owner, new BusinessDirectoryService.CreateCommand(destination,
+                account.id(), category, "Local agency", "Property agency profile", null, null, null,
+                "COUNTRY", null, List.of()));
+        UUID logo = media(owner, "logo");
+        jdbc.update("UPDATE media_objects SET purpose='BUSINESS' WHERE id=?", logo);
+        directory.attachMedia(owner, business.id(), logo, 0, "LOGO");
+        directory.publish(owner, business.id());
+        UUID id = published(owner, account.id(), "Agency property", new BigDecimal("1200"), 2, null, null).item().property().id();
+        jdbc.update("UPDATE property_listings SET business_listing_id=? WHERE id=?", business.id(), id);
+        mvc.perform(get("/api/v1/properties/" + id).with(as(member)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.listedBy.logoMediaId").value(logo.toString()));
+        assertNull(query.detail(member, id).owner().avatarMediaId());
+        for (String scope : List.of("COMMUNITY", "SELECTED_COMMUNITIES")) {
+            jdbc.update("UPDATE business_listings SET visibility_scope=?::visibility_scope,community_id=? WHERE id=?",
+                    scope, "COMMUNITY".equals(scope) ? community : null, business.id());
+            if ("SELECTED_COMMUNITIES".equals(scope)) {
+                jdbc.update("INSERT INTO business_listing_communities(business_listing_id,community_id) VALUES(?,?)", business.id(), community);
+            }
+            assertEquals(logo, query.detail(member, id).listedBy().logoMediaId());
+            assertNull(query.detail(outsider, id).listedBy());
+            communities.leave(member, community);
+            assertNull(query.detail(member, id).listedBy());
+            communities.join(member, community);
+            jdbc.update("UPDATE communities SET is_active=false WHERE id=?", community);
+            assertNull(query.detail(member, id).listedBy());
+            jdbc.update("UPDATE communities SET is_active=true WHERE id=?", community);
+        }
+        directory.unpublish(owner, business.id());
+        assertNull(query.detail(member, id).listedBy());
+    }
+
+    private void assertPublicAccessDenied(UUID viewer, UUID id) throws Exception {
+        UUID mediaId = jdbc.queryForObject("SELECT media_id FROM property_listing_media WHERE property_listing_id=?", UUID.class, id);
+        mvc.perform(get("/api/v1/properties/" + id).with(as(viewer))).andExpect(status().isNotFound());
+        mvc.perform(put("/api/v1/properties/" + id + "/save").with(as(viewer))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/properties/" + id + "/media/" + mediaId + "/download-url").with(as(viewer))).andExpect(status().isNotFound());
+        mvc.perform(post("/api/v1/properties/" + id + "/enquiry").with(as(viewer))).andExpect(status().isNotFound());
+        mvc.perform(post("/api/v1/properties/" + id + "/report").with(as(viewer))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"SCAM\"}")).andExpect(status().isNotFound());
+    }
+
+    private BrowseOptions sortOptions(String sort) {
+        return new BrowseOptions(sort, null, null, null, null, null, null, null, null, null, null, null, null);
+    }
+
     private PropertyDetail published(UUID actor, UUID business, String title, BigDecimal price,
-            int bedrooms, double lat, double lng) {
+            int bedrooms, Double lat, Double lng) {
         PropertyDetail draft = lifecycle.create(actor, command(actor, business, title, price,
                 bedrooms, lat, lng));
         UUID id = draft.item().property().id();
@@ -389,8 +692,8 @@ class PropertyMarketplaceIntegrationTest {
     }
 
     private PropertyCommand command(UUID actor, UUID business, String title, BigDecimal price,
-            int bedrooms, double lat, double lng) {
-        return new PropertyCommand(destination, null, business, propertyType, "COUNTRY", "RENT",
+            int bedrooms, Double lat, Double lng) {
+        return new PropertyCommand(destination, null, business, null, propertyType, "COUNTRY", "RENT",
                 title, "Integration property description", Map.of("yearBuilt", 2020), price,
                 "EUR", "MONTH", new AddressInput("1 Private Street", null, "Berlin", "Berlin",
                 "10115", null, lat, lng), bedrooms, 1, 1, new BigDecimal("55.5"), "SQM",
@@ -403,7 +706,7 @@ class PropertyMarketplaceIntegrationTest {
     private SearchCriteria criteria(String city, String purpose, BigDecimal minPrice,
             Integer minBedrooms, String search) {
         return new SearchCriteria(null, null, null, purpose, minPrice, null, minBedrooms, null,
-                null, null, city, search, null, null, null);
+                null, null, city, search, null, null, null, null);
     }
 
     private UUID media(UUID actor, String key) {

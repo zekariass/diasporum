@@ -42,6 +42,8 @@ public class FeedService {
     private static final Set<String> VISIBILITIES = Set.of("COMMUNITY", "COUNTRY");
     private static final Set<String> REACTIONS = Set.of("LIKE", "LOVE", "HELPFUL",
             "SUPPORT", "THANKS");
+    private static final Set<String> SHARE_TARGETS = Set.of("COPY_LINK",
+            "IN_APP", "SYSTEM_SHARE");
     private static final Set<String> HELP_KINDS = Set.of("REQUEST", "OFFER");
     private static final Set<String> OPEN_HELP_TRANSITIONS = Set.of("PAUSED",
             "RESOLVED", "CLOSED");
@@ -55,14 +57,27 @@ public class FeedService {
     private final MediaApi media;
     private final TaxonomyApi taxonomy;
     private final ModerationApi moderation;
+    private static final java.util.regex.Pattern HASHTAG =
+            java.util.regex.Pattern.compile("#([\\p{L}\\p{N}_]{2,50})");
+    private static final java.util.regex.Pattern TAG_KEY_OK =
+            java.util.regex.Pattern.compile("[\\p{L}\\p{N}_]+");
+
     private final int pollCreatePerHour;
     private final int pollVotePerMinute;
+    private final int tagMaxPerPost;
+    private final int tagMaxLength;
+    private final int tagCreatePerHour;
+    private final int maxAttachments;
 
     public FeedService(JdbcTemplate jdbc, IdentityApi identity,
             CommunityApi community, SocialApi social, MediaApi media,
             TaxonomyApi taxonomy, ModerationApi moderation,
             @Value("${diasporum.feed.polls.create-per-hour:10}") int pollCreatePerHour,
-            @Value("${diasporum.feed.polls.vote-per-minute:120}") int pollVotePerMinute) {
+            @Value("${diasporum.feed.polls.vote-per-minute:120}") int pollVotePerMinute,
+            @Value("${diasporum.feed.tags.max-per-post:10}") int tagMaxPerPost,
+            @Value("${diasporum.feed.tags.max-length:50}") int tagMaxLength,
+            @Value("${diasporum.feed.tags.create-per-hour:60}") int tagCreatePerHour,
+            @Value("${diasporum.feed.max-attachments:10}") int maxAttachments) {
         this.jdbc = jdbc;
         this.identity = identity;
         this.community = community;
@@ -72,6 +87,10 @@ public class FeedService {
         this.moderation = moderation;
         this.pollCreatePerHour = Math.max(1, pollCreatePerHour);
         this.pollVotePerMinute = Math.max(1, pollVotePerMinute);
+        this.tagMaxPerPost = Math.max(1, tagMaxPerPost);
+        this.tagMaxLength = Math.min(50, Math.max(2, tagMaxLength));
+        this.tagCreatePerHour = Math.max(1, tagCreatePerHour);
+        this.maxAttachments = Math.max(1, maxAttachments);
     }
 
     // =================== row types ===================
@@ -80,8 +99,8 @@ public class FeedService {
             UUID countryId, String postType, String status, String scope,
             String title, String body, String linkUrl, UUID categoryId,
             boolean commentsEnabled,
-            int commentCount, int reactionCount, Instant publishedAt,
-            Instant createdAt) {
+            int commentCount, int reactionCount, int shareCount,
+            Instant publishedAt, Instant createdAt) {
     }
 
     public record CommentRow(UUID id, UUID postId, UUID authorId,
@@ -100,6 +119,7 @@ public class FeedService {
                 rs.getObject("category_id", UUID.class),
                 rs.getBoolean("comments_enabled"),
                 rs.getInt("comment_count"), rs.getInt("reaction_count"),
+                rs.getInt("share_count"),
                 ts(rs, "published_at"), ts(rs, "created_at"));
     }
 
@@ -111,7 +131,7 @@ public class FeedService {
 
     private static final String POST_COLS = "id,author_id,community_id,country_id,"
             + "post_type,status::text,visibility_scope::text,title,body,link_url,"
-            + "category_id,comments_enabled,comment_count,reaction_count,published_at,created_at";
+            + "category_id,comments_enabled,comment_count,reaction_count,share_count,published_at,created_at";
 
     private PostRow requirePost(UUID id) {
         return jdbc.query("SELECT " + POST_COLS + " FROM feed_posts WHERE id=?",
@@ -152,12 +172,21 @@ public class FeedService {
             String title, String body, String linkUrl, String scope,
             UUID categoryId, List<UUID> mediaIds) {
         return createPost(authorId, communityId, type, title, body, linkUrl,
-                scope, categoryId, mediaIds, false);
+                scope, categoryId, mediaIds, null, false);
+    }
+
+    @Transactional
+    public PostRow createPost(UUID authorId, UUID communityId, String type,
+            String title, String body, String linkUrl, String scope,
+            UUID categoryId, List<UUID> mediaIds, List<String> tags) {
+        return createPost(authorId, communityId, type, title, body, linkUrl,
+                scope, categoryId, mediaIds, tags, false);
     }
 
     private PostRow createPost(UUID authorId, UUID communityId, String type,
             String title, String body, String linkUrl, String scope,
-            UUID categoryId, List<UUID> mediaIds, boolean pollWorkflow) {
+            UUID categoryId, List<UUID> mediaIds, List<String> tags,
+            boolean pollWorkflow) {
         if (!POST_TYPES.contains(type)) {
             throw bad("INVALID_POST_TYPE");
         }
@@ -171,12 +200,12 @@ public class FeedService {
                 && !community.isModeratorOrAbove(authorId, communityId)) {
             throw forbidden("MODERATOR_REQUIRED");
         }
-        if (!community.isActiveMember(authorId, communityId)) {
-            throw forbidden("NOT_A_MEMBER");
-        }
+        String module = "COMMUNITY_HELP".equals(type) ? "COMMUNITY_HELP"
+                : "REEL".equals(type) ? "REELS" : "FEED";
+        community.requireModule(authorId, communityId, module);
         var c = taxonomy.findCommunityById(communityId).orElseThrow(
                 () -> bad("COMMUNITY_NOT_FOUND"));
-        if (categoryId == null || !taxonomy.isCategoryActiveInCountry(categoryId,
+        if (categoryId != null && !taxonomy.isCategoryActiveInCountry(categoryId,
                 c.destinationCountryId(),
                 "COMMUNITY_HELP".equals(type) ? "COMMUNITY_HELP" : "FEED")) {
             throw bad("INVALID_CATEGORY");
@@ -186,8 +215,11 @@ public class FeedService {
         }
         UUID id = UUID.randomUUID();
         // POLL/COMMUNITY_HELP must start DRAFT: the publish trigger requires
-        // their child rows (options / help metadata) to already exist.
-        boolean draftFirst = "POLL".equals(type) || "COMMUNITY_HELP".equals(type);
+        // their child rows (options / help metadata) to already exist. REEL
+        // starts DRAFT for the same reason — the reel integrity trigger needs
+        // the FEED_VIDEO attachment row, which can only exist after the post.
+        boolean draftFirst = "POLL".equals(type) || "COMMUNITY_HELP".equals(type)
+                || "REEL".equals(type);
         jdbc.update("INSERT INTO feed_posts(id,country_id,community_id,"
                         + "visibility_scope,author_id,category_id,post_type,title,"
                         + "body,link_url,status,published_at) VALUES(?,?,?,?::"
@@ -197,10 +229,22 @@ public class FeedService {
                 draftFirst ? "DRAFT" : "PUBLISHED",
                 draftFirst ? null : java.sql.Timestamp.from(Instant.now()));
         attachMedia(id, authorId, type, mediaIds);
+        syncTags(id, authorId, tags, body);
+        if ("REEL".equals(type)) {
+            publish(id);    // DRAFT -> PUBLISHED; the integrity trigger now
+                            // sees the attached READY FEED_VIDEO asset
+            community.consumeExtendedAction(authorId, communityId,
+                    "EXTENDED_REEL_PUBLISH", "extended-reel-publish:" + id);
+            return requirePost(id);
+        }
+        if ("GENERAL".equals(type)) {
+            community.consumeExtendedAction(authorId, communityId,
+                    "EXTENDED_FEED_POST_PUBLISH", "extended-feed-publish:" + id);
+        }
         return new PostRow(id, authorId, communityId, c.destinationCountryId(),
                 type, draftFirst ? "DRAFT" : "PUBLISHED", scope, title, body,
-                linkUrl, categoryId, true, 0, 0, draftFirst ? null : Instant.now(),
-                Instant.now());
+                linkUrl, categoryId, true, 0, 0, 0,
+                draftFirst ? null : Instant.now(), Instant.now());
     }
 
     private void attachMedia(UUID postId, UUID ownerId, String postType,
@@ -226,9 +270,13 @@ public class FeedService {
                     ? "FEED_VIDEO".equals(asset.purpose())
                     : ("FEED_IMAGE".equals(asset.purpose())
                             || "FEED_VIDEO".equals(asset.purpose())
+                            || "FEED_AUDIO".equals(asset.purpose())
                             || "DOCUMENT".equals(asset.purpose()));
             if (!ok) {
                 throw bad("MEDIA_WRONG_PURPOSE");
+            }
+            if (order >= maxAttachments) {
+                throw bad("TOO_MANY_ATTACHMENTS");
             }
             jdbc.update("INSERT INTO feed_post_media(post_id,media_id,sort_order)"
                     + " VALUES(?,?,?)", postId, mid, order++);
@@ -243,6 +291,12 @@ public class FeedService {
     @Transactional
     public PostRow updatePost(UUID actor, UUID postId, String title,
             String body, String linkUrl) {
+        return updatePost(actor, postId, title, body, linkUrl, null, null);
+    }
+
+    @Transactional
+    public PostRow updatePost(UUID actor, UUID postId, String title,
+            String body, String linkUrl, UUID categoryId, List<String> tags) {
         var p = requirePost(postId);
         if (!p.authorId().equals(actor)
                 && !community.isModeratorOrAbove(actor, p.communityId())) {
@@ -250,9 +304,20 @@ public class FeedService {
         }
         String normalizedBody = body != null && "POLL".equals(p.postType())
                 ? validated(() -> PollRules.question(body)) : body;
+        if (categoryId != null && !taxonomy.isCategoryActiveInCountry(categoryId,
+                p.countryId(),
+                "COMMUNITY_HELP".equals(p.postType()) ? "COMMUNITY_HELP" : "FEED")) {
+            throw bad("INVALID_CATEGORY");
+        }
         jdbc.update("UPDATE feed_posts SET title=COALESCE(?,title),"
                 + " body=COALESCE(?,body), link_url=COALESCE(?,link_url),"
-                + " updated_at=now() WHERE id=?", title, normalizedBody, linkUrl, postId);
+                + " category_id=COALESCE(?,category_id),"
+                + " updated_at=now() WHERE id=?", title, normalizedBody, linkUrl,
+                categoryId, postId);
+        if (tags != null || normalizedBody != null) {
+            syncTags(postId, actor, tags,
+                    normalizedBody != null ? normalizedBody : p.body());
+        }
         return requirePost(postId);
     }
 
@@ -263,8 +328,160 @@ public class FeedService {
                 && !community.isModeratorOrAbove(actor, p.communityId())) {
             throw forbidden("NOT_AUTHOR");
         }
+        jdbc.update("UPDATE feed_tags ft SET post_count=GREATEST(ft.post_count-1,0)"
+                + " FROM feed_post_tags fpt WHERE fpt.tag_id=ft.id"
+                + " AND fpt.post_id=?", postId);
         jdbc.update("UPDATE feed_posts SET status='DELETED', deleted_at=now(),"
                 + " updated_at=now() WHERE id=?", postId);
+    }
+
+    // =================== hashtags ===================
+
+    /** Strip '#', trim, lowercase — null when outside the documented rules. */
+    private String normalizeTag(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String t = raw.trim();
+        while (t.startsWith("#")) {
+            t = t.substring(1).trim();
+        }
+        String key = t.toLowerCase(java.util.Locale.ROOT);
+        return key.length() >= 2 && key.length() <= tagMaxLength
+                && TAG_KEY_OK.matcher(key).matches() ? key : null;
+    }
+
+    private void checkTagCreateRate(UUID author) {
+        lockActor("diasporum.feed.tags.create.", author);
+        int created = Optional.ofNullable(jdbc.queryForObject(
+                "SELECT count(*) FROM feed_tags WHERE created_by=?"
+                        + " AND created_at > now() - interval '1 hour'",
+                Integer.class, author)).orElse(0);
+        if (created >= tagCreatePerHour) {
+            throw tooMany("TAG_CREATE_RATE_LIMIT");
+        }
+    }
+
+    private UUID tagIdFor(String key, String display, UUID author) {
+        var found = jdbc.query("SELECT id FROM feed_tags WHERE tag_key=?",
+                (rs, i) -> rs.getObject(1, UUID.class), key)
+                .stream().findFirst();
+        if (found.isPresent()) {
+            return found.get();
+        }
+        checkTagCreateRate(author);
+        jdbc.update("INSERT INTO feed_tags(id,tag_key,display_name,created_by)"
+                        + " VALUES(?,?,?,?) ON CONFLICT(tag_key) DO NOTHING",
+                UUID.randomUUID(), key, display, author);
+        return jdbc.queryForObject("SELECT id FROM feed_tags WHERE tag_key=?",
+                UUID.class, key);
+    }
+
+    /**
+     * Reconcile a post's tag set: explicit tags (null = keep existing) merged
+     * with '#tag' tokens parsed from the effective body. Caps at
+     * {@code tagMaxPerPost}; maintains feed_tags.post_count.
+     */
+    private void syncTags(UUID postId, UUID author, List<String> explicit,
+            String body) {
+        var keys = new java.util.LinkedHashSet<String>();
+        var displays = new java.util.HashMap<String, String>();
+        if (explicit != null) {
+            for (String raw : explicit) {
+                String key = normalizeTag(raw);
+                if (key == null) {
+                    throw bad("INVALID_TAG");
+                }
+                keys.add(key);
+                String d = raw.trim();
+                while (d.startsWith("#")) {
+                    d = d.substring(1).trim();
+                }
+                displays.putIfAbsent(key, d);
+            }
+        }
+        if (body != null) {
+            var m = HASHTAG.matcher(body);
+            while (m.find()) {
+                String key = m.group(1).toLowerCase(java.util.Locale.ROOT);
+                keys.add(key);
+                displays.putIfAbsent(key, m.group(1)); // keep author's casing
+            }
+        }
+        var existing = jdbc.queryForList("SELECT tag_id FROM feed_post_tags"
+                + " WHERE post_id=? ORDER BY sort_order", UUID.class, postId);
+        if (explicit == null && keys.isEmpty()) {
+            return;                                     // nothing to reconcile
+        }
+        var desired = new ArrayList<UUID>();
+        for (String key : keys) {
+            desired.add(tagIdFor(key, displays.getOrDefault(key, key), author));
+        }
+        if (explicit == null) {
+            // Body-only edit: keep existing explicit tags, union new tokens.
+            for (UUID id : existing) {
+                if (!desired.contains(id)) {
+                    desired.add(id);
+                }
+            }
+        }
+        if (desired.size() > tagMaxPerPost) {
+            throw bad("TOO_MANY_TAGS");
+        }
+        for (UUID id : existing) {
+            if (!desired.contains(id)) {
+                jdbc.update("UPDATE feed_tags SET post_count=GREATEST("
+                        + "post_count-1,0) WHERE id=?", id);
+            }
+        }
+        for (UUID id : desired) {
+            if (!existing.contains(id)) {
+                jdbc.update("UPDATE feed_tags SET post_count=post_count+1,"
+                        + "last_used_at=now() WHERE id=?", id);
+            }
+        }
+        // Rebuild join rows wholesale — UNIQUE(post_id,sort_order) can't be
+        // updated in place when rows swap positions.
+        jdbc.update("DELETE FROM feed_post_tags WHERE post_id=?", postId);
+        int order = 0;
+        for (UUID id : desired) {
+            jdbc.update("INSERT INTO feed_post_tags(post_id,tag_id,sort_order)"
+                    + " VALUES(?,?,?)", postId, id, order++);
+        }
+    }
+
+    public record TagView(String tagKey, String displayName, long postCount) {
+    }
+
+    /** Prefix suggestions ordered by usage — powers composer autocomplete. */
+    public List<TagView> suggestTags(String q, int size) {
+        String key = q == null ? "" : q.trim()
+                .toLowerCase(java.util.Locale.ROOT);
+        while (key.startsWith("#")) {
+            key = key.substring(1);
+        }
+        if (key.isBlank()) {
+            return List.of();
+        }
+        String like = key.replace("\\", "\\\\").replace("%", "\\%")
+                .replace("_", "\\_");
+        return jdbc.query("SELECT tag_key,display_name,post_count FROM feed_tags"
+                        + " WHERE tag_key LIKE ? || '%' ESCAPE '\\'"
+                        + " ORDER BY post_count DESC,tag_key LIMIT ?",
+                (rs, i) -> new TagView(rs.getString(1), rs.getString(2),
+                        rs.getLong(3)),
+                like, Math.min(Math.max(size, 1), 20));
+    }
+
+    /** Community-scoped hashtag feed — same visibility rules as communityFeed. */
+    public FeedPage tagFeed(UUID viewer, UUID communityId, String tagKey,
+            String cursor, int size) {
+        String key = normalizeTag(tagKey);
+        if (key == null) {
+            throw bad("INVALID_TAG");
+        }
+        return communityFeed(viewer, communityId, "LATEST", null, key, cursor,
+                size);
     }
 
     // =================== eligibility + feeds ===================
@@ -284,11 +501,16 @@ public class FeedService {
         return true;
     }
 
+    public record MediaAttachment(UUID id, String purpose, String mimeType,
+            Long durationMs, Long sizeBytes) {
+    }
+
     public record FeedItem(String itemId, String contentType, String sourceModule,
             UUID sourceId, Object author, UUID communityId, Instant publishedAt,
-            String title, String body, List<UUID> mediaIds, int commentCount,
-            int reactionCount, String viewerReaction, boolean viewed,
-            boolean saved, Map<String, Object> payload) {
+            String title, String body, List<UUID> mediaIds,
+            List<MediaAttachment> media, List<String> tags, int commentCount,
+            int reactionCount, int shareCount, String viewerReaction,
+            boolean viewed, boolean saved, Map<String, Object> payload) {
     }
 
     private List<FeedItem> toItems(UUID viewer, List<PostRow> posts) {
@@ -333,6 +555,30 @@ public class FeedService {
         var pollIds = posts.stream().filter(p -> "POLL".equals(p.postType()))
                 .map(PostRow::id).toList();
         var polls = pollResponses(viewer, pollIds);
+        // Batch media + tags — one query per page, not per post.
+        var mediaRows = jdbc.query("SELECT post_id,media_id FROM feed_post_media"
+                        + " WHERE post_id IN (" + postPh + ")"
+                        + " ORDER BY post_id,sort_order",
+                (rs, i) -> Map.of("p", rs.getObject(1, UUID.class),
+                        "m", rs.getObject(2, UUID.class)), postIds.toArray());
+        var mediaIdsByPost = new LinkedHashMap<UUID, List<UUID>>();
+        var allMediaIds = new ArrayList<UUID>();
+        for (var r : mediaRows) {
+            mediaIdsByPost.computeIfAbsent((UUID) r.get("p"),
+                    k -> new ArrayList<>()).add((UUID) r.get("m"));
+            allMediaIds.add((UUID) r.get("m"));
+        }
+        var assetById = new java.util.HashMap<UUID, MediaApi.AssetView>();
+        media.assets(allMediaIds).forEach(a -> assetById.put(a.id(), a));
+        var tagsByPost = new LinkedHashMap<UUID, List<String>>();
+        jdbc.query("SELECT fpt.post_id,ft.display_name FROM feed_post_tags fpt"
+                        + " JOIN feed_tags ft ON ft.id=fpt.tag_id"
+                        + " WHERE fpt.post_id IN (" + postPh + ")"
+                        + " ORDER BY fpt.post_id,fpt.sort_order",
+                (rs, i) -> Map.of("p", rs.getObject(1, UUID.class),
+                        "t", rs.getString(2)), postIds.toArray())
+                .forEach(r -> tagsByPost.computeIfAbsent((UUID) r.get("p"),
+                        k -> new ArrayList<>()).add((String) r.get("t")));
         var cache = new java.util.HashMap<UUID, Boolean>();
         var out = new ArrayList<FeedItem>();
         for (var p : posts) {
@@ -353,10 +599,17 @@ public class FeedService {
             if ("POLL".equals(p.postType()) && polls.containsKey(p.id())) {
                 payload.put("poll", polls.get(p.id()));
             }
+            var ids = mediaIdsByPost.getOrDefault(p.id(), List.of());
+            var attachments = ids.stream().map(assetById::get)
+                    .filter(java.util.Objects::nonNull)
+                    .map(a -> new MediaAttachment(a.id(), a.purpose(),
+                            a.mimeType(), a.durationMs(), a.sizeBytes()))
+                    .toList();
             out.add(new FeedItem("FEED_POST:" + p.id(), p.postType(), "feed",
                     p.id(), authors.get(p.authorId()), p.communityId(),
-                    p.publishedAt(), p.title(), p.body(), mediaIds(p.id()),
-                    p.commentCount(), p.reactionCount(), reaction,
+                    p.publishedAt(), p.title(), p.body(), ids, attachments,
+                    tagsByPost.getOrDefault(p.id(), List.of()),
+                    p.commentCount(), p.reactionCount(), p.shareCount(), reaction,
                     viewed.contains(p.id()), saved.contains(p.id()), payload));
         }
         return out;
@@ -373,6 +626,11 @@ public class FeedService {
     public record FeedPage(List<FeedItem> items, String nextCursor) {
     }
 
+    /** Own-posts page — FeedPage plus a total count for profile stats. */
+    public record MinePage(List<FeedItem> items, String nextCursor,
+            long total) {
+    }
+
     /**
      * Community feed. mode=FOR_YOU: eligible unseen first, newest first,
      * then seen newest first (view-aware ordering). mode=LATEST: strict
@@ -381,6 +639,12 @@ public class FeedService {
      */
     public FeedPage communityFeed(UUID viewer, UUID communityId, String mode,
             UUID categoryId, String cursor, int size) {
+        return communityFeed(viewer, communityId, mode, categoryId, null,
+                cursor, size);
+    }
+
+    public FeedPage communityFeed(UUID viewer, UUID communityId, String mode,
+            UUID categoryId, String tag, String cursor, int size) {
         if (!community.isActiveMember(viewer, communityId)) {
             throw forbidden("NOT_A_MEMBER");
         }
@@ -397,6 +661,12 @@ public class FeedService {
         if (categoryId != null) {
             extra += " AND fp.category_id=?";
             args.add(categoryId);
+        }
+        if (tag != null) {
+            extra += " AND EXISTS (SELECT 1 FROM feed_post_tags fpt"
+                    + " JOIN feed_tags ft ON ft.id=fpt.tag_id"
+                    + " WHERE fpt.post_id=fp.id AND ft.tag_key=?)";
+            args.add(tag.toLowerCase(java.util.Locale.ROOT));
         }
         if (cursor != null) {
             var c = decode(cursor);                         // (flag, tsMs, id)
@@ -465,6 +735,56 @@ public class FeedService {
                         + " ORDER BY fp.published_at DESC, fp.id DESC LIMIT ?",
                 FeedService::post, append(params, limit + 1));
         return page(viewer, rows, limit, 0);
+    }
+
+    /**
+     * Own posts across all communities — powers the profile Posts/Polls/Media
+     * tabs. Optional postType and hasMedia filters; strict newest-first
+     * keyset on (published_at, id). {@code total} counts the filtered set
+     * (cursor excluded) for the profile stats row.
+     */
+    public MinePage myPosts(UUID viewer, String postType, boolean hasMedia,
+            String cursor, int size) {
+        if (postType != null && !POST_TYPES.contains(postType)) {
+            throw bad("INVALID_POST_TYPE");
+        }
+        int limit = clamp(size);
+        var filterParams = new ArrayList<Object>();
+        filterParams.add(viewer);
+        String filters = "";
+        if (postType != null) {
+            filters += " AND fp.post_type=?";
+            filterParams.add(postType);
+        }
+        if (hasMedia) {
+            filters += " AND EXISTS (SELECT 1 FROM feed_post_media fpm"
+                    + " WHERE fpm.post_id=fp.id)";
+        }
+        long total = Optional.ofNullable(jdbc.queryForObject(
+                "SELECT count(*) FROM feed_posts fp WHERE fp.author_id=?"
+                        + " AND fp.status='PUBLISHED' AND fp.deleted_at IS NULL"
+                        + filters, Long.class, filterParams.toArray()))
+                .orElse(0L);
+        var params = new ArrayList<>(filterParams);
+        String page = filters;
+        if (cursor != null) {
+            var c = decode(cursor);
+            page += " AND (fp.published_at, fp.id) < (?, ?)";
+            params.add(java.sql.Timestamp.from(c.ts()));
+            params.add(c.id());
+        }
+        var rows = jdbc.query("SELECT " + POST_COLS + " FROM feed_posts fp"
+                        + " WHERE fp.author_id=? AND fp.status='PUBLISHED'"
+                        + " AND fp.deleted_at IS NULL" + page
+                        + " ORDER BY fp.published_at DESC, fp.id DESC LIMIT ?",
+                FeedService::post, append(params, limit + 1));
+        String next = null;
+        if (rows.size() > limit) {
+            rows = rows.subList(0, limit);
+            var last = rows.get(rows.size() - 1);
+            next = encode(0, last.publishedAt(), last.id());
+        }
+        return new MinePage(toItems(viewer, rows), next, total);
     }
 
     /** Reels — same feed modes, post_type filter. Nearby deferred (no geo col). */
@@ -578,6 +898,24 @@ public class FeedService {
                 userId, postId);
     }
 
+    /** Record a share event; each share inserts a post_shares row and the
+     * share_count trigger keeps feed_posts.share_count in step. Returns the
+     * updated count for immediate client display. */
+    @Transactional
+    public int share(UUID userId, UUID postId, String target) {
+        var p = requirePost(postId);
+        if (target != null && !SHARE_TARGETS.contains(target)) {
+            throw bad("INVALID_SHARE_TARGET");
+        }
+        requireViewable(userId, p);
+        jdbc.update("INSERT INTO post_shares(post_id,user_id,share_target)"
+                        + " VALUES(?,?,?)", postId, userId, target);
+        Integer count = jdbc.queryForObject(
+                "SELECT share_count FROM feed_posts WHERE id=?",
+                Integer.class, postId);
+        return count == null ? 0 : count;
+    }
+
     private void requireViewable(UUID viewer, PostRow p) {
         // Non-published content is only visible to its author and community
         // moderators — direct lookup must not leak drafts/deleted items.
@@ -590,9 +928,10 @@ public class FeedService {
         if (social.blockedWith(viewer, List.of(p.authorId())).contains(p.authorId())) {
             throw forbidden("BLOCKED");
         }
-        if (!"COUNTRY".equals(p.scope())
-                && !community.isActiveMember(viewer, p.communityId())) {
-            throw forbidden("NOT_A_MEMBER");
+        if (!"COUNTRY".equals(p.scope())) {
+            String module = "COMMUNITY_HELP".equals(p.postType()) ? "COMMUNITY_HELP"
+                    : "REEL".equals(p.postType()) ? "REELS" : "FEED";
+            community.requireModule(viewer, p.communityId(), module);
         }
     }
 
@@ -681,15 +1020,28 @@ public class FeedService {
     public Map<String, Object> createHelpPost(UUID author, UUID communityId,
             UUID categoryId, String kind, String title, String body,
             Instant expiresAt) {
+        return createHelpPost(author, communityId, categoryId, kind, title,
+                body, expiresAt, null, null);
+    }
+
+    @Transactional
+    public Map<String, Object> createHelpPost(UUID author, UUID communityId,
+            UUID categoryId, String kind, String title, String body,
+            Instant expiresAt, List<UUID> mediaIds, List<String> tags) {
         if (!HELP_KINDS.contains(kind)) {
             throw bad("INVALID_HELP_KIND");
         }
         var p = createPost(author, communityId, "COMMUNITY_HELP", title, body,
-                null, "COMMUNITY", categoryId, null);
+                null, "COMMUNITY", categoryId, mediaIds, tags);
         jdbc.update("INSERT INTO community_help_posts(post_id,help_kind,"
                         + "expires_at) VALUES(?,?,?)", p.id(), kind,
                 expiresAt == null ? null : java.sql.Timestamp.from(expiresAt));
         publish(p.id());
+        if ("REQUEST".equals(kind)) {
+            community.consumeExtendedAction(author, communityId,
+                    "EXTENDED_COMMUNITY_HELP_REQUEST_PUBLISH",
+                    "extended-help-request-publish:" + p.id());
+        }
         return Map.of("post", requirePost(p.id()), "helpKind", kind,
                 "helpStatus", "OPEN");
     }
@@ -844,7 +1196,7 @@ public class FeedService {
         String visibility = validated(() -> ResultsVisibility.valueOf(
                 resultsVisibility == null ? "AFTER_VOTING" : resultsVisibility).name());
         var parent = createPost(author, communityId, "POLL", null,
-                normalizedQuestion, null, "COMMUNITY", categoryId, null, true);
+                normalizedQuestion, null, "COMMUNITY", categoryId, null, null, true);
         jdbc.update("INSERT INTO feed_polls(post_id,closes_at,max_options,"
                         + "allow_multiple,allow_vote_change,allow_vote_withdraw,"
                         + "anonymous_voting,results_visibility) VALUES(?,?,?,?,?,?,?,?)",
@@ -1133,6 +1485,53 @@ public class FeedService {
         var p = requirePost(id);
         requireViewable(viewer, p);
         return p;
+    }
+
+    /** Post detail plus its hashtags and attachment metadata. */
+    public record PostDetail(PostRow post, List<String> tags,
+            List<MediaAttachment> media, String viewerReaction, boolean saved) {
+    }
+
+    public PostDetail postDetail(UUID viewer, UUID id) {
+        var p = requirePost(id);
+        requireViewable(viewer, p);
+        var tags = jdbc.queryForList("SELECT ft.display_name FROM feed_post_tags"
+                + " fpt JOIN feed_tags ft ON ft.id=fpt.tag_id"
+                + " WHERE fpt.post_id=? ORDER BY fpt.sort_order",
+                String.class, id);
+        var ids = mediaIds(id);
+        var byId = new java.util.HashMap<UUID, MediaApi.AssetView>();
+        media.assets(ids).forEach(a -> byId.put(a.id(), a));
+        var attachments = ids.stream().map(byId::get)
+                .filter(java.util.Objects::nonNull)
+                .map(a -> new MediaAttachment(a.id(), a.purpose(), a.mimeType(),
+                        a.durationMs(), a.sizeBytes()))
+                .toList();
+        var viewerReaction = jdbc.query("SELECT reaction_key FROM feed_post_reactions"
+                        + " WHERE user_id=? AND post_id=?",
+                (rs, i) -> rs.getString(1), viewer, id).stream().findFirst().orElse(null);
+        var saved = !jdbc.queryForList("SELECT 1 FROM post_saves"
+                + " WHERE user_id=? AND post_id=?", Integer.class, viewer, id).isEmpty();
+        return new PostDetail(p, tags, attachments, viewerReaction, saved);
+    }
+
+    /**
+     * Parent-authorized feed media delivery: the media must be attached to a
+     * feed post the viewer can see (publication, membership, block,
+     * moderation), then a short-lived URL is issued by the media module.
+     */
+    public String mediaDownloadUrl(UUID viewer, UUID mediaId) {
+        var postIds = jdbc.query("SELECT post_id FROM feed_post_media WHERE media_id=?",
+                (rs, i) -> rs.getObject(1, UUID.class), mediaId);
+        if (postIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND");
+        }
+        // The same owned video may be attached to several posts. A deleted or
+        // inaccessible parent must not mask another parent the viewer can see.
+        if (postIds.stream().noneMatch(id -> canView(viewer, id))) {
+            throw forbidden("MEDIA_NOT_ACCESSIBLE");
+        }
+        return media.authorizedDownloadUrl(mediaId);
     }
 
     public boolean canView(UUID viewer, UUID id) {

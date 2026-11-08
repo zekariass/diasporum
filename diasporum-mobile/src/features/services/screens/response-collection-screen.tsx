@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, RefreshControl, TextInput, View } from "react-native";
+import { FlatList, KeyboardAvoidingView, Platform, RefreshControl, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ThemedView } from "@/components/themed-view";
@@ -68,6 +68,7 @@ export default function ResponseCollectionScreen() {
     <ThemedView style={serviceStyles.root}>
       <SafeAreaView style={serviceStyles.root} edges={["top", "left", "right"]}>
         <ScreenHeader back title={id ? "Provider responses" : providerId ? "Provider workspace" : "My responses"} />
+        <KeyboardAvoidingView style={serviceStyles.keyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <FlatList
           data={items}
           keyExtractor={(item) => item.id}
@@ -88,6 +89,7 @@ export default function ResponseCollectionScreen() {
             onRefresh={() => { setRefreshing(true); void load(); }} />}
           onEndReached={() => { if (cursor && !loadingRef.current) void load(cursor); }}
         />
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </ThemedView>
   );

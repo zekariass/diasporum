@@ -1,127 +1,134 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  TextInput,
-  View,
-} from "react-native";
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
+import { ErrorState } from "@/shared/components/error-state";
 import { PrimaryButton } from "@/shared/components/primary-button";
 import { useSession } from "@/core/session/session-provider";
 import { ApiError } from "@/core/api/api-error";
 import { useTheme } from "@/hooks/use-theme";
-import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import { createSpareBagApi } from "../services/spare-bag-api";
-import type {
-  Airport,
-  Category,
-  DiscoveryFilters,
-  Listing,
-  ListingType,
-} from "../types/spare-bag-types";
-import { CollectionState, ListingCard, SafetyNotice, ScreenHeader } from "../components/spare-bag-ui";
+import type { Listing } from "../types/spare-bag-types";
+import { DiscoveryCardSkeleton, DiscoveryListingCard } from "../components/discovery-card";
+import { CreateListingSheet } from "../components/discovery-sheets";
+import { SafetyNotice, ScreenHeader } from "../components/spare-bag-ui";
 
 export default function SpareBagScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { apiClient } = useSession();
   const api = useMemo(() => createSpareBagApi(apiClient), [apiClient]);
+
   const [items, setItems] = useState<Listing[]>([]);
-  const [airports, setAirports] = useState<Airport[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [filters, setFilters] = useState<DiscoveryFilters>({});
-  const [showFilters, setShowFilters] = useState(false);
-  const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const loadingRef = useRef(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const requestSerial = useRef(0);
 
-  useEffect(() => {
-    Promise.all([api.airports(), api.categories()])
-      .then(([airportResult, categoryResult]) => {
-        setAirports(airportResult.items);
-        setCategories(categoryResult.items);
-      })
-      .catch(() => undefined);
-  }, [api]);
-
-  const load = useCallback((nextCursor?: string) => {
-    if (loadingRef.current) return Promise.resolve();
-    loadingRef.current = true;
-    return Promise.resolve()
-      .then(() => { if (nextCursor) setLoadingMore(true); })
-      .then(() => api.discover(filters, nextCursor))
+  const load = useCallback(() => {
+    const request = ++requestSerial.current;
+    return api
+      .discover({ sort: "NEWEST" })
       .then((page) => {
-        setItems((current) => nextCursor ? [...current, ...page.items] : page.items);
-        setCursor(page.nextCursor);
+        if (request !== requestSerial.current) return;
+        setItems(page.items);
         setError(null);
       })
-      .catch((cause) => setError(ApiError.isApiError(cause) ? cause.userMessage : "Could not load Spare Bag listings."))
+      .catch((cause) => {
+        if (request !== requestSerial.current) return;
+        setError(
+          ApiError.isApiError(cause)
+            ? cause.userMessage
+            : "Could not load Spare Bag listings.",
+        );
+      })
       .finally(() => {
-        loadingRef.current = false;
+        if (request !== requestSerial.current) return;
         setLoading(false);
         setRefreshing(false);
-        setLoadingMore(false);
       });
-  }, [api, filters]);
+  }, [api]);
 
-  const filterKey = JSON.stringify(filters);
-  const [previousFilterKey, setPreviousFilterKey] = useState(filterKey);
-  if (filterKey !== previousFilterKey) {
-    setPreviousFilterKey(filterKey);
-    setLoading(true);
-  }
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => {
+      requestSerial.current += 1;
+    };
+  }, [load]);
 
-  function patch(value: Partial<DiscoveryFilters>) {
-    setFilters((current) => ({ ...current, ...value }));
+  async function toggleSave(listing: Listing) {
+    setSavingId(listing.id);
+    setError(null);
+    try {
+      if (listing.saved) await api.unsave(listing.id);
+      else await api.save(listing.id);
+      setItems((current) =>
+        current.map((item) =>
+          item.id === listing.id ? { ...item, saved: !item.saved } : item,
+        ),
+      );
+    } catch (cause) {
+      setError(
+        ApiError.isApiError(cause)
+          ? cause.userMessage
+          : "Could not update the saved listing.",
+      );
+    } finally {
+      setSavingId(null);
+    }
   }
 
   const header = (
     <View style={styles.headerContent}>
-      <SafetyNotice />
-      <View style={styles.actions}>
-        <PrimaryButton label="Sender request" onPress={() => router.push("/(app)/spare-bag/create-sender" as never)} />
-        <PrimaryButton label="Passenger offer" variant="secondary" onPress={() => router.push("/(app)/spare-bag/create-passenger" as never)} />
+      <View style={[styles.hero, { backgroundColor: theme.primarySurface }]}>
+        <View style={[styles.heroBubble, { backgroundColor: theme.primary, opacity: 0.08 }]} />
+        <ThemedText style={styles.heroTitle}>Send parcels with travellers.</ThemedText>
+        <ThemedText style={[styles.heroSub, { color: theme.textSecondary }]}>Matched by route and travel dates.</ThemedText>
+        <View style={styles.heroIllustration} accessibilityLabel="Parcel travelling between two airports">
+          <View style={[styles.heroIcon, { backgroundColor: theme.background }]}>
+            <Ionicons name="cube" size={28} color={theme.primary} />
+          </View>
+          <View style={[styles.heroRule, { backgroundColor: theme.primaryLight }]} />
+          <Ionicons name="airplane" size={26} color={theme.primary} />
+          <View style={[styles.heroRule, { backgroundColor: theme.primaryLight }]} />
+          <View style={[styles.heroIcon, { backgroundColor: theme.background }]}>
+            <Ionicons name="briefcase" size={27} color={theme.primary} />
+          </View>
+        </View>
       </View>
-      <View style={styles.links}>
-        <NavLink label="My listings" onPress={() => router.push("/(app)/spare-bag/my" as never)} />
-        <NavLink label="Saved" onPress={() => router.push("/(app)/spare-bag/saved" as never)} />
-        <NavLink label="Contact requests" onPress={() => router.push("/(app)/spare-bag/contacts" as never)} />
+
+      <View style={styles.quickGrid}>
+        <QuickAction icon="briefcase-outline" label="My Spare Bag" onPress={() => router.push("/(app)/spare-bag/my" as never)} />
+        <QuickAction icon="bookmark-outline" label="Saved" onPress={() => router.push("/(app)/spare-bag/saved" as never)} />
+        <QuickAction icon="chatbubbles-outline" label="Requests" onPress={() => router.push("/(app)/spare-bag/contacts" as never)} />
       </View>
-      <Pressable accessibilityRole="button" accessibilityLabel="Filters" onPress={() => setShowFilters((value) => !value)}>
-        <ThemedText type="linkPrimary">{showFilters ? "Hide filters" : "Filters"}</ThemedText>
-      </Pressable>
-      {showFilters ? (
-        <View style={[styles.filters, { borderColor: theme.border }]}>
-          <View style={styles.choices}>
-            <FilterChoice label="All types" selected={!filters.listingType} onPress={() => patch({ listingType: undefined })} />
-            {(["SENDER_REQUEST", "PASSENGER_OFFER"] as ListingType[]).map((type) => (
-              <FilterChoice key={type} label={type === "SENDER_REQUEST" ? "Senders" : "Passengers"} selected={filters.listingType === type} onPress={() => patch({ listingType: type })} />
-            ))}
-          </View>
-          <AirportFilter label="Origin" airports={airports} value={filters.originAirportId} onChange={(originAirportId) => patch({ originAirportId })} />
-          <AirportFilter label="Destination" airports={airports} value={filters.destinationAirportId} onChange={(destinationAirportId) => patch({ destinationAirportId })} />
-          <View style={styles.choices}>
-            <FilterChoice label="All categories" selected={!filters.categoryKey} onPress={() => patch({ categoryKey: undefined })} />
-            {categories.map((category) => <FilterChoice key={category.key} label={category.displayName} selected={filters.categoryKey === category.key} onPress={() => patch({ categoryKey: category.key })} />)}
-          </View>
-          <View style={styles.filterInputs}>
-            <TextInput accessibilityLabel="Travel from" placeholder="Travel from YYYY-MM-DD" value={filters.dateFrom ?? ""} onChangeText={(dateFrom) => patch({ dateFrom: dateFrom || undefined })} style={[styles.input, { color: theme.text, borderColor: theme.border }]} autoCapitalize="none" />
-            <TextInput accessibilityLabel="Travel to" placeholder="Travel to YYYY-MM-DD" value={filters.dateTo ?? ""} onChangeText={(dateTo) => patch({ dateTo: dateTo || undefined })} style={[styles.input, { color: theme.text, borderColor: theme.border }]} autoCapitalize="none" />
-            <TextInput accessibilityLabel="Maximum price" placeholder="Max price" keyboardType="decimal-pad" value={filters.maxPrice ?? ""} onChangeText={(maxPrice) => patch({ maxPrice: maxPrice || undefined })} style={[styles.input, { color: theme.text, borderColor: theme.border }]} />
-            <TextInput accessibilityLabel="Minimum capacity" placeholder="Minimum kg" keyboardType="decimal-pad" value={filters.minimumCapacityKg ?? ""} onChangeText={(minimumCapacityKg) => patch({ minimumCapacityKg: minimumCapacityKg || undefined })} style={[styles.input, { color: theme.text, borderColor: theme.border }]} />
-            <TextInput accessibilityLabel="Price currency" placeholder="Currency" maxLength={3} autoCapitalize="characters" value={filters.priceCurrency ?? ""} onChangeText={(priceCurrency) => patch({ priceCurrency: priceCurrency || undefined })} style={[styles.input, { color: theme.text, borderColor: theme.border }]} />
-          </View>
-          <PrimaryButton label="Clear filters" variant="ghost" onPress={() => setFilters({})} />
+
+      <View style={styles.sectionHeader}>
+        <ThemedText style={styles.sectionTitle}>Latest listings</ThemedText>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="See all listings"
+          onPress={() => router.push("/(app)/spare-bag/discover" as never)}
+          hitSlop={8}
+          style={({ pressed }) => [styles.seeAll, pressed && styles.pressed]}
+        >
+          <ThemedText type="smallBold" style={{ color: theme.primary }}>See all</ThemedText>
+          <Ionicons name="chevron-forward" size={15} color={theme.primary} />
+        </Pressable>
+      </View>
+
+      {error && items.length ? (
+        <View style={[styles.errorBanner, { backgroundColor: theme.errorSurface }]}>
+          <Ionicons name="alert-circle-outline" size={18} color={theme.error} />
+          <ThemedText accessibilityRole="alert" style={[styles.errorText, { color: theme.error }]}>
+            {error}
+          </ThemedText>
         </View>
       ) : null}
     </View>
@@ -130,48 +137,127 @@ export default function SpareBagScreen() {
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
-        <ScreenHeader title="Spare Bag" />
+        <ScreenHeader
+          title="Spare Bag"
+          right={
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Create a listing"
+              onPress={() => setCreateOpen(true)}
+              style={({ pressed }) => [
+                styles.createButton,
+                { backgroundColor: theme.primary },
+                pressed && styles.pressed,
+              ]}
+            >
+              <Ionicons name="add" size={19} color="#fff" />
+              <ThemedText style={styles.createLabel}>Create</ThemedText>
+            </Pressable>
+          }
+        />
         <FlatList
           data={items}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <ListingCard listing={item} />}
+          renderItem={({ item }) => (
+            <DiscoveryListingCard
+              client={apiClient}
+              listing={item}
+              onToggleSave={() => void toggleSave(item)}
+              saveLoading={savingId === item.id}
+            />
+          )}
           ListHeaderComponent={header}
-          ListEmptyComponent={<CollectionState loading={loading} error={error} empty={!loading && !error} onRetry={() => { setLoading(true); void load(); }} />}
-          ListFooterComponent={loadingMore ? <ThemedText style={styles.footer}>Loading more…</ThemedText> : undefined}
-          contentContainerStyle={styles.listContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
-          onEndReached={() => { if (cursor && !loadingRef.current) void load(cursor); }}
-          onEndReachedThreshold={0.4}
+          ListEmptyComponent={
+            loading ? (
+              <View style={styles.skeletons}>
+                <DiscoveryCardSkeleton />
+                <DiscoveryCardSkeleton />
+              </View>
+            ) : error ? (
+              <ErrorState
+                message={error}
+                onRetry={() => {
+                  setLoading(true);
+                  void load();
+                }}
+              />
+            ) : (
+              <View style={styles.empty}>
+                <View style={[styles.emptyIcon, { backgroundColor: theme.primarySurface }]}>
+                  <Ionicons name="briefcase-outline" size={30} color={theme.primary} />
+                </View>
+                <ThemedText style={styles.emptyTitle}>No listings yet</ThemedText>
+                <ThemedText themeColor="textSecondary" style={styles.emptyMessage}>
+                  Be the first — send a parcel or offer spare space on your next trip.
+                </ThemedText>
+                <PrimaryButton label="Create a listing" onPress={() => setCreateOpen(true)} />
+              </View>
+            )
+          }
+          ListFooterComponent={items.length ? <SafetyNotice compact /> : undefined}
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                void load();
+              }}
+              tintColor={theme.primary}
+            />
+          }
         />
       </SafeAreaView>
+      <CreateListingSheet
+        visible={createOpen}
+        onSelect={(type) =>
+          router.push(
+            type === "PASSENGER_OFFER"
+              ? ("/(app)/spare-bag/create-passenger" as never)
+              : ("/(app)/spare-bag/create-sender" as never),
+          )
+        }
+        onClose={() => setCreateOpen(false)}
+      />
     </ThemedView>
   );
 }
 
-function NavLink({ label, onPress }: { label: string; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress}><ThemedText type="linkPrimary">{label}</ThemedText></Pressable>;
-}
-
-function FilterChoice({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+function QuickAction({ icon, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void }) {
   const theme = useTheme();
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected }} onPress={onPress} style={[styles.choice, { borderColor: selected ? BrandColors.primary : theme.border, backgroundColor: selected ? BrandColors.primarySurface : theme.backgroundElement }]}><ThemedText type="small">{label}</ThemedText></Pressable>;
-}
-
-function AirportFilter({ label, airports, value, onChange }: { label: string; airports: Airport[]; value?: string; onChange: (value?: string) => void }) {
-  return <View style={styles.filterGroup}><ThemedText type="smallBold">{label}</ThemedText><View style={styles.choices}><FilterChoice label="Any" selected={!value} onPress={() => onChange(undefined)} />{airports.map((airport) => <FilterChoice key={airport.id} label={airport.iataCode} selected={value === airport.id} onPress={() => onChange(airport.id)} />)}</View></View>;
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={[styles.quickAction, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+      <Ionicons name={icon} size={26} color={theme.primary} />
+      <ThemedText type="smallBold" style={styles.quickLabel}>{label}</ThemedText>
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  listContent: { padding: Spacing.three, gap: Spacing.three, flexGrow: 1 },
-  headerContent: { gap: Spacing.three },
-  actions: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
-  links: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.three },
-  filters: { borderWidth: 1, borderRadius: BorderRadius.md, padding: Spacing.three, gap: Spacing.three },
-  choices: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
-  choice: { borderWidth: 1, borderRadius: BorderRadius.full, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
-  filterGroup: { gap: Spacing.one },
-  filterInputs: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
-  input: { borderWidth: 1, borderRadius: BorderRadius.md, padding: Spacing.two, minWidth: 100, flex: 1 },
-  footer: { textAlign: "center", padding: Spacing.three },
+  content: { padding: Spacing.three, paddingTop: Spacing.two, gap: Spacing.three, flexGrow: 1, width: "100%", maxWidth: 720, alignSelf: "center" },
+  headerContent: { gap: Spacing.three, paddingBottom: Spacing.one },
+  hero: { borderRadius: BorderRadius.xl, overflow: "hidden", padding: Spacing.four, gap: Spacing.two },
+  heroBubble: { position: "absolute", width: 220, height: 220, borderRadius: 110, right: -80, top: -100 },
+  heroTitle: { fontSize: 32, lineHeight: 38, fontWeight: "800", letterSpacing: -0.4 },
+  heroSub: { fontSize: 16, lineHeight: 22 },
+  heroIllustration: { flexDirection: "row", alignItems: "center", gap: Spacing.two, marginTop: Spacing.two },
+  heroIcon: { width: 54, height: 54, borderRadius: BorderRadius.lg, alignItems: "center", justifyContent: "center" },
+  heroRule: { height: 2, flex: 1 },
+  quickGrid: { flexDirection: "row", gap: Spacing.two },
+  quickAction: { flex: 1, alignItems: "center", gap: Spacing.two, borderWidth: StyleSheet.hairlineWidth, borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.two, paddingVertical: Spacing.three },
+  quickLabel: { textAlign: "center" },
+  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: Spacing.two },
+  sectionTitle: { fontSize: 20, lineHeight: 26, fontWeight: "700" },
+  seeAll: { flexDirection: "row", alignItems: "center", gap: 2 },
+  createButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: Spacing.one, minHeight: 40, borderRadius: BorderRadius.full, paddingHorizontal: Spacing.three },
+  createLabel: { color: "#fff", fontSize: 14, lineHeight: 20, fontWeight: "700" },
+  errorBanner: { flexDirection: "row", alignItems: "flex-start", gap: Spacing.two, borderRadius: BorderRadius.md, padding: Spacing.three },
+  errorText: { flex: 1, fontSize: 14, lineHeight: 20 },
+  skeletons: { gap: Spacing.three },
+  empty: { alignItems: "center", paddingHorizontal: Spacing.four, paddingVertical: Spacing.five, gap: Spacing.two },
+  emptyIcon: { width: 72, height: 72, borderRadius: BorderRadius.full, alignItems: "center", justifyContent: "center", marginBottom: Spacing.one },
+  emptyTitle: { fontSize: 20, lineHeight: 26, fontWeight: "700", textAlign: "center" },
+  emptyMessage: { textAlign: "center", maxWidth: 340 },
+  pressed: { opacity: 0.82 },
 });

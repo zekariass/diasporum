@@ -37,6 +37,9 @@ public class MediaService {
             Map.entry("VEHICLE", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("SERVICE_REQUEST", List.of("image/jpeg", "image/png", "image/webp")),
             Map.entry("FEED_VIDEO", List.of("video/mp4", "video/quicktime")),
+            Map.entry("FEED_AUDIO", List.of("audio/mpeg", "audio/mp4",
+                    "audio/x-m4a", "audio/aac", "audio/wav", "audio/x-wav",
+                    "audio/webm", "audio/ogg")),
             Map.entry("MESSAGE_AUDIO", List.of("audio/mpeg", "audio/ogg", "audio/mp4")),
             Map.entry("DOCUMENT", List.of("application/pdf", "application/msword",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -76,7 +79,7 @@ public class MediaService {
     }
 
     public record AssetView(UUID id, UUID ownerId, String purpose, String status,
-            String mimeType, Long sizeBytes, String detectedMimeType) {
+            String mimeType, Long sizeBytes, String detectedMimeType, Long durationMs) {
     }
 
     private AssetView view(java.sql.ResultSet rs, int i) throws java.sql.SQLException {
@@ -84,11 +87,14 @@ public class MediaService {
                 rs.getObject("owner_user_id", UUID.class),
                 rs.getString("purpose"), rs.getString("status"),
                 rs.getString("mime_type"), rs.getObject("size_bytes", Long.class),
-                rs.getString("detected_mime_type"));
+                rs.getString("detected_mime_type"),
+                rs.getObject("duration_ms", Integer.class) == null ? null
+                        : rs.getObject("duration_ms", Integer.class).longValue());
     }
 
     private static final String SELECT = "SELECT id,owner_user_id,purpose,"
-            + "status::text,mime_type,size_bytes,detected_mime_type FROM media_objects";
+            + "status::text,mime_type,size_bytes,detected_mime_type,duration_ms"
+            + " FROM media_objects";
 
     public Optional<AssetView> asset(UUID id) {
         return jdbc.query(SELECT + " WHERE id=?", this::view, id)
@@ -121,6 +127,12 @@ public class MediaService {
     @Transactional
     public InitResult initiate(UUID owner, String purpose, String mimeType,
             Long declaredSize) {
+        return initiate(owner, purpose, mimeType, declaredSize, null);
+    }
+
+    @Transactional
+    public InitResult initiate(UUID owner, String purpose, String mimeType,
+            Long declaredSize, Long declaredDurationMs) {
         var allowed = ALLOWED.get(purpose);
         if (allowed == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -134,17 +146,30 @@ public class MediaService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "FILE_TOO_LARGE");
         }
+        if ("FEED_AUDIO".equals(purpose) && declaredDurationMs != null
+                && declaredDurationMs > props.audioMaxDurationMs()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "AUDIO_TOO_LONG");
+        }
         UUID assetId = UUID.randomUUID();
         String key = keyFor(owner, purpose, assetId);
         jdbc.update("INSERT INTO media_objects(id,owner_user_id,bucket_name,"
-                        + "object_key,purpose,mime_type) VALUES(?,?,?,?,?,?)",
-                assetId, owner, props.bucket(), key, purpose, mimeType);
+                        + "object_key,purpose,mime_type,duration_ms)"
+                        + " VALUES(?,?,?,?,?,?,?)",
+                assetId, owner, props.bucket(), key, purpose, mimeType,
+                declaredDurationMs);
         return new InitResult(assetId,
                 storage().presignPut(key, mimeType, props.uploadUrlTtl()));
     }
 
     @Transactional
     public AssetView complete(UUID owner, UUID assetId, Long declaredSize) {
+        return complete(owner, assetId, declaredSize, null);
+    }
+
+    @Transactional
+    public AssetView complete(UUID owner, UUID assetId, Long declaredSize,
+            Long declaredDurationMs) {
         var a = requireAsset(assetId);
         if (!a.ownerId().equals(owner)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "NOT_OWNER");
@@ -173,10 +198,19 @@ public class MediaService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "FILE_TOO_LARGE");
         }
+        Long effectiveDuration = declaredDurationMs != null
+                ? declaredDurationMs : a.durationMs();
+        if ("FEED_AUDIO".equals(a.purpose()) && effectiveDuration != null
+                && effectiveDuration > props.audioMaxDurationMs()) {
+            jdbc.update("UPDATE media_objects SET status='REJECTED',"
+                    + " rejection_reason='duration_exceeded' WHERE id=?", assetId);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "AUDIO_TOO_LONG");
+        }
         jdbc.update("UPDATE media_objects SET status='READY',"
-                        + " size_bytes=?, detected_mime_type=?, uploaded_at=now()"
-                        + " WHERE id=?",
-                meta.sizeBytes(), meta.contentType(), assetId);
+                        + " size_bytes=?, detected_mime_type=?, duration_ms=?,"
+                        + " uploaded_at=now() WHERE id=?",
+                meta.sizeBytes(), meta.contentType(), effectiveDuration, assetId);
         return asset(assetId).orElseThrow();
     }
 
@@ -243,6 +277,61 @@ public class MediaService {
             urls.put(asset.id(), storage.presignGet(asset.key(), props.downloadUrlTtl()));
         }
         return urls;
+    }
+
+    // ---- server-side derivatives ----
+
+    /**
+     * Blurred rendition of a READY image asset for privacy-controlled display.
+     * The derivative lives under a deterministic object key, so repeated calls
+     * for the same source resolve to the same READY media row instead of
+     * stacking duplicates. Failures degrade to {@link Optional#empty()} so a
+     * derivative problem never blocks the caller's own operation.
+     */
+    @Transactional
+    public Optional<UUID> blurredImageDerivative(UUID sourceAssetId,
+            String purpose) {
+        var source = asset(sourceAssetId).orElse(null);
+        if (source == null || !"READY".equals(source.status())
+                || source.mimeType() == null
+                || !source.mimeType().startsWith("image/")) {
+            return Optional.empty();
+        }
+        String sourceKey = jdbc.queryForObject(
+                "SELECT object_key FROM media_objects WHERE id=?",
+                String.class, sourceAssetId);
+        String derivedKey = "derivatives/" + UUID.nameUUIDFromBytes(
+                (purpose + ":" + sourceKey).getBytes(java.nio.charset.StandardCharsets.UTF_8)) + ".jpg";
+        var existing = jdbc.query("SELECT id FROM media_objects"
+                        + " WHERE bucket_name=? AND object_key=? AND status='READY' AND purpose=?",
+                (rs, i) -> rs.getObject("id", UUID.class),
+                props.bucket(), derivedKey, purpose).stream().findFirst();
+        if (existing.isPresent()) {
+            return existing;
+        }
+        byte[] blurred;
+        try {
+            var original = storage().get(sourceKey).orElse(null);
+            if (original == null) {
+                return Optional.empty();
+            }
+            blurred = ImageDerivatives.blur(original);
+            storage().put(derivedKey, blurred, "image/jpeg");
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO media_objects(id,owner_user_id,bucket_name,"
+                        + "object_key,purpose,mime_type,status,size_bytes,"
+                        + "detected_mime_type,uploaded_at)"
+                        + " VALUES(?,?,?,?,?,'image/jpeg','READY',?,'image/jpeg',now())"
+                        + " ON CONFLICT (bucket_name,object_key) DO NOTHING",
+                id, source.ownerId(), props.bucket(), derivedKey, purpose,
+                blurred.length);
+        return jdbc.query("SELECT id FROM media_objects"
+                        + " WHERE bucket_name=? AND object_key=? AND status='READY' AND purpose=?",
+                (rs, i) -> rs.getObject("id", UUID.class),
+                props.bucket(), derivedKey, purpose).stream().findFirst();
     }
 
     // ---- deletion ----

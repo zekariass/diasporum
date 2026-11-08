@@ -62,9 +62,11 @@ class MessagingRealtime {
     if (this.realtime || this.connecting) {
       return this.connecting ?? Promise.resolve();
     }
-    this.connecting = this.connect(apiClient, userId).finally(() => {
-      this.connecting = null;
-    });
+    this.connecting = this.connect(apiClient, userId)
+      .catch(() => { /* realtime is best-effort; REST stays authoritative */ })
+      .finally(() => {
+        this.connecting = null;
+      });
     return this.connecting;
   }
 
@@ -127,6 +129,8 @@ class MessagingRealtime {
     });
 
     const channel = realtime.channels.get(`user:${userId}`);
+    // subscribe()'s promise rejects with "Connection closed" when teardown()
+    // closes the socket while the attach is still pending — expected, swallow.
     channel.subscribe(msg => {
       try {
         const data = typeof msg.data === 'string'
@@ -142,7 +146,7 @@ class MessagingRealtime {
         }
         this.handlers.get(type)?.forEach(h => h(data as MessagingEvent));
       } catch { /* malformed — ignore */ }
-    });
+    }).catch(() => { /* closed mid-attach — teardown already ran */ });
 
     this.realtime = realtime;
     this.channel = channel;

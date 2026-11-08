@@ -11,6 +11,7 @@ import type {
 
 export interface VehicleFormState {
   businessAccountId: string | null;
+  businessListingId: string | null;
   visibilityScope: VehicleVisibility;
   communityId: string;
   selectedCommunityIds: string[];
@@ -52,11 +53,21 @@ export interface VehicleFormState {
   featureIds: string[];
   additionalAttributes: Record<string, string>;
   media: VehicleMediaItem[];
+  contactPhone: string;
+  contactWhatsapp: string;
+  contactEmail: string;
+  contactPreferredMethod: string;
+  contactShowPhone: boolean;
+  contactShowWhatsapp: boolean;
+  contactShowEmail: boolean;
 }
 
-export function initialVehicleFormState(activeCommunityId = ""): VehicleFormState {
+export function initialVehicleFormState(
+  activeCommunityId = "",
+): VehicleFormState {
   return {
     businessAccountId: null,
+    businessListingId: null,
     visibilityScope: "COMMUNITY",
     communityId: activeCommunityId,
     selectedCommunityIds: [],
@@ -98,14 +109,24 @@ export function initialVehicleFormState(activeCommunityId = ""): VehicleFormStat
     featureIds: [],
     additionalAttributes: {},
     media: [],
+    contactPhone: "",
+    contactWhatsapp: "",
+    contactEmail: "",
+    contactPreferredMethod: "MESSAGING",
+    contactShowPhone: false,
+    contactShowWhatsapp: false,
+    contactShowEmail: false,
   };
 }
 
-export function vehicleFormStateFromDetail(detail: VehicleView): VehicleFormState {
+export function vehicleFormStateFromDetail(
+  detail: VehicleView,
+): VehicleFormState {
   const vehicle = detail.listing;
   return {
     ...initialVehicleFormState(vehicle.communityId ?? ""),
     businessAccountId: vehicle.businessAccountId,
+    businessListingId: vehicle.businessListingId,
     visibilityScope: vehicle.visibilityScope,
     selectedCommunityIds: detail.selectedCommunityIds,
     listingPurpose: vehicle.listingPurpose,
@@ -131,10 +152,14 @@ export function vehicleFormStateFromDetail(detail: VehicleView): VehicleFormStat
     previousOwners: text(vehicle.previousOwners),
     motExpiry: vehicle.motExpiry ?? "",
     serviceHistory: vehicle.serviceHistory ?? "",
-    priceAmount: vehicle.priceAmount === null ? "" : String(vehicle.priceAmount),
+    priceAmount:
+      vehicle.priceAmount === null ? "" : String(vehicle.priceAmount),
     currencyCode: vehicle.currencyCode ?? "EUR",
-    pricePeriod: vehicle.pricePeriod ?? (vehicle.listingPurpose === "SALE" ? "TOTAL" : "DAY"),
-    rentalDeposit: vehicle.rentalDeposit === null ? "" : String(vehicle.rentalDeposit),
+    pricePeriod:
+      vehicle.pricePeriod ??
+      (vehicle.listingPurpose === "SALE" ? "TOTAL" : "DAY"),
+    rentalDeposit:
+      vehicle.rentalDeposit === null ? "" : String(vehicle.rentalDeposit),
     mileageAllowance: text(vehicle.mileageAllowance),
     rentalConditions: vehicle.rentalConditions ?? "",
     city: detail.location?.city ?? "",
@@ -143,7 +168,10 @@ export function vehicleFormStateFromDetail(detail: VehicleView): VehicleFormStat
     expiresAt: vehicle.expiresAt?.slice(0, 10) ?? "",
     featureIds: detail.features.map((feature) => feature.id),
     additionalAttributes: Object.fromEntries(
-      Object.entries(vehicle.additionalAttributes).map(([key, value]) => [key, String(value)]),
+      Object.entries(vehicle.additionalAttributes).map(([key, value]) => [
+        key,
+        String(value),
+      ]),
     ),
     media: detail.media.map((media) => ({
       id: media.id,
@@ -151,6 +179,16 @@ export function vehicleFormStateFromDetail(detail: VehicleView): VehicleFormStat
       selection: null,
       cover: media.cover,
     })),
+    contactPhone: detail.contact?.phone ?? "",
+    contactWhatsapp: detail.contact?.whatsapp ?? "",
+    contactEmail: detail.contact?.email ?? "",
+    contactPreferredMethod: detail.contact?.preferredMethod ?? "MESSAGING",
+    contactShowPhone:
+      detail.contact?.showPhone ?? Boolean(detail.contact?.phone),
+    contactShowWhatsapp:
+      detail.contact?.showWhatsapp ?? Boolean(detail.contact?.whatsapp),
+    contactShowEmail:
+      detail.contact?.showEmail ?? Boolean(detail.contact?.email),
   };
 }
 
@@ -169,7 +207,10 @@ function number(value: string): number | undefined {
 function validDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value
+  );
 }
 
 function expiry(value: string): string | undefined {
@@ -198,8 +239,152 @@ const CORE_STATE_KEYS: Record<string, keyof VehicleFormState> = {
   rentalConditions: "rentalConditions",
 };
 
-export function vehicleFieldVisible(category: VehicleCategory | undefined, field: string): boolean {
+export function vehicleFieldVisible(
+  category: VehicleCategory | undefined,
+  field: string,
+): boolean {
   return !category || category.coreFields.includes(field);
+}
+
+export const VEHICLE_STEP_TITLES = [
+  "Vehicle basics",
+  "Specifications",
+  "Pricing",
+  "Audience & contact",
+  "Location & photos",
+  "Review",
+] as const;
+
+/** Validates only the current wizard step; submission still runs the complete validator. */
+export function validateVehicleStep(
+  form: VehicleFormState,
+  step: number,
+  publishing = true,
+  now = new Date(),
+  category?: VehicleCategory,
+): string | null {
+  if (step === 0) {
+    if (!form.categoryId) return "Select a vehicle category.";
+    if (!form.title.trim()) return "Enter a vehicle title.";
+    if (!form.description.trim()) return "Enter a vehicle description.";
+    return null;
+  }
+  if (step === 1) {
+    const numericFields: [string, string, number, number?][] = [
+      ["Model year", form.modelYear, 1886, 2200],
+      ["Registration year", form.registrationYear, 1886, 2200],
+      ["Mileage", form.mileage, 0],
+      ["Engine size", form.engineSizeCc, 0],
+      ["Doors", form.doors, 1],
+      ["Seats", form.seats, 1],
+      ["Previous owners", form.previousOwners, 0],
+    ];
+    for (const [label, raw, minimum, maximum] of numericFields) {
+      if (!raw.trim()) continue;
+      const value = Number(raw);
+      if (
+        !Number.isFinite(value) ||
+        value < minimum ||
+        (maximum !== undefined && value > maximum)
+      ) {
+        return `${label} must be ${maximum === undefined ? `at least ${minimum}` : `between ${minimum} and ${maximum}`}.`;
+      }
+    }
+    if (form.motExpiry && !validDate(form.motExpiry))
+      return "MOT expiry must use YYYY-MM-DD.";
+    for (const required of category?.requiredCoreFields ?? []) {
+      const key = CORE_STATE_KEYS[required];
+      if (
+        key &&
+        ![
+          "pricePeriod",
+          "rentalDeposit",
+          "mileageAllowance",
+          "rentalConditions",
+        ].includes(required) &&
+        !String(form[key] ?? "").trim()
+      )
+        return `Complete the required ${required} field.`;
+    }
+    for (const [key, policy] of Object.entries(category?.attributes ?? {})) {
+      const error = validateAttribute(
+        key,
+        form.additionalAttributes[key],
+        policy,
+      );
+      if (error) return error;
+    }
+    for (const key of Object.keys(form.additionalAttributes)) {
+      if (
+        category &&
+        !category.attributes[key] &&
+        form.additionalAttributes[key].trim()
+      ) {
+        return `${key} is not approved for this vehicle category.`;
+      }
+    }
+    return null;
+  }
+  if (step === 2) {
+    const numericFields: [string, string][] = [
+      ["Price", form.priceAmount],
+      ["Rental deposit", form.rentalDeposit],
+      ["Mileage allowance", form.mileageAllowance],
+    ];
+    for (const [label, raw] of numericFields) {
+      if (raw.trim() && (!Number.isFinite(Number(raw)) || Number(raw) < 0)) {
+        return `${label} must be at least 0.`;
+      }
+    }
+    if (!form.priceAmount.trim()) return "Enter a non-negative vehicle price.";
+    if (!/^[A-Za-z]{3}$/.test(form.currencyCode))
+      return "Enter a three-letter currency.";
+    if (form.expiresAt) {
+      if (!validDate(form.expiresAt))
+        return "Listing expiry must use YYYY-MM-DD.";
+      if (
+        publishing &&
+        new Date(`${form.expiresAt}T23:59:59.999Z`).getTime() <= now.getTime()
+      ) {
+        return "Listing expiry must be in the future before publishing.";
+      }
+    }
+    return null;
+  }
+  if (step === 3) {
+    if (form.visibilityScope === "COMMUNITY" && !form.communityId) {
+      return "Select an active community for this vehicle.";
+    }
+    if (
+      form.visibilityScope === "SELECTED_COMMUNITIES" &&
+      form.selectedCommunityIds.length === 0
+    ) {
+      return "Select at least one community for this vehicle.";
+    }
+    return validateContact(form);
+  }
+  if (step === 4) {
+    const hasLocation = Boolean(
+      form.city.trim() || form.region.trim() || form.formattedAddress.trim(),
+    );
+    if (publishing && !hasLocation)
+      return "Enter a public city, region, or general area.";
+    if (
+      !hasLocation &&
+      (form.discoveryLatitude !== null || form.discoveryLongitude !== null)
+    ) {
+      return "Enter a public general area before adding an approximate discovery point.";
+    }
+    if (
+      (form.discoveryLatitude === null) !==
+      (form.discoveryLongitude === null)
+    ) {
+      return "The approximate discovery point is incomplete.";
+    }
+    if (form.media.length > 5)
+      return "Attach no more than five vehicle images.";
+  }
+  return null;
 }
 
 export function validateVehicleForm(
@@ -214,7 +399,10 @@ export function validateVehicleForm(
   if (form.visibilityScope === "COMMUNITY" && !form.communityId) {
     return "Select an active community for this vehicle.";
   }
-  if (form.visibilityScope === "SELECTED_COMMUNITIES" && form.selectedCommunityIds.length === 0) {
+  if (
+    form.visibilityScope === "SELECTED_COMMUNITIES" &&
+    form.selectedCommunityIds.length === 0
+  ) {
     return "Select at least one community for this vehicle.";
   }
   const numericFields: [string, string, number, number?][] = [
@@ -232,42 +420,102 @@ export function validateVehicleForm(
   for (const [label, raw, minimum, maximum] of numericFields) {
     if (!raw.trim()) continue;
     const value = Number(raw);
-    if (!Number.isFinite(value) || value < minimum || (maximum !== undefined && value > maximum)) {
+    if (
+      !Number.isFinite(value) ||
+      value < minimum ||
+      (maximum !== undefined && value > maximum)
+    ) {
       return `${label} must be ${maximum === undefined ? `at least ${minimum}` : `between ${minimum} and ${maximum}`}.`;
     }
   }
   if (!form.priceAmount.trim()) return "Enter a non-negative vehicle price.";
-  if (!/^[A-Za-z]{3}$/.test(form.currencyCode)) return "Enter a three-letter currency.";
-  if (form.motExpiry && !validDate(form.motExpiry)) return "MOT expiry must use YYYY-MM-DD.";
+  if (!/^[A-Za-z]{3}$/.test(form.currencyCode))
+    return "Enter a three-letter currency.";
+  if (form.motExpiry && !validDate(form.motExpiry))
+    return "MOT expiry must use YYYY-MM-DD.";
   if (form.expiresAt) {
-    if (!validDate(form.expiresAt)) return "Listing expiry must use YYYY-MM-DD.";
-    if (publishing && new Date(`${form.expiresAt}T23:59:59.999Z`).getTime() <= now.getTime()) {
+    if (!validDate(form.expiresAt))
+      return "Listing expiry must use YYYY-MM-DD.";
+    if (
+      publishing &&
+      new Date(`${form.expiresAt}T23:59:59.999Z`).getTime() <= now.getTime()
+    ) {
       return "Listing expiry must be in the future before publishing.";
     }
   }
   const hasLocation = Boolean(
     form.city.trim() || form.region.trim() || form.formattedAddress.trim(),
   );
-  if (publishing && !hasLocation) return "Enter a public city, region, or general area.";
-  if (!hasLocation && (form.discoveryLatitude !== null || form.discoveryLongitude !== null)) {
+  if (publishing && !hasLocation)
+    return "Enter a public city, region, or general area.";
+  if (
+    !hasLocation &&
+    (form.discoveryLatitude !== null || form.discoveryLongitude !== null)
+  ) {
     return "Enter a public general area before adding an approximate discovery point.";
   }
-  if ((form.discoveryLatitude === null) !== (form.discoveryLongitude === null)) {
+  if (
+    (form.discoveryLatitude === null) !==
+    (form.discoveryLongitude === null)
+  ) {
     return "The approximate discovery point is incomplete.";
   }
   if (form.media.length > 5) return "Attach no more than five vehicle images.";
+  const contact = validateContact(form);
+  if (contact) return contact;
   for (const required of category?.requiredCoreFields ?? []) {
     const key = CORE_STATE_KEYS[required];
-    if (key && !String(form[key] ?? "").trim()) return `Complete the required ${required} field.`;
+    if (key && !String(form[key] ?? "").trim())
+      return `Complete the required ${required} field.`;
   }
   for (const [key, policy] of Object.entries(category?.attributes ?? {})) {
-    const error = validateAttribute(key, form.additionalAttributes[key], policy);
+    const error = validateAttribute(
+      key,
+      form.additionalAttributes[key],
+      policy,
+    );
     if (error) return error;
   }
   for (const key of Object.keys(form.additionalAttributes)) {
-    if (category && !category.attributes[key] && form.additionalAttributes[key].trim()) {
+    if (
+      category &&
+      !category.attributes[key] &&
+      form.additionalAttributes[key].trim()
+    ) {
       return `${key} is not approved for this vehicle category.`;
     }
+  }
+  return null;
+}
+
+function validateContact(form: VehicleFormState): string | null {
+  const hasChannel = Boolean(
+    form.contactPhone.trim() ||
+    form.contactWhatsapp.trim() ||
+    form.contactEmail.trim(),
+  );
+  if (!hasChannel) {
+    return ["PHONE", "WHATSAPP", "EMAIL"].includes(form.contactPreferredMethod)
+      ? "Add the matching contact channel or choose in-app messaging."
+      : null;
+  }
+  if (
+    form.contactEmail.trim() &&
+    !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.contactEmail.trim())
+  ) {
+    return "Enter a valid contact email address.";
+  }
+  if (form.contactPreferredMethod === "PHONE" && !form.contactPhone.trim()) {
+    return "Phone is preferred but no phone number was provided.";
+  }
+  if (
+    form.contactPreferredMethod === "WHATSAPP" &&
+    !form.contactWhatsapp.trim()
+  ) {
+    return "WhatsApp is preferred but no WhatsApp number was provided.";
+  }
+  if (form.contactPreferredMethod === "EMAIL" && !form.contactEmail.trim()) {
+    return "Email is preferred but no email address was provided.";
   }
   return null;
 }
@@ -277,21 +525,29 @@ function validateAttribute(
   raw: string | undefined,
   policy: VehicleAttributePolicy,
 ): string | null {
-  if (policy.required && !raw?.trim()) return `Complete the required ${key} attribute.`;
+  if (policy.required && !raw?.trim())
+    return `Complete the required ${key} attribute.`;
   if (!raw?.trim()) return null;
   const type = policy.type || "STRING";
   if (["NUMBER", "INTEGER"].includes(type)) {
     const value = Number(raw);
-    if (!Number.isFinite(value) || (type === "INTEGER" && !Number.isInteger(value))) {
+    if (
+      !Number.isFinite(value) ||
+      (type === "INTEGER" && !Number.isInteger(value))
+    ) {
       return `${key} must be a valid ${type === "INTEGER" ? "integer" : "number"}.`;
     }
-    if ((policy.minimum !== null && value < policy.minimum) ||
-        (policy.maximum !== null && value > policy.maximum)) {
+    if (
+      (policy.minimum !== null && value < policy.minimum) ||
+      (policy.maximum !== null && value > policy.maximum)
+    ) {
       return `${key} is outside its permitted range.`;
     }
   }
-  if (type === "BOOLEAN" && !["true", "false"].includes(raw)) return `${key} must be true or false.`;
-  if (policy.options.length && !policy.options.includes(raw)) return `${key} has an invalid option.`;
+  if (type === "BOOLEAN" && !["true", "false"].includes(raw))
+    return `${key} must be true or false.`;
+  if (policy.options.length && !policy.options.includes(raw))
+    return `${key} has an invalid option.`;
   return null;
 }
 
@@ -301,7 +557,10 @@ function typedAttributes(
 ): Record<string, VehicleAttributeValue> {
   return Object.fromEntries(
     Object.entries(form.additionalAttributes)
-      .filter(([key, value]) => value.trim() && (!category || category.attributes[key]))
+      .filter(
+        ([key, value]) =>
+          value.trim() && (!category || category.attributes[key]),
+      )
       .map(([key, value]) => {
         const type = category?.attributes[key]?.type;
         const parsed = ["NUMBER", "INTEGER"].includes(type ?? "")
@@ -319,14 +578,23 @@ export function toVehicleRequest(
   editing = false,
   category?: VehicleCategory,
 ): VehicleRequest {
-  const hasLocation = Boolean(form.city.trim() || form.region.trim() || form.formattedAddress.trim());
+  const hasLocation = Boolean(
+    form.city.trim() || form.region.trim() || form.formattedAddress.trim(),
+  );
   const request: VehicleRequest = {
-    ...(editing ? {} : { businessAccountId: form.businessAccountId ?? undefined }),
+    ...(editing
+      ? {}
+      : { businessAccountId: form.businessAccountId ?? undefined }),
+    businessListingId: form.businessAccountId
+      ? (form.businessListingId ?? undefined)
+      : undefined,
     visibilityScope: form.visibilityScope,
-    communityId: form.visibilityScope === "COMMUNITY" ? form.communityId : undefined,
-    selectedCommunityIds: form.visibilityScope === "SELECTED_COMMUNITIES"
-      ? form.selectedCommunityIds
-      : [],
+    communityId:
+      form.visibilityScope === "COMMUNITY" ? form.communityId : undefined,
+    selectedCommunityIds:
+      form.visibilityScope === "SELECTED_COMMUNITIES"
+        ? form.selectedCommunityIds
+        : [],
     listingPurpose: form.listingPurpose,
     categoryId: form.categoryId,
     makeId: optional(form.makeId),
@@ -354,31 +622,64 @@ export function toVehicleRequest(
     priceAmount: number(form.priceAmount),
     currencyCode: form.currencyCode.toUpperCase(),
     pricePeriod: form.listingPurpose === "SALE" ? "TOTAL" : form.pricePeriod,
-    rentalDeposit: form.listingPurpose === "RENT" ? number(form.rentalDeposit) : undefined,
-    mileageAllowance: form.listingPurpose === "RENT" ? number(form.mileageAllowance) : undefined,
-    rentalConditions: form.listingPurpose === "RENT" ? optional(form.rentalConditions) : undefined,
-    location: hasLocation ? {
-      city: optional(form.city),
-      region: optional(form.region),
-      formattedAddress: optional(form.formattedAddress),
-      ...(form.discoveryLatitude !== null && form.discoveryLongitude !== null ? {
-        discoveryLatitude: form.discoveryLatitude,
-        discoveryLongitude: form.discoveryLongitude,
-      } : {}),
-    } : undefined,
+    rentalDeposit:
+      form.listingPurpose === "RENT" ? number(form.rentalDeposit) : undefined,
+    mileageAllowance:
+      form.listingPurpose === "RENT"
+        ? number(form.mileageAllowance)
+        : undefined,
+    rentalConditions:
+      form.listingPurpose === "RENT"
+        ? optional(form.rentalConditions)
+        : undefined,
+    location: hasLocation
+      ? {
+          city: optional(form.city),
+          region: optional(form.region),
+          formattedAddress: optional(form.formattedAddress),
+          ...(form.discoveryLatitude !== null &&
+          form.discoveryLongitude !== null
+            ? {
+                discoveryLatitude: form.discoveryLatitude,
+                discoveryLongitude: form.discoveryLongitude,
+              }
+            : {}),
+        }
+      : undefined,
     featureIds: form.featureIds,
     expiresAt: expiry(form.expiresAt),
     clearLocation: editing && !hasLocation,
     clearExpiry: editing && !form.expiresAt,
-    clearFields: editing ? [
-      ...Object.entries(CORE_STATE_KEYS)
-        .filter(([, key]) => !String(form[key] ?? "").trim())
-        .map(([field]) => field),
-      ...(form.listingPurpose === "SALE"
-        ? ["rentalDeposit", "mileageAllowance", "rentalConditions"]
-        : []),
-    ] : [],
+    clearFields: editing
+      ? [
+          ...Object.entries(CORE_STATE_KEYS)
+            .filter(([, key]) => !String(form[key] ?? "").trim())
+            .map(([field]) => field),
+          ...(form.listingPurpose === "SALE"
+            ? ["rentalDeposit", "mileageAllowance", "rentalConditions"]
+            : []),
+        ]
+      : [],
   };
+  const hasChannel = Boolean(
+    form.contactPhone.trim() ||
+    form.contactWhatsapp.trim() ||
+    form.contactEmail.trim(),
+  );
+  if (hasChannel) {
+    request.contact = {
+      phone: optional(form.contactPhone),
+      whatsapp: optional(form.contactWhatsapp),
+      email: optional(form.contactEmail),
+      preferredMethod: form.contactPreferredMethod,
+      showPhone: form.contactShowPhone && Boolean(form.contactPhone.trim()),
+      showWhatsapp:
+        form.contactShowWhatsapp && Boolean(form.contactWhatsapp.trim()),
+      showEmail: form.contactShowEmail && Boolean(form.contactEmail.trim()),
+    };
+  } else if (editing) {
+    request.clearContact = true;
+  }
   return request;
 }
 
@@ -395,6 +696,9 @@ export function moveVehicleMedia(
   return next;
 }
 
-export function setVehicleCover(media: VehicleMediaItem[], id: string): VehicleMediaItem[] {
+export function setVehicleCover(
+  media: VehicleMediaItem[],
+  id: string,
+): VehicleMediaItem[] {
   return media.map((item) => ({ ...item, cover: item.id === id }));
 }

@@ -10,6 +10,7 @@ import type {
 export interface PropertyFormState {
   countryId: string;
   businessAccountId?: string;
+  businessListingId?: string;
   propertyTypeId?: string;
   visibilityScope: PropertyVisibility;
   communityId?: string;
@@ -94,12 +95,14 @@ export function initialPropertyForm(countryId: string, communityId?: string): Pr
 
 export function propertyFormFromDetail(detail: PropertyDetail): PropertyFormState {
   const property = detail.item.property;
+  const address = detail.privateAddress;
   return {
     ...initialPropertyForm(property.countryId, property.communityId ?? undefined),
     businessAccountId: property.businessAccountId ?? undefined,
+    businessListingId: property.businessListingId ?? undefined,
     propertyTypeId: property.propertyTypeId,
     visibilityScope: property.visibilityScope,
-    communityIds: property.communityId ? [property.communityId] : [],
+    communityIds: detail.communityIds ?? [],
     listingPurpose: property.listingPurpose,
     title: property.title,
     description: property.description,
@@ -118,8 +121,13 @@ export function propertyFormFromDetail(detail: PropertyDetail): PropertyFormStat
     availabilityDate: property.availabilityDate ?? "",
     tenure: property.tenure ?? "",
     conditionKey: property.conditionKey ?? "",
-    city: detail.item.location?.city ?? "",
-    region: detail.item.location?.region ?? "",
+    addressLine1: address?.addressLine1 ?? "",
+    addressLine2: address?.addressLine2 ?? "",
+    city: address?.city ?? detail.item.location?.city ?? "",
+    region: address?.region ?? detail.item.location?.region ?? "",
+    postalCode: address?.postalCode ?? "",
+    latitude: address?.latitude != null ? String(address.latitude) : "",
+    longitude: address?.longitude != null ? String(address.longitude) : "",
     phone: detail.contact?.phone ?? "",
     whatsapp: detail.contact?.whatsapp ?? "",
     email: detail.contact?.email ?? "",
@@ -129,25 +137,56 @@ export function propertyFormFromDetail(detail: PropertyDetail): PropertyFormStat
   };
 }
 
+export const PROPERTY_STEP_TITLES = [
+  "Listing basics",
+  "Price & details",
+  "Audience & location",
+  "Amenities & contact",
+  "Photos",
+] as const;
+
+/** Validates only the fields owned by one wizard step — the submit path still runs validatePropertyForm. */
+export function validatePropertyStep(form: PropertyFormState, step: number): string | null {
+  if (step === 0) {
+    if (!form.propertyTypeId) return "Choose a property type.";
+    if (!form.title.trim() || form.title.trim().length > 220) return "Enter a title of up to 220 characters.";
+    if (!form.description.trim() || form.description.trim().length > 20000) return "Enter a description of up to 20,000 characters.";
+    return null;
+  }
+  if (step === 1) {
+    if (!validNonnegative(form.priceAmount)) return "Enter a valid, non-negative price.";
+    if (!/^[A-Z]{3}$/.test(form.currencyCode)) return "Use a three-letter currency code, such as EUR.";
+    if (form.floorArea.trim() && !validNonnegative(form.floorArea)) return "Floor area must be non-negative.";
+    for (const value of [form.bedrooms, form.bathrooms, form.receptionRooms]) {
+      if (value.trim() && (!Number.isInteger(Number(value)) || Number(value) < 0)) return "Room counts must be non-negative whole numbers.";
+    }
+    if (form.listingPurpose === "RENT" && form.minimumTenancyMonths.trim() && (!Number.isInteger(Number(form.minimumTenancyMonths)) || Number(form.minimumTenancyMonths) <= 0)) return "Minimum tenancy must be a positive whole number.";
+    return null;
+  }
+  if (step === 2) {
+    if (form.visibilityScope === "COMMUNITY" && !form.communityId) return "Choose a community audience.";
+    if (form.visibilityScope === "SELECTED_COMMUNITIES" && form.communityIds.length === 0) return "Choose at least one community.";
+    if (!form.city.trim() && !form.addressLine1.trim()) return "Enter a city for the public location.";
+    const hasLat = form.latitude.trim() !== "";
+    const hasLng = form.longitude.trim() !== "";
+    if (hasLat !== hasLng) return "Enter both latitude and longitude, or leave both empty.";
+    if (hasLat) {
+      const latitude = Number(form.latitude);
+      const longitude = Number(form.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return "Enter valid coordinates for the private address.";
+    }
+    return null;
+  }
+  if (step === 3 && form.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) return "Enter a valid contact email.";
+  return null;
+}
+
 export function validatePropertyForm(form: PropertyFormState): string | null {
   if (!form.countryId) return "Your current country is required.";
-  if (!form.propertyTypeId) return "Choose a property type.";
-  if (!form.title.trim() || form.title.trim().length > 220) return "Enter a title of up to 220 characters.";
-  if (!form.description.trim() || form.description.trim().length > 20000) return "Enter a description of up to 20,000 characters.";
-  if (!validNonnegative(form.priceAmount)) return "Enter a valid, non-negative price.";
-  if (!/^[A-Z]{3}$/.test(form.currencyCode)) return "Use a three-letter currency code, such as EUR.";
-  if (!form.addressLine1.trim() && !form.city.trim()) return "Enter a private street address or city.";
-  const latitude = Number(form.latitude);
-  const longitude = Number(form.longitude);
-  if (!form.latitude.trim() || !form.longitude.trim() || !Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return "Enter valid exact coordinates for the private address.";
-  if (form.visibilityScope === "COMMUNITY" && !form.communityId) return "Choose a community audience.";
-  if (form.visibilityScope === "SELECTED_COMMUNITIES" && form.communityIds.length === 0) return "Choose at least one community.";
-  if (form.floorArea.trim() && !validNonnegative(form.floorArea)) return "Floor area must be non-negative.";
-  for (const value of [form.bedrooms, form.bathrooms, form.receptionRooms]) {
-    if (value.trim() && (!Number.isInteger(Number(value)) || Number(value) < 0)) return "Room counts must be non-negative whole numbers.";
+  for (let step = 0; step < PROPERTY_STEP_TITLES.length; step++) {
+    const message = validatePropertyStep(form, step);
+    if (message) return message;
   }
-  if (form.listingPurpose === "RENT" && form.minimumTenancyMonths.trim() && (!Number.isInteger(Number(form.minimumTenancyMonths)) || Number(form.minimumTenancyMonths) <= 0)) return "Minimum tenancy must be a positive whole number.";
-  if (form.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) return "Enter a valid contact email.";
   return null;
 }
 
@@ -156,6 +195,7 @@ export function propertyCommandFromForm(form: PropertyFormState): PropertyComman
   return {
     countryId: form.countryId,
     businessAccountId: form.businessAccountId,
+    businessListingId: form.businessAccountId ? form.businessListingId : undefined,
     propertyTypeId: form.propertyTypeId as string,
     visibilityScope: form.visibilityScope,
     communityId: form.visibilityScope === "COMMUNITY" ? form.communityId : undefined,
@@ -173,8 +213,8 @@ export function propertyCommandFromForm(form: PropertyFormState): PropertyComman
       city: optionalText(form.city),
       region: optionalText(form.region),
       postalCode: optionalText(form.postalCode),
-      latitude: Number(form.latitude),
-      longitude: Number(form.longitude),
+      latitude: optionalNumber(form.latitude),
+      longitude: optionalNumber(form.longitude),
     },
     bedrooms: optionalNumber(form.bedrooms),
     bathrooms: optionalNumber(form.bathrooms),

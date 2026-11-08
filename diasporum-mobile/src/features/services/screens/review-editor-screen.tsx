@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { ScrollView, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, ScrollView, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ThemedView } from "@/components/themed-view";
@@ -50,6 +50,7 @@ export default function ReviewEditorScreen() {
     <ThemedView style={serviceStyles.root}>
       <SafeAreaView style={serviceStyles.root} edges={["top", "left", "right"]}>
         <ScreenHeader back title="Review interaction" />
+        <KeyboardAvoidingView style={serviceStyles.keyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView contentContainerStyle={serviceStyles.content} keyboardShouldPersistTaps="handled">
           <ThemedText type="small" themeColor="textSecondary">
             Reviews require a recorded response or lead interaction. They do not verify that work was completed.
@@ -65,6 +66,7 @@ export default function ReviewEditorScreen() {
           {error ? <ThemedText accessibilityRole="alert" style={{ color: BrandColors.error }}>{error}</ThemedText> : null}
           <PrimaryButton label="Publish review" loading={saving} disabled={!rating} onPress={() => void save()} />
         </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </ThemedView>
   );

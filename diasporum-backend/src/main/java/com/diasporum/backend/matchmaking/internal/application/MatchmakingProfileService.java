@@ -33,23 +33,62 @@ public class MatchmakingProfileService {
     private static final Set<String> RELIGION_IMPORTANCE = Set.of("DEAL_BREAKER", "VERY_IMPORTANT",
             "SOMEWHAT_IMPORTANT", "NOT_IMPORTANT");
 
+    static java.util.Map<String, List<com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ReferenceOption>> profileOptions() {
+        return java.util.Map.of(
+                "visibility", choices(VISIBILITIES), "education", choices(EDUCATION),
+                "intentions", choices(INTENTIONS), "marital", choices(MARITAL),
+                "wantsChildren", choices(WANTS_CHILDREN), "habits", choices(HABITS),
+                "activity", choices(ACTIVITY), "timeline", choices(TIMELINE),
+                "religionImportance", choices(RELIGION_IMPORTANCE));
+    }
+
+    private static List<com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ReferenceOption> choices(Set<String> values) {
+        return values.stream().sorted().map(value -> {
+            String label = switch (value) {
+                case "ASAP" -> "As soon as possible";
+                case "1_2_YEARS" -> "1–2 years";
+                case "2_PLUS_YEARS" -> "2+ years";
+                default -> value.substring(0, 1) + value.substring(1).toLowerCase(java.util.Locale.ROOT).replace('_', ' ');
+            };
+            return new com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ReferenceOption(value, label);
+        }).toList();
+    }
+
     private final MatchmakingRepository repository;
     private final MediaApi media;
+    private final MatchmakingAccess access;
 
-    public MatchmakingProfileService(MatchmakingRepository repository, MediaApi media) {
+    public MatchmakingProfileService(MatchmakingRepository repository, MediaApi media,
+            MatchmakingAccess access) {
         this.repository = repository;
         this.media = media;
+        this.access = access;
     }
 
     @Transactional(readOnly = true)
     public ProfileView profile(UUID actor) {
+        access.requireAdult(actor);
         return repository.profile(actor).orElseThrow(
                 () -> MatchmakingSupport.notFound("MATCHMAKING_PROFILE_NOT_FOUND"));
     }
 
     @Transactional
     public ProfileView save(UUID actor, ProfileCommand command) {
-        validate(actor, command);
+        access.requireAdult(actor);
+        if (command == null) throw MatchmakingSupport.bad("INVALID_MATCHMAKING_PROFILE");
+        repository.actorLock(actor);
+        repository.profile(actor).ifPresent(current -> {
+            if ("DRAFT".equals(command.status()) && !"DRAFT".equals(current.status())) {
+                throw MatchmakingSupport.conflict("MATCHMAKING_PROFILE_NOT_EDITABLE");
+            }
+            if ("REJECTED".equals(current.verificationStatus()) || "REVOKED".equals(current.verificationStatus())) {
+                throw MatchmakingSupport.forbidden("MATCHMAKING_NOT_ELIGIBLE");
+            }
+        });
+        // Only a server-generated derivative can represent a blurred photo.
+        var resolved = command.withBlurredPhotoMediaId(
+                resolveBlurredPhoto(actor, command));
+        validate(actor, resolved);
         repository.profile(actor).ifPresent(current -> {
             if ("SUSPENDED".equals(current.status()) || "DELETED".equals(current.status())) {
                 throw MatchmakingSupport.conflict("MATCHMAKING_PROFILE_NOT_EDITABLE");
@@ -63,12 +102,22 @@ public class MatchmakingProfileService {
                 throw MatchmakingSupport.bad("MATCHMAKING_PREFERENCES_REQUIRED");
             }
         }
-        repository.upsertProfile(actor, command);
+        repository.upsertProfile(actor, resolved);
         return profile(actor);
+    }
+
+    private UUID resolveBlurredPhoto(UUID actor, ProfileCommand c) {
+        if (c.photoMediaId() == null || !media.validateForAttach(
+                c.photoMediaId(), actor, "MATCHMAKING_PROFILE_PHOTO")) {
+            return null;
+        }
+        return media.blurredImageDerivative(c.photoMediaId(),
+                "MATCHMAKING_PROFILE_BLURRED").orElse(null);
     }
 
     @Transactional
     public void delete(UUID actor) {
+        access.requireAdult(actor);
         if (repository.profile(actor).isEmpty()) return;
         repository.closeActiveMatchesForUser(actor);
         repository.markProfileDeleted(actor);

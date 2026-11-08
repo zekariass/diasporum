@@ -4,6 +4,8 @@ export interface MediaUploadSelection {
   uri: string;
   mimeType: string;
   fileName?: string;
+  /** Declared audio duration — validated server-side for FEED_AUDIO. */
+  durationMs?: number;
 }
 
 /** Uploads one selected file through Media's initiate, direct PUT, and READY lifecycle. */
@@ -21,6 +23,7 @@ export async function uploadMedia(
       purpose,
       mimeType: selection.mimeType,
       declaredSizeBytes: file.size,
+      durationMs: selection.durationMs,
     },
     { authenticated: true },
   );
@@ -33,7 +36,7 @@ export async function uploadMedia(
     if (!upload.ok) throw new Error("File upload failed.");
     await client.post(
       `/api/v1/media/uploads/${init.assetId}/complete`,
-      { declaredSizeBytes: file.size },
+      { declaredSizeBytes: file.size, durationMs: selection.durationMs },
       { authenticated: true },
     );
     return init.assetId;

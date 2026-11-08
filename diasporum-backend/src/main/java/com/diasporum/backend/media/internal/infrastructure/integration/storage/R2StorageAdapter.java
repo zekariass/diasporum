@@ -7,6 +7,7 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 /**
@@ -61,6 +62,23 @@ public class R2StorageAdapter implements StorageClient {
             }
             throw e;
         }
+    }
+
+    @Override
+    public Optional<byte[]> get(String key) {
+        try {
+            return Optional.of(s3.getObjectAsBytes(GetObjectRequest.builder()
+                    .bucket(props.bucket()).key(key).build()).asByteArray());
+        } catch (NoSuchKeyException e) {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public void put(String key, byte[] data, String contentType) {
+        s3.putObject(PutObjectRequest.builder().bucket(props.bucket()).key(key)
+                        .contentType(contentType).build(),
+                software.amazon.awssdk.core.sync.RequestBody.fromBytes(data));
     }
 
     @Override

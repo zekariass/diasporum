@@ -18,24 +18,32 @@ public class PreferenceService {
 
     private final MatchmakingRepository repository;
 
-    public PreferenceService(MatchmakingRepository repository) {
+    private final MatchmakingAccess access;
+
+    public PreferenceService(MatchmakingRepository repository, MatchmakingAccess access) {
         this.repository = repository;
+        this.access = access;
     }
 
     @Transactional(readOnly = true)
     public PreferenceView preferences(UUID actor) {
+        access.requireAdult(actor);
         return repository.preferences(actor).orElseThrow(
                 () -> MatchmakingSupport.notFound("MATCHMAKING_PREFERENCES_NOT_FOUND"));
     }
 
     @Transactional
     public PreferenceView replace(UUID actor, PreferenceCommand command) {
+        access.requireAdult(actor);
         var profile = repository.profile(actor).orElseThrow(
                 () -> MatchmakingSupport.notFound("MATCHMAKING_PROFILE_NOT_FOUND"));
-        if ("DELETED".equals(profile.status())) {
+        if ("DELETED".equals(profile.status()) || "SUSPENDED".equals(profile.status())) {
             throw MatchmakingSupport.conflict("MATCHMAKING_PROFILE_NOT_EDITABLE");
         }
         validate(command);
+        if (command.maxDistanceKm() != null && !repository.hasDiscoveryLocation(actor)) {
+            throw MatchmakingSupport.bad("MATCHMAKING_DISCOVERY_LOCATION_REQUIRED");
+        }
         var normalized = new PreferenceCommand(command.minAge(), command.maxAge(),
                 command.maxDistanceKm(), command.showVerifiedOnly(),
                 command.hasChildrenPreference(), command.wantsChildrenPreference(),

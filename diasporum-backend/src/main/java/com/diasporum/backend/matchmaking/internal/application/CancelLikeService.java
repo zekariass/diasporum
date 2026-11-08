@@ -21,7 +21,9 @@ public class CancelLikeService {
     @Transactional
     public SwipeResult cancel(UUID actor, UUID target) {
         access.requireEligible(actor);
+        repository.actorLock(actor);
         repository.pairLock(actor, target);
+        access.requireUnblocked(actor, target);
         var swipe = repository.swipe(actor, target).orElseThrow(
                 () -> MatchmakingSupport.conflict("MATCHMAKING_LIKE_NOT_ACTIVE"));
         var history = repository.latestSwipeForPair(actor, target).orElseThrow(

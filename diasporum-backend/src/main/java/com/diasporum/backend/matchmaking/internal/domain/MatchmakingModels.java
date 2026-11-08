@@ -19,6 +19,17 @@ public final class MatchmakingModels {
             Boolean willingToRelocate, UUID photoMediaId, UUID blurredPhotoMediaId,
             String nameVisibility, String photoVisibility, String anonymousAlias,
             String status) {
+
+        /** Copy with the blurred rendition reference replaced (server-derived). */
+        public ProfileCommand withBlurredPhotoMediaId(UUID id) {
+            return new ProfileCommand(genderKey, addressId, nationalityCountryId,
+                    religionId, educationLevel, occupation, relationshipIntention,
+                    maritalStatus, hasChildren, wantsChildren, smoking, drinking,
+                    activityLevel, heightCm, marriageTimeline,
+                    longDistanceRelationship, religionImportance, willingToRelocate,
+                    photoMediaId, id, nameVisibility, photoVisibility,
+                    anonymousAlias, status);
+        }
     }
 
     public record ProfileView(UUID userId, String genderKey, UUID addressId,
@@ -53,7 +64,9 @@ public final class MatchmakingModels {
             String smoking, String drinking, String activityLevel, Integer heightCm,
             String marriageTimeline, Boolean longDistanceRelationship,
             String religionImportance, Boolean willingToRelocate,
-            String verificationStatus) {
+            String verificationStatus, String bio, String publicLocation,
+            List<String> interests, List<String> languages, String nameVisibility,
+            String photoVisibility) {
     }
 
     public record PublicProfileView(UUID userId, String displayName, String photoUrl,
@@ -63,7 +76,9 @@ public final class MatchmakingModels {
             String smoking, String drinking, String activityLevel, Integer heightCm,
             String marriageTimeline, Boolean longDistanceRelationship,
             String religionImportance, Boolean willingToRelocate,
-            String verificationStatus) {
+            String verificationStatus, String bio, String publicLocation,
+            List<String> interests, List<String> languages, String nameVisibility,
+            String photoVisibility) {
     }
 
     public record MatchRow(UUID id, UUID userAId, UUID userBId, String status,
@@ -93,6 +108,18 @@ public final class MatchmakingModels {
             UUID matchId, UUID conversationId) {
     }
 
+    /**
+     * Server-computed Dating entry state. {@code reason} explains why a user is not
+     * eligible so clients can route to the correct screen: DOB_REQUIRED (no stored
+     * date of birth — collect it first), NO_PROFILE, PROFILE_INCOMPLETE,
+     * PROFILE_PAUSED, PROFILE_SUSPENDED, PROFILE_DELETED, NOT_ADULT (a birth date
+     * exists but fails the 18+ check), DISCOVERY_OPT_IN_REQUIRED or ELIGIBLE.
+     */
+    public record EligibilityView(boolean eligible, String reason, String profileStatus,
+            String verificationStatus, boolean adult, boolean hasDateOfBirth,
+            boolean discoveryOptIn, boolean hasPreferences) {
+    }
+
     public record MatchPageRow(MatchRow match, PublicProfileRow other) {
     }
 
@@ -104,7 +131,12 @@ public final class MatchmakingModels {
 
     public record ReferenceDataView(List<ReferenceOption> genders,
             List<ReferenceOption> religions, List<ReferenceOption> countries,
-            List<ReferenceOption> languages, List<PrivateAddressOption> addresses) {
+            List<ReferenceOption> languages, List<PrivateAddressOption> addresses,
+            java.util.Map<String, List<ReferenceOption>> profileOptions) {
+        public ReferenceDataView(List<ReferenceOption> genders, List<ReferenceOption> religions,
+                List<ReferenceOption> countries, List<ReferenceOption> languages, List<PrivateAddressOption> addresses) {
+            this(genders, religions, countries, languages, addresses, java.util.Map.of());
+        }
     }
 
     public record Page<T>(List<T> items, String nextCursor) {

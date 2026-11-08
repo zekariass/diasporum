@@ -3,7 +3,6 @@ package com.diasporum.backend.businessdirectory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -36,7 +35,6 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -77,6 +75,11 @@ class BusinessDirectoryModuleIntegrationTest {
                 }
                 public java.util.Optional<StorageClient.ObjectMeta> head(String key) {
                     return java.util.Optional.of(new StorageClient.ObjectMeta(1024, "image/png"));
+                }
+                public java.util.Optional<byte[]> get(String key) {
+                    return java.util.Optional.empty();
+                }
+                public void put(String key, byte[] data, String contentType) {
                 }
                 public void delete(String key) {
                 }

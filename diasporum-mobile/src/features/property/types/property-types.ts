@@ -1,7 +1,10 @@
 /** Property Marketplace DTOs — mirrors PropertyController and PropertyModels. */
 
 export type ListingPurpose = "SALE" | "RENT";
-export type PropertyVisibility = "COMMUNITY" | "COUNTRY" | "SELECTED_COMMUNITIES";
+export type PropertyVisibility =
+  | "COMMUNITY"
+  | "COUNTRY"
+  | "SELECTED_COMMUNITIES";
 export type PropertyStatus =
   | "DRAFT"
   | "PENDING_REVIEW"
@@ -44,6 +47,7 @@ export interface PropertyCommand {
   countryId: string;
   communityId?: string;
   businessAccountId?: string;
+  businessListingId?: string;
   propertyTypeId: string;
   visibilityScope?: PropertyVisibility;
   listingPurpose: ListingPurpose;
@@ -84,6 +88,7 @@ export interface Amenity {
 }
 
 export interface PublicLocation {
+  countryName?: string | null;
   city: string | null;
   region: string | null;
   latitude: number | null;
@@ -96,6 +101,7 @@ export interface PropertyRow {
   communityId: string | null;
   ownerUserId: string | null;
   businessAccountId: string | null;
+  businessListingId: string | null;
   createdByUserId: string | null;
   propertyTypeId: string;
   visibilityScope: PropertyVisibility;
@@ -133,9 +139,13 @@ export interface PropertyItem {
   coverMediaId: string | null;
   saved: boolean;
   canManage: boolean;
+  viewCount: number;
+  enquiryCount: number;
+  saveCount: number;
 }
 
 export interface PropertyPage {
+  totalCount?: number | null;
   items: PropertyItem[];
   nextCursor: string | null;
 }
@@ -156,6 +166,28 @@ export interface PropertyContact {
 export interface PropertyOwner {
   displayName: string | null;
   businessAccountName: string | null;
+  avatarMediaId?: string | null;
+}
+
+/** Public Business Profile the listing is published under, when associated. */
+export interface PropertyListedBy {
+  businessId: string;
+  name: string;
+  categoryName: string | null;
+  verificationStatus: string;
+  logoMediaId?: string | null;
+}
+
+/** Manager-only private address projection — null for public viewers. */
+export interface PrivateAddress {
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  region: string | null;
+  postalCode: string | null;
+  formattedAddress: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 export interface PropertyDetail {
@@ -164,9 +196,27 @@ export interface PropertyDetail {
   amenities: Amenity[];
   contact: PropertyContact | null;
   owner: PropertyOwner | null;
+  listedBy: PropertyListedBy | null;
+  privateAddress: PrivateAddress | null;
+  communityIds: string[];
 }
 
+export type PropertySort = "NEWEST" | "PRICE_ASC" | "PRICE_DESC";
+
 export interface PropertyDiscoveryFilters {
+  sort?: PropertySort;
+  currencyCode?: string;
+  pricePeriod?: "TOTAL" | "WEEK" | "MONTH" | "YEAR";
+  minFloorArea?: number;
+  maxFloorArea?: number;
+  floorAreaUnit?: "SQM" | "SQFT";
+  availableBy?: string;
+  maxDeposit?: number;
+  billsIncluded?: boolean;
+  maxTenancyMonths?: number;
+  tenure?: string;
+  conditionKey?: string;
+  maxBathrooms?: number;
   countryId?: string;
   communityId?: string;
   propertyTypeId?: string;
@@ -182,6 +232,7 @@ export interface PropertyDiscoveryFilters {
   latitude?: number;
   longitude?: number;
   radiusKm?: number;
+  businessListingId?: string;
 }
 
 export interface PropertyImageSelection {

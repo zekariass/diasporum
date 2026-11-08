@@ -114,11 +114,15 @@ class SpareBagModuleIntegrationTest {
                         userId + "@test.invalid", List.of()), null, List.of()));
     }
 
-    private void entitlement(UUID userId, long limit) {
+    private void freeEntitlement(long limit) {
         jdbc.update("UPDATE billing_plan_entitlements SET enabled=true,quantity_limit=?,"
                 + "reset_period='MONTH' WHERE plan_id=(SELECT id FROM billing_plans "
                 + "WHERE plan_key='FREE') AND feature_id=(SELECT id FROM billing_features "
                 + "WHERE feature_key='SPARE_BAG_LISTING_PUBLISH')", limit);
+    }
+
+    private void entitlement(UUID userId, long limit) {
+        freeEntitlement(limit);
         jdbc.update("DELETE FROM billing_subscriptions WHERE user_id=?", userId);
         jdbc.update("INSERT INTO billing_subscriptions(user_id,plan_id,status,current_period_start) "
                 + "SELECT ?,id,'ACTIVE',now() FROM billing_plans WHERE plan_key='FREE'", userId);
@@ -157,6 +161,7 @@ class SpareBagModuleIntegrationTest {
         assertMigratedSpareBagSchema(jdbc);
         assertEquals(6, listings.categories().size());
         assertEquals("ADD", listings.airports("Bole", null, 20).getFirst().iataCode());
+        assertEquals("ADD", listings.airports("Ethiopia", null, 20).getFirst().iataCode());
     }
 
     private void assertAirportSeed(JdbcTemplate database) {
@@ -301,6 +306,20 @@ class SpareBagModuleIntegrationTest {
     }
 
     @Test
+    void freePlanQuotaAppliesToUsersWithoutSubscription() {
+        UUID owner = user("sb-free-owner");
+        freeEntitlement(1);
+        ListingView draft = listings.create(owner, input("SENDER_REQUEST"));
+        assertEquals("PUBLISHED", listings.publish(owner, draft.listing().id())
+                .listing().status());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records",
+                Integer.class));
+        ListingView second = listings.create(owner, input("PASSENGER_OFFER"));
+        assertEquals("QUOTA_EXCEEDED", assertThrows(ResponseStatusException.class,
+                () -> listings.publish(owner, second.listing().id())).getReason());
+    }
+
+    @Test
     void discoveryFiltersAndCursorAreStableAndExcludeDrafts() {
         UUID owner = user("sb-discovery-owner");
         UUID viewer = user("sb-discovery-viewer");
@@ -314,7 +333,7 @@ class SpareBagModuleIntegrationTest {
         listings.create(owner, input("SENDER_REQUEST"));
 
         var filters = new DiscoveryFilters(null, null, null, null, null, null,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
         var page1 = listings.discover(viewer, filters, null, 2);
         assertEquals(2, page1.items().size());
         assertNotNull(page1.nextCursor());
@@ -328,10 +347,55 @@ class SpareBagModuleIntegrationTest {
 
         var passengerCheap = new DiscoveryFilters("PASSENGER_OFFER", null, null,
                 null, add, lhr, LocalDate.now().plusDays(6), LocalDate.now().plusDays(10),
-                new BigDecimal("10"), new BigDecimal("8"), "USD", "DOCUMENTS");
+                new BigDecimal("10"), new BigDecimal("8"), "USD", "DOCUMENTS",
+                null, null);
         var filtered = listings.discover(viewer, passengerCheap, null, 20);
         assertEquals(List.of(second.listing().id()), filtered.items().stream()
                 .map(v -> v.listing().id()).toList());
+    }
+
+    @Test
+    void discoverySortWeightFilterAndCountsAreHonest() {
+        UUID owner = user("sb-sort-owner");
+        UUID viewer = user("sb-sort-viewer");
+        entitlement(owner, 10);
+        ListingView firstPublished = published(owner, input("SENDER_REQUEST",
+                LocalDate.now().plusDays(20), new BigDecimal("8"), List.of(), null));
+        ListingView secondPublished = published(owner, input("SENDER_REQUEST",
+                LocalDate.now().plusDays(6), new BigDecimal("10"), List.of(), null));
+        ListingView thirdPublished = published(owner, input("PASSENGER_OFFER",
+                LocalDate.now().plusDays(10), new BigDecimal("12"), List.of(), null));
+
+        var newestFirst = new DiscoveryFilters(null, null, null, null, null, null,
+                null, null, null, null, null, null, null, "NEWEST");
+        var sorted = listings.discover(viewer, newestFirst, null, 1);
+        assertEquals(thirdPublished.listing().id(),
+                sorted.items().getFirst().listing().id());
+        var sortedPage2 = listings.discover(viewer, newestFirst,
+                sorted.nextCursor(), 1);
+        assertEquals(secondPublished.listing().id(),
+                sortedPage2.items().getFirst().listing().id());
+        var sortedPage3 = listings.discover(viewer, newestFirst,
+                sortedPage2.nextCursor(), 1);
+        assertEquals(firstPublished.listing().id(),
+                sortedPage3.items().getFirst().listing().id());
+
+        var heavy = new DiscoveryFilters("SENDER_REQUEST", null, null, null, null,
+                null, null, null, null, null, null, null,
+                new BigDecimal("1"), null);
+        assertEquals(0, listings.discover(viewer, heavy, null, 20).items().size());
+
+        var counts = listings.countDiscover(viewer, new DiscoveryFilters(null, null,
+                null, null, null, null, null, null, null, null, null, null,
+                null, null));
+        assertEquals(1, counts.passengerOffers());
+        assertEquals(2, counts.senderRequests());
+
+        assertEquals("INVALID_DISCOVERY_FILTERS",
+                assertThrows(ResponseStatusException.class, () -> listings.discover(
+                        viewer, new DiscoveryFilters(null, null, null, null, null,
+                                null, null, null, null, null, null, null, null,
+                                "POPULAR"), null, 20)).getReason());
     }
 
     @Test

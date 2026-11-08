@@ -4,11 +4,11 @@
  * Organized tab includes drafts (publishable from the detail screen).
  */
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  FlatList,
   Pressable,
   RefreshControl,
+  SectionList,
   StyleSheet,
   View,
 } from "react-native";
@@ -28,6 +28,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { ApiError } from "@/core/api/api-error";
 import type { EventItem } from "../types/event-types";
 import { EventCard } from "../components/event-card";
+import { EventsBottomNav } from "../components/events-bottom-nav";
 import { EventsEmpty, EventsSkeleton } from "../components/event-states";
 
 const PAGE_SIZE = 20;
@@ -41,6 +42,8 @@ export default function MyEventsScreen() {
 
   const [role, setRole] = useState<Role>("organized");
   const [items, setItems] = useState<EventItem[]>([]);
+  // Sampled once at mount — "started/past" only needs an approximate boundary.
+  const [now] = useState(() => Date.now());
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -117,6 +120,65 @@ export default function MyEventsScreen() {
     [router],
   );
 
+  const toggleSave = useCallback(
+    async (eventId: string, saved: boolean) => {
+      setItems((prev) =>
+        prev.map((i) => (i.event.id === eventId ? { ...i, saved } : i)),
+      );
+      try {
+        if (saved) await eventApi.saveEvent(eventId);
+        else await eventApi.unsaveEvent(eventId);
+      } catch {
+        setItems((prev) =>
+          prev.map((i) =>
+            i.event.id === eventId ? { ...i, saved: !saved } : i,
+          ),
+        );
+      }
+    },
+    [eventApi],
+  );
+
+  // Group loaded rows into meaningful sections using the mount-time "now".
+  const sections = useMemo(() => {
+    const started = (i: EventItem) =>
+      new Date(i.event.startsAt).getTime() <= now;
+    const cancelled = (i: EventItem) => i.event.cancelledAt !== null;
+    const groups = new Map<string, EventItem[]>();
+    const add = (key: string, item: EventItem) => {
+      const g = groups.get(key);
+      if (g) g.push(item);
+      else groups.set(key, [item]);
+    };
+    if (role === "organized") {
+      for (const item of items) {
+        if (item.event.status === "DRAFT") add("Drafts", item);
+        else if (cancelled(item)) add("Cancelled", item);
+        else if (started(item)) add("Past", item);
+        else add("Upcoming", item);
+      }
+    } else {
+      const RSVP_SECTION: Record<string, string> = {
+        GOING: "Going",
+        INTERESTED: "Interested",
+        WAITLISTED: "Waitlisted",
+      };
+      for (const item of items) {
+        if (cancelled(item)) add("Cancelled", item);
+        else if (started(item)) add("Past", item);
+        else add(RSVP_SECTION[item.myRsvp ?? ""] ?? "Other", item);
+      }
+    }
+    const ORDER =
+      role === "organized"
+        ? ["Upcoming", "Drafts", "Cancelled", "Past"]
+        : ["Going", "Interested", "Waitlisted", "Cancelled", "Past", "Other"];
+    return ORDER.filter((k) => groups.has(k)).map((k) => ({
+      title: k,
+      data: groups.get(k) as EventItem[],
+    }));
+  }, [items, role, now]);
+
   return (
     <ThemedView style={s.root}>
       <StatusBar style="auto" />
@@ -169,11 +231,24 @@ export default function MyEventsScreen() {
           ))}
         </View>
 
-        <FlatList
-          data={items}
+        <SectionList
+          sections={sections}
           renderItem={({ item }) => (
-            <EventCard item={item} onPress={openDetail} />
+            <EventCard
+              item={item}
+              onPress={openDetail}
+              onToggleSave={toggleSave}
+            />
           )}
+          renderSectionHeader={({ section }) => (
+            <ThemedText
+              style={[s.sectionHeader, { backgroundColor: theme.background }]}
+              themeColor="textSecondary"
+            >
+              {section.title}
+            </ThemedText>
+          )}
+          stickySectionHeadersEnabled={false}
           keyExtractor={(item) => item.event.id}
           onEndReached={loadMore}
           onEndReachedThreshold={0.4}
@@ -242,6 +317,7 @@ export default function MyEventsScreen() {
           }
         />
       </SafeAreaView>
+      <EventsBottomNav active="tickets" />
     </ThemedView>
   );
 }
@@ -263,6 +339,15 @@ const s = StyleSheet.create({
   tabBtn: { flex: 1, alignItems: "center", paddingVertical: Spacing.two },
   tabLabel: { fontSize: 14, fontWeight: "500" },
   tabLine: { height: 2, width: 36, borderRadius: 1, marginTop: 2 },
+  sectionHeader: {
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.three,
+    paddingBottom: Spacing.one,
+  },
   errorRow: {
     alignItems: "center",
     gap: Spacing.two,

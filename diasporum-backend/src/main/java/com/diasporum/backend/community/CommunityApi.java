@@ -1,6 +1,8 @@
 package com.diasporum.backend.community;
 
+import com.diasporum.backend.billing.BillingApi.ActionEligibility;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -43,6 +45,38 @@ public interface CommunityApi {
     boolean isModeratorOrAbove(UUID userId, UUID communityId);
 
     boolean isCommunityAdmin(UUID userId, UUID communityId);
+
+    /** Validated Default/Extended context, including effective scoped modules. */
+    CommunityContext context(UUID userId, UUID communityId);
+
+    /** The persisted active context, validated against current membership. */
+    CommunityContext activeContext(UUID userId);
+
+    /** Fail-closed authorization for a module in an explicit community. */
+    CommunityContext requireModule(UUID userId, UUID communityId, String moduleKey);
+
+    /** Fail-closed authorization in the user's persisted active community. */
+    CommunityContext requireActiveModule(UUID userId, String moduleKey);
+
+    /** Non-mutating action decision; community and feature are server-resolved. */
+    ActionEligibility actionEligibility(UUID userId, String actionKey);
+
+    /** Consume the configured Extended action after its feature transaction succeeds. */
+    void consumeExtendedAction(UUID userId, UUID communityId, String actionKey,
+            String idempotencyKey);
+
+    record CommunityContext(UUID communityId, String communityName,
+            String accessType, UUID originCountryId, UUID destinationCountryId,
+            Map<String, Boolean> modules) {
+
+        public boolean isDefault() {
+            return "DEFAULT".equals(accessType);
+        }
+
+        public boolean moduleEnabled(String moduleKey) {
+            return modules.getOrDefault(moduleKey, false);
+        }
+    }
 
     /** Membership record view — no internals. */
     record MembershipView(UUID communityId, UUID userId, String role,

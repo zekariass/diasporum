@@ -13,6 +13,7 @@ import {
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import EventsScreen from "@/features/events/screens/events-screen";
+import { EventsBottomNav } from "@/features/events/components/events-bottom-nav";
 import EventDetailScreen from "@/features/events/screens/event-detail-screen";
 import CreateEventScreen from "@/features/events/screens/create-event-screen";
 import EventParticipantsScreen from "@/features/events/screens/event-participants-screen";
@@ -83,6 +84,15 @@ jest.mock("@/core/session/session-provider", () => ({
     apiClient: mockClient,
     session: {
       activeCommunityId: "community-1",
+      memberships: [
+        {
+          communityId: "community-1",
+          userId: "user-1",
+          role: "MEMBER",
+          status: "ACTIVE",
+          joinedAt: "2026-10-01T00:00:00Z",
+        },
+      ],
       profile: {
         displayName: "Sara T.",
         username: "sara",
@@ -186,6 +196,20 @@ beforeEach(() => {
     if (url === "/api/v1/events/categories") {
       return Promise.resolve({ items: [CATEGORY] });
     }
+    if (url === "/api/v1/communities/community-1") {
+      return Promise.resolve({
+        id: "community-1",
+        name: "Ethiopians in Berlin",
+        slug: "ethiopians-berlin",
+        originCountryId: "country-et",
+        destinationCountryId: "country-de",
+        description: null,
+        active: true,
+      });
+    }
+    if (url === "/api/v1/business-accounts") {
+      return Promise.resolve({ items: [] });
+    }
     if (url.startsWith("/api/v1/events?")) {
       return Promise.resolve({ items: [makeItem()], nextCursor: null });
     }
@@ -244,14 +268,6 @@ describe("Events discovery screen", () => {
     await waitFor(() => {
       expect(mockRouter.push).toHaveBeenCalledWith("/(app)/events/event-1");
     });
-  });
-
-  it("navigates to the create-event screen from the header", async () => {
-    await renderScreen(<EventsScreen />);
-
-    fireEvent.press(screen.getByLabelText("Create event"));
-
-    expect(mockRouter.push).toHaveBeenCalledWith("/(app)/events/create");
   });
 
   it("shows the empty state when discovery returns no events", async () => {
@@ -364,10 +380,21 @@ describe("Event detail screen", () => {
 });
 
 describe("Create event screen", () => {
+  // The wizard: Audience → Details → Review. Community is preselected from
+  // activeCommunityId, so Continue advances straight to the form.
+  async function advanceToDetails() {
+    await waitFor(() =>
+      expect(screen.getByLabelText("Ethiopians in Berlin")).toBeTruthy(),
+    );
+    fireEvent.press(screen.getByLabelText("Continue"));
+    await screen.findByPlaceholderText("Ethiopian coffee night");
+  }
+
   it("validates the form and blocks submission without a title", async () => {
     await renderScreen(<CreateEventScreen />);
+    await advanceToDetails();
 
-    fireEvent.press(screen.getByLabelText("Create event"));
+    fireEvent.press(screen.getByLabelText("Continue"));
 
     expect(await screen.findByText("Enter a title.")).toBeTruthy();
     expect(mockClient.post).not.toHaveBeenCalled();
@@ -375,6 +402,7 @@ describe("Create event screen", () => {
 
   it("requires an online link for online events", async () => {
     await renderScreen(<CreateEventScreen />);
+    await advanceToDetails();
 
     await fireEvent.changeText(
       screen.getByPlaceholderText("Ethiopian coffee night"),
@@ -394,7 +422,7 @@ describe("Create event screen", () => {
     await fireEvent.press(screen.getByLabelText("Confirm picker"));
     await fireEvent.press(screen.getByLabelText("Online (external)"));
 
-    await fireEvent.press(screen.getByLabelText("Create event"));
+    await fireEvent.press(screen.getByLabelText("Continue"));
 
     expect(
       await screen.findByText("Enter the online event link."),
@@ -408,6 +436,7 @@ describe("Create event screen", () => {
     );
 
     await renderScreen(<CreateEventScreen />);
+    await advanceToDetails();
 
     await fireEvent.changeText(
       screen.getByPlaceholderText("Ethiopian coffee night"),
@@ -433,7 +462,11 @@ describe("Create event screen", () => {
       "Community hall",
     );
 
-    await fireEvent.press(screen.getByLabelText("Create event"));
+    // Details valid → advance to the Review step, then submit.
+    await fireEvent.press(screen.getByLabelText("Continue"));
+    await fireEvent.press(
+      await screen.findByLabelText("Create event"),
+    );
 
     // 18:30 wall-clock in Europe/Berlin (CET, UTC+1) = 17:30Z
     await waitFor(() => {
@@ -517,5 +550,23 @@ describe("Event participants screen", () => {
         { authenticated: true },
       );
     });
+  });
+});
+
+describe("Events bottom nav", () => {
+  it("navigates to Posts feed, Saved, My events and Account", async () => {
+    await renderScreen(<EventsBottomNav active="discover" />);
+
+    fireEvent.press(screen.getByLabelText("Posts"));
+    expect(mockRouter.replace).toHaveBeenCalledWith("/(app)/(tabs)");
+
+    fireEvent.press(screen.getByLabelText("Saved"));
+    expect(mockRouter.replace).toHaveBeenCalledWith("/(app)/events/saved");
+
+    fireEvent.press(screen.getByLabelText("Tickets"));
+    expect(mockRouter.replace).toHaveBeenCalledWith("/(app)/events/my");
+
+    fireEvent.press(screen.getByLabelText("Account"));
+    expect(mockRouter.replace).toHaveBeenCalledWith("/(app)/(tabs)/profile");
   });
 });

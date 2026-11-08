@@ -16,6 +16,9 @@ export function matchmakingError(error: unknown, fallback: string): string {
   if (/PREFERENCES_REQUIRED/i.test(reason)) {
     return 'Save your discovery preferences before activating Matchmaking.';
   }
+  if (/DISCOVERY_LOCATION/i.test(reason)) {
+    return 'A distance limit needs your approximate location. Allow it here or clear the distance field.';
+  }
   if (/PHOTO_NOT_READY/i.test(reason)) {
     return 'Your selected photo is still processing. Wait for it to be ready, then try again.';
   }

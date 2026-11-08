@@ -1,5 +1,6 @@
 package com.diasporum.backend.identity.internal.application;
 
+import com.diasporum.backend.identity.IdentityApi.CountriesChangedEvent;
 import com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest;
 import com.diasporum.backend.taxonomy.TaxonomyApi;
 import java.time.LocalDate;
@@ -8,6 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
@@ -48,10 +50,13 @@ public class ProfileService {
 
     private final JdbcTemplate jdbc;
     private final TaxonomyApi taxonomy;
+    private final ApplicationEventPublisher events;
 
-    public ProfileService(JdbcTemplate jdbc, TaxonomyApi taxonomy) {
+    public ProfileService(JdbcTemplate jdbc, TaxonomyApi taxonomy,
+            ApplicationEventPublisher events) {
         this.jdbc = jdbc;
         this.taxonomy = taxonomy;
+        this.events = events;
     }
 
     public record ProfileView(UUID id, String username, String displayName,
@@ -83,6 +88,8 @@ public class ProfileService {
     public ProfileView updateProfile(UUID profileId, UpdateProfileRequest req) {
         // Ensure a profile row exists for new users (onboarding builds it step-by-step).
         jdbc.update("INSERT INTO profiles(id) VALUES(?) ON CONFLICT(id) DO NOTHING", profileId);
+        jdbc.queryForObject("SELECT id FROM profiles WHERE id=? FOR UPDATE", UUID.class, profileId);
+        var previous = getProfile(profileId);
         if (req.username() != null) {
             applyUsername(profileId, normalize(req.username()));
         }
@@ -99,8 +106,20 @@ public class ProfileService {
                     req.city().isBlank() ? null : req.city().trim(), profileId);
         }
         if (req.dateOfBirth() != null) {
-            jdbc.update("UPDATE profiles SET date_of_birth=?, updated_at=now() WHERE id=?",
+            // Supplying a birth date is the eligibility confirmation act —
+            // matchmaking_account_is_adult() requires this stamp alongside
+            // the 18+ DOB check, so it must be written here or no account
+            // can ever become adult-eligible.
+            // DOB is one-time: the IS NULL predicate makes the write atomic,
+            // so a concurrent second submission loses instead of overwriting.
+            int written = jdbc.update(
+                    "UPDATE profiles SET date_of_birth=?, age_eligibility_confirmed_at=now(),"
+                            + " updated_at=now() WHERE id=? AND date_of_birth IS NULL",
                     req.dateOfBirth(), profileId);
+            if (written == 0) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "DATE_OF_BIRTH_ALREADY_SET");
+            }
         }
         if (req.originCountryId() != null) {
             requireActiveCountry(req.originCountryId());
@@ -116,7 +135,109 @@ public class ProfileService {
             applyAvatar(profileId, req.avatarMediaId());
         }
         refreshCompletion(profileId);
-        return getProfile(profileId);
+        var updated = getProfile(profileId);
+        boolean countriesChanged = !java.util.Objects.equals(previous.originCountryId(),
+                updated.originCountryId()) || !java.util.Objects.equals(
+                previous.currentCountryId(), updated.currentCountryId());
+        if (previous.profileCompleted() && countriesChanged) {
+            events.publishEvent(new CountriesChangedEvent(profileId,
+                    previous.originCountryId(), previous.currentCountryId(),
+                    updated.originCountryId(), updated.currentCountryId()));
+        }
+        return updated;
+    }
+
+    public record CatalogChoice(UUID id, String label) {}
+    public record CompatibilityView(List<UUID> interestIds, List<UUID> languageIds,
+            List<CatalogChoice> interests, List<CatalogChoice> languages, boolean hasDiscoveryLocation) {}
+
+    @Transactional(readOnly = true)
+    public CompatibilityView compatibility(UUID actor) {
+        requireActiveProfile(actor);
+        return new CompatibilityView(
+                jdbc.query("SELECT interest_id FROM user_interests WHERE user_id=? ORDER BY interest_id",
+                        (rs, i) -> rs.getObject(1, UUID.class), actor),
+                jdbc.query("SELECT language_id FROM user_languages WHERE user_id=? ORDER BY language_id",
+                        (rs, i) -> rs.getObject(1, UUID.class), actor),
+                jdbc.query("SELECT id,display_name FROM interests WHERE is_active ORDER BY sort_order,display_name,id",
+                        (rs, i) -> new CatalogChoice(rs.getObject(1, UUID.class), rs.getString(2))),
+                taxonomy.activeLanguages().stream().map(l -> new CatalogChoice(l.id(), l.displayName())).toList(),
+                Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM user_discovery_locations WHERE user_id=?)",
+                        Boolean.class, actor)));
+    }
+
+    @Transactional
+    public CompatibilityView replaceCompatibility(UUID actor, List<UUID> interests, List<UUID> languages) {
+        requireActiveProfile(actor);
+        if (interests == null || languages == null || interests.size() > 30 || languages.size() > 30
+                || interests.stream().anyMatch(java.util.Objects::isNull)
+                || languages.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_PROFILE_COMPATIBILITY");
+        }
+        jdbc.queryForObject("SELECT id FROM profiles WHERE id=? FOR UPDATE", UUID.class, actor);
+        for (UUID id : interests) {
+            if (!Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM interests WHERE id=? AND is_active)", Boolean.class, id))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_INTEREST");
+            }
+        }
+        for (UUID id : languages) {
+            if (!taxonomy.findLanguageById(id).map(TaxonomyApi.LanguageView::active).orElse(false)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_LANGUAGE");
+            }
+        }
+        // Keep existing rows, including language proficiency; remove only deselected relationships.
+        var current = compatibility(actor);
+        for (UUID id : current.interestIds()) if (!interests.contains(id))
+            jdbc.update("DELETE FROM user_interests WHERE user_id=? AND interest_id=?", actor, id);
+        for (UUID id : current.languageIds()) if (!languages.contains(id))
+            jdbc.update("DELETE FROM user_languages WHERE user_id=? AND language_id=?", actor, id);
+        for (UUID id : interests) jdbc.update("INSERT INTO user_interests(user_id,interest_id) VALUES(?,?) ON CONFLICT DO NOTHING", actor, id);
+        for (UUID id : languages) jdbc.update("INSERT INTO user_languages(user_id,language_id) VALUES(?,?) ON CONFLICT DO NOTHING", actor, id);
+        return compatibility(actor);
+    }
+
+    @Transactional
+    public void saveDiscoveryLocation(UUID actor, double latitude, double longitude, boolean consent) {
+        requireActiveProfile(actor);
+        if (!consent || !Double.isFinite(latitude) || !Double.isFinite(longitude)
+                || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_DISCOVERY_LOCATION");
+        }
+        // Quantize before persistence. Neither the input point nor the stored point is returned.
+        double lat = Math.round(latitude * 50) / 50.0;
+        double lon = Math.round(longitude * 50) / 50.0;
+        jdbc.update("INSERT INTO user_discovery_locations(user_id,location,location_source,precision_radius_m)"
+                + " VALUES(?,ST_SetSRID(ST_MakePoint(?,?),4326)::geography,'DEVICE_APPROXIMATE',3000)"
+                + " ON CONFLICT(user_id) DO UPDATE SET location=EXCLUDED.location,"
+                + " location_source=EXCLUDED.location_source,precision_radius_m=3000,consented_at=now(),updated_at=now()",
+                actor, lon, lat);
+    }
+
+    @Transactional
+    public void removeDiscoveryLocation(UUID actor) {
+        requireActiveProfile(actor);
+        jdbc.update("DELETE FROM user_discovery_locations WHERE user_id=?", actor);
+    }
+
+    @Transactional
+    public void confirmAgeEligibility(UUID actor) {
+        requireActiveProfile(actor);
+        int updated = jdbc.update("UPDATE profiles p SET age_eligibility_confirmed_at="
+                + "COALESCE(p.age_eligibility_confirmed_at,now()) FROM users u"
+                + " WHERE p.id=? AND u.id=p.id AND u.account_status='ACTIVE' AND u.deleted_at IS NULL"
+                + " AND p.date_of_birth <= (CURRENT_DATE - INTERVAL '18 years')::date", actor);
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "MATCHMAKING_ADULT_REQUIRED");
+        }
+    }
+
+    private ProfileView requireActiveProfile(UUID actor) {
+        var profile = getProfile(actor);
+        if (!"ACTIVE".equals(profile.accountStatus()) || !Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT deleted_at IS NULL FROM users WHERE id=?", Boolean.class, actor))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "ACCOUNT_NOT_ACTIVE");
+        }
+        return profile;
     }
 
     private void applyUsername(UUID profileId, String normalized) {

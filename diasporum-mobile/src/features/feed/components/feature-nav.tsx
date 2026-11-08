@@ -1,8 +1,9 @@
 /**
- * FeatureNav — horizontal scrollable feature category strip.
- * Modern underline-tab style: icon stacked above a short label, active item
- * uses a filled icon variant in the brand colour with a 3 px indicator bar.
- * Stateless: caller owns activeKey and handles onSelect.
+ * FeatureNav — horizontal scrollable strip for the Posts content experiences
+ * (Feed, Vids, Help, Polls). Other Diasporum features live in the left-side
+ * FeatureDrawer. Modern underline-tab style: icon stacked above a short
+ * label, active item uses a filled icon variant in the brand colour with a
+ * 3 px indicator bar. Stateless: caller owns activeKey and handles onSelect.
  */
 import React from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
@@ -11,30 +12,41 @@ import type { ComponentProps } from "react";
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
 import { Spacing } from "@/shared/theme/spacing";
+import { useSession } from "@/core/session/session-provider";
+import {
+  FEATURE_MODULE_KEYS,
+  isCommunityModuleEnabled,
+} from "@/core/session/community-capabilities";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 
 interface Feature {
   key: string;
-  icon: IconName;       // outline — inactive
+  icon: IconName; // outline — inactive
   activeIcon: IconName; // filled — active
   label: string;
 }
 
 export const FEATURES: Feature[] = [
-  { key: "feed",      icon: "home-outline",          activeIcon: "home",           label: "Feed" },
-  { key: "reels",     icon: "play-circle-outline",   activeIcon: "play-circle",    label: "Vids" },
-  { key: "people",    icon: "people-outline",         activeIcon: "people",         label: "People" },
-  { key: "dating",    icon: "heart-outline",          activeIcon: "heart",          label: "Dating" },
-  { key: "property",  icon: "business-outline",       activeIcon: "business",       label: "Property" },
-  { key: "vehicle",   icon: "car-outline",            activeIcon: "car",            label: "Vehicles" },
-  { key: "event",     icon: "calendar-outline",       activeIcon: "calendar",       label: "Events" },
-  { key: "spare-bag", icon: "bag-handle-outline",     activeIcon: "bag-handle",     label: "Spare Bag" },
-  { key: "business",  icon: "storefront-outline",     activeIcon: "storefront",     label: "Business" },
-  { key: "jobs",      icon: "briefcase-outline",      activeIcon: "briefcase",      label: "Jobs" },
-  { key: "poll",      icon: "stats-chart-outline",    activeIcon: "stats-chart",    label: "Polls" },
-  { key: "help",      icon: "hand-left-outline",      activeIcon: "hand-left",      label: "Help" },
-  { key: "services",  icon: "construct-outline",      activeIcon: "construct",      label: "Services" },
+  { key: "feed", icon: "home-outline", activeIcon: "home", label: "Feed" },
+  {
+    key: "reels",
+    icon: "play-circle-outline",
+    activeIcon: "play-circle",
+    label: "Vids",
+  },
+  {
+    key: "help",
+    icon: "hand-left-outline",
+    activeIcon: "hand-left",
+    label: "Help",
+  },
+  {
+    key: "poll",
+    icon: "stats-chart-outline",
+    activeIcon: "stats-chart",
+    label: "Polls",
+  },
 ];
 
 interface FeatureNavProps {
@@ -44,6 +56,13 @@ interface FeatureNavProps {
 
 export function FeatureNav({ activeKey, onSelect }: FeatureNavProps) {
   const theme = useTheme();
+  const { session } = useSession();
+  const features = FEATURES.filter((feature) => {
+    const moduleKey = FEATURE_MODULE_KEYS[feature.key];
+    return (
+      moduleKey == null || isCommunityModuleEnabled(session?.access, moduleKey)
+    );
+  });
 
   return (
     <View style={[styles.wrap, { borderBottomColor: theme.border }]}>
@@ -52,7 +71,7 @@ export function FeatureNav({ activeKey, onSelect }: FeatureNavProps) {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.strip}
       >
-        {FEATURES.map((feature) => {
+        {features.map((feature) => {
           const active = feature.key === activeKey;
           const iconColor = active ? theme.primary : theme.textSecondary;
 
@@ -111,7 +130,7 @@ export function FeatureNav({ activeKey, onSelect }: FeatureNavProps) {
   );
 }
 
-const ICON_BUBBLE = 40;
+const ICON_BUBBLE = 38;
 
 const styles = StyleSheet.create({
   wrap: {
@@ -120,15 +139,16 @@ const styles = StyleSheet.create({
   strip: {
     flexDirection: "row",
     alignItems: "flex-end",
-    paddingHorizontal: Spacing.three,
-    paddingTop: Spacing.two,
-    gap: Spacing.px,
+    paddingHorizontal: Spacing.two,
+    paddingTop: Spacing.one,
+    paddingBottom: Spacing.one,
+    gap: 0,
   },
   item: {
     alignItems: "center",
-    paddingHorizontal: Spacing.two,
-    minWidth: 58,
-    gap: 4,
+    paddingHorizontal: 6,
+    minWidth: 60,
+    gap: 3,
   },
   itemPressed: {
     opacity: 0.65,
@@ -137,24 +157,24 @@ const styles = StyleSheet.create({
   iconWrap: {
     width: ICON_BUBBLE,
     height: ICON_BUBBLE,
-    borderRadius: 14,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
   label: {
-    fontSize: 10,
-    lineHeight: 13,
+    fontSize: 11,
+    lineHeight: 14,
     fontWeight: "600",
     textAlign: "center",
   },
   activeLabel: {
-    fontWeight: "700",
+    fontWeight: "800",
   },
   indicator: {
-    height: 3,
+    height: 2,
     width: 24,
-    borderRadius: 2,
-    marginTop: 3,
+    borderRadius: 1,
+    marginTop: 2,
     marginBottom: -StyleSheet.hairlineWidth, // sit flush on the bottom border
   },
 });

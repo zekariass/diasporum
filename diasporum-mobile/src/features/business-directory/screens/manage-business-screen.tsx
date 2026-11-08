@@ -415,6 +415,21 @@ export default function ManageBusinessScreen() {
             ))}
           </Section>
 
+          <Section title={`Listings (${business.listingCount})`} icon="albums-outline">
+            <ThemedText style={styles.body} themeColor="textSecondary">
+              Property and vehicle listings owned by the Business Account can be published under this public profile.
+            </ThemedText>
+            <PrimaryButton
+              label="Manage profile listings"
+              variant="secondary"
+              onPress={() =>
+                router.push(
+                  `/(app)/businesses/${businessId}/listings?profileName=${encodeURIComponent(business.name)}${business.businessAccountId ? `&accountId=${business.businessAccountId}` : ""}` as never,
+                )
+              }
+            />
+          </Section>
+
           <Section title="Verification" icon="shield-checkmark-outline">
             <ThemedText style={styles.verification}>{business.verificationStatus}</ThemedText>
             <ThemedText style={styles.body} themeColor="textSecondary">

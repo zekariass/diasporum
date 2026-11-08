@@ -29,8 +29,9 @@ export default function ListingEditorScreen({ listingType }: { listingType?: Lis
       .finally(() => setLoading(false));
   }, [api, id]);
 
-  async function submit(request: ListingRequest): Promise<Listing> {
-    const saved = id ? await api.update(id, request) : await api.create(request);
+  async function submit(request: ListingRequest, publish = false): Promise<Listing> {
+    let saved = id ? await api.update(id, request) : await api.create(request);
+    if (publish) saved = await api.publish(saved.id);
     router.replace(`/(app)/spare-bag/${saved.id}` as never);
     return saved;
   }
@@ -39,7 +40,10 @@ export default function ListingEditorScreen({ listingType }: { listingType?: Lis
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
-        <ScreenHeader back title={id ? "Edit Spare Bag listing" : type === "SENDER_REQUEST" ? "New sender request" : "New passenger offer"} />
+        <ScreenHeader
+          back
+          title={id ? "Edit Spare Bag listing" : type === "SENDER_REQUEST" ? "Send a Parcel" : "I Have Free Space"}
+        />
         {loading ? <LoadingScreen /> : error ? <ErrorState message={error} onRetry={() => router.replace(`/(app)/spare-bag/edit/${id}` as never)} /> : type ? (
           <ListingForm listingType={type} listing={listing ?? undefined} onSubmit={submit} />
         ) : null}

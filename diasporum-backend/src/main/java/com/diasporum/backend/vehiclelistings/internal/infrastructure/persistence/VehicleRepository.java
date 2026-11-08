@@ -6,6 +6,8 @@ import com.diasporum.backend.vehiclelistings.internal.domain.VehicleFeature;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleListing;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleLocation;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleQueryResult;
+import com.diasporum.backend.vehiclelistings.internal.domain.VehicleInput.ContactInput;
+import com.diasporum.backend.vehiclelistings.internal.domain.VehicleListedBy;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleSearch;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
@@ -43,7 +45,8 @@ public class VehicleRepository {
     }
 
     private static final String COLS = "v.id,v.country_id,v.community_id,v.owner_user_id,"
-            + "v.business_account_id,v.created_by_user_id,v.visibility_scope::text,"
+            + "v.business_account_id,v.business_listing_id,v.created_by_user_id,"
+            + "v.visibility_scope::text,"
             + "v.listing_purpose,v.vehicle_category_id,v.make_id,v.model_id,v.variant_id,"
             + "c.category_key,c.display_name AS category_name,m.display_name AS make_name,"
             + "mo.display_name AS model_name,va.display_name AS variant_name,v.title,"
@@ -74,6 +77,7 @@ public class VehicleRepository {
                 rs.getObject("country_id", UUID.class), rs.getObject("community_id", UUID.class),
                 rs.getObject("owner_user_id", UUID.class),
                 rs.getObject("business_account_id", UUID.class),
+                rs.getObject("business_listing_id", UUID.class),
                 rs.getObject("created_by_user_id", UUID.class), rs.getString("visibility_scope"),
                 rs.getString("listing_purpose"), rs.getObject("vehicle_category_id", UUID.class),
                 rs.getObject("make_id", UUID.class), rs.getObject("model_id", UUID.class),
@@ -114,15 +118,17 @@ public class VehicleRepository {
 
     public void insert(VehicleListing v) {
         jdbc.update("INSERT INTO vehicle_listings(id,country_id,community_id,owner_user_id,"
-                        + "business_account_id,created_by_user_id,visibility_scope,listing_purpose,"
+                        + "business_account_id,business_listing_id,created_by_user_id,visibility_scope,"
+                        + "listing_purpose,"
                         + "vehicle_category_id,make_id,model_id,variant_id,title,description,model_year,"
                         + "mileage,mileage_unit,fuel_type,transmission,drive_type,body_type,engine_size_cc,"
                         + "colour,doors,seats,condition_key,registration_year,previous_owners,"
                         + "additional_attributes,mot_expiry,service_history,price_amount,currency_code,"
                         + "price_period,rental_deposit,mileage_allowance,rental_conditions,address_id,status,"
-                        + "expires_at,published_at) VALUES(?,?,?,?,?,?,?::visibility_scope,?,?,?,?,?,?,?,?,?,?,?,"
+                        + "expires_at,published_at) VALUES(?,?,?,?,?,?,?,?::visibility_scope,?,?,?,?,?,?,?,?,?,?,?,"
                         + "?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?,?,?)",
                 v.id(), v.countryId(), v.communityId(), v.ownerUserId(), v.businessAccountId(),
+                v.businessListingId(),
                 v.createdByUserId(), v.visibilityScope(), v.listingPurpose(), v.categoryId(), v.makeId(),
                 v.modelId(), v.variantId(), v.title(), v.description(), v.modelYear(), v.mileage(),
                 v.mileageUnit(), v.fuelType(), v.transmission(), v.driveType(), v.bodyType(),
@@ -135,7 +141,7 @@ public class VehicleRepository {
     }
 
     public void update(VehicleListing v) {
-        jdbc.update("UPDATE vehicle_listings SET country_id=?,community_id=?,"
+        jdbc.update("UPDATE vehicle_listings SET country_id=?,community_id=?,business_listing_id=?,"
                         + "visibility_scope=?::visibility_scope,listing_purpose=?,vehicle_category_id=?,"
                         + "make_id=?,model_id=?,variant_id=?,title=?,description=?,model_year=?,mileage=?,"
                         + "mileage_unit=?,fuel_type=?,transmission=?,drive_type=?,body_type=?,engine_size_cc=?,"
@@ -143,7 +149,8 @@ public class VehicleRepository {
                         + "additional_attributes=?::jsonb,mot_expiry=?,service_history=?,price_amount=?,"
                         + "currency_code=?,price_period=?,rental_deposit=?,mileage_allowance=?,"
                         + "rental_conditions=?,address_id=?,expires_at=? WHERE id=?",
-                v.countryId(), v.communityId(), v.visibilityScope(), v.listingPurpose(), v.categoryId(),
+                v.countryId(), v.communityId(), v.businessListingId(), v.visibilityScope(),
+                v.listingPurpose(), v.categoryId(),
                 v.makeId(), v.modelId(), v.variantId(), v.title(), v.description(), v.modelYear(), v.mileage(),
                 v.mileageUnit(), v.fuelType(), v.transmission(), v.driveType(), v.bodyType(),
                 v.engineSizeCc(), v.colour(), v.doors(), v.seats(), v.conditionKey(),
@@ -157,6 +164,28 @@ public class VehicleRepository {
         jdbc.update("UPDATE vehicle_listings SET status=?,published_at=CASE WHEN ?='PUBLISHED' "
                 + "THEN COALESCE(published_at,now()) ELSE published_at END WHERE id=?",
                 status, status, id);
+    }
+
+    /** A public Business Profile may only be associated when owned by the listing account. */
+    public boolean businessProfileOwnedByAccount(UUID businessListingId, UUID accountId) {
+        Integer count = jdbc.queryForObject("SELECT count(*) FROM business_listings"
+                + " WHERE id=? AND business_account_id=? AND deleted_at IS NULL",
+                Integer.class, businessListingId, accountId);
+        return count != null && count > 0;
+    }
+
+    /** Public profile projection for listing "listed by" display. */
+    public VehicleListedBy businessProfileView(UUID businessListingId) {
+        return jdbc.query("SELECT b.id,b.name,c.name AS category_name,b.verification_status::text,"
+                        + "b.average_rating,b.review_count"
+                        + " FROM business_listings b"
+                        + " LEFT JOIN business_categories c ON c.id=b.category_id"
+                        + " WHERE b.id=? AND b.deleted_at IS NULL",
+                (rs, i) -> new VehicleListedBy(rs.getObject("id", UUID.class),
+                        rs.getString("name"), rs.getString("category_name"),
+                        rs.getString("verification_status"), rs.getBigDecimal("average_rating"),
+                        rs.getObject("review_count", Integer.class)),
+                businessListingId).stream().findFirst().orElse(null);
     }
 
     public UUID createAddress(UUID countryId, String city, String region, String formattedAddress,
@@ -191,6 +220,37 @@ public class VehicleRepository {
             jdbc.update("INSERT INTO vehicle_listing_features(vehicle_listing_id,feature_id) "
                     + "VALUES(?,?)", listingId, featureId);
         }
+    }
+
+    public void replaceContact(UUID listingId, ContactInput contact) {
+        jdbc.update("DELETE FROM vehicle_listing_contacts WHERE vehicle_listing_id=?", listingId);
+        if (contact == null) {
+            return;
+        }
+        jdbc.update("""
+                INSERT INTO vehicle_listing_contacts(vehicle_listing_id,phone,whatsapp,
+                    email,preferred_method,show_phone,show_whatsapp,show_email)
+                VALUES(?,?,?,?,?,?,?,?)
+                """, listingId, contact.phone(), contact.whatsapp(), contact.email(),
+                contact.preferredMethod(), Boolean.TRUE.equals(contact.showPhone()),
+                Boolean.TRUE.equals(contact.showWhatsapp()),
+                Boolean.TRUE.equals(contact.showEmail()));
+    }
+
+    /** Raw persisted contact row incl. visibility flags; null when none stored. */
+    public ContactRow contactFor(UUID listingId) {
+        List<ContactRow> rows = jdbc.query("""
+                SELECT phone,whatsapp,email,preferred_method,show_phone,show_whatsapp,show_email
+                FROM vehicle_listing_contacts WHERE vehicle_listing_id=?
+                """, (rs, i) -> new ContactRow(rs.getString(1), rs.getString(2),
+                        rs.getString(3), rs.getString(4), rs.getBoolean(5),
+                        rs.getBoolean(6), rs.getBoolean(7)), listingId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    public record ContactRow(String phone, String whatsapp, String email,
+            String preferredMethod, boolean showPhone, boolean showWhatsapp,
+            boolean showEmail) {
     }
 
     public void replaceMedia(UUID listingId, List<Attachment> attachments) {
@@ -256,17 +316,77 @@ public class VehicleRepository {
                 listingId, viewer);
     }
 
+    public record SavedSearchRow(UUID id, String name, String filters, Instant createdAt) {
+    }
+
+    public UUID insertSavedSearch(UUID userId, String name, String filters) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO vehicle_saved_searches(id,user_id,name,filters) "
+                + "VALUES(?,?,?,?::jsonb)", id, userId, name, filters);
+        return id;
+    }
+
+    public List<SavedSearchRow> savedSearches(UUID userId) {
+        return jdbc.query("SELECT id,name,filters::text,created_at FROM vehicle_saved_searches "
+                        + "WHERE user_id=? ORDER BY created_at DESC,id DESC",
+                (rs, i) -> new SavedSearchRow(rs.getObject("id", UUID.class), rs.getString("name"),
+                        rs.getString("filters"), rs.getTimestamp("created_at").toInstant()), userId);
+    }
+
+    public Optional<UUID> savedSearchIdByFilters(UUID userId, String filters) {
+        return jdbc.query("SELECT id FROM vehicle_saved_searches "
+                        + "WHERE user_id=? AND filters=?::jsonb",
+                (rs, i) -> rs.getObject("id", UUID.class), userId, filters).stream().findFirst();
+    }
+
+    public int countSavedSearches(UUID userId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM vehicle_saved_searches "
+                + "WHERE user_id=?", Integer.class, userId);
+        return count == null ? 0 : count;
+    }
+
+    public boolean deleteSavedSearch(UUID userId, UUID id) {
+        return jdbc.update("DELETE FROM vehicle_saved_searches WHERE user_id=? AND id=?",
+                userId, id) > 0;
+    }
+
     public VehicleQueryResult discover(UUID viewer, UUID viewerCountry,
             Collection<UUID> accessibleCommunities, VehicleSearch f, VehicleCursor cursor, int limit) {
         boolean distance = "DISTANCE".equals(f.sort());
         String distanceSql = distance ? "ST_Distance(a.discovery_location,"
                 + "ST_SetSRID(ST_MakePoint(?,?),4326)::geography)" : "NULL::double precision";
-        Sql sql = new Sql(select(distanceSql) + "JOIN countries co ON co.id=v.country_id AND co.is_active ");
+        String joins = "JOIN countries co ON co.id=v.country_id AND co.is_active ";
+        Sql sql = new Sql(select(distanceSql) + joins);
         if (distance) {
             sql.args.add(f.originLongitude());
             sql.args.add(f.originLatitude());
         }
         sql.args.add(viewer);
+        addDiscoveryFilters(sql, viewerCountry, accessibleCommunities, f);
+        Sql countSql = new Sql("SELECT COUNT(*)" + FROM + joins);
+        countSql.args.add(viewer);
+        addDiscoveryFilters(countSql, viewerCountry, accessibleCommunities, f);
+        Long total = jdbc.queryForObject(countSql.sql.toString(), Long.class,
+                countSql.args.toArray());
+        addDiscoveryCursor(sql, f, cursor);
+        sql.add(switch (f.sort()) {
+            case "PRICE_ASC" -> "ORDER BY v.price_amount ASC,v.id ASC";
+            case "PRICE_DESC" -> "ORDER BY v.price_amount DESC,v.id DESC";
+            case "DISTANCE" -> "ORDER BY distance_meters ASC,v.id ASC";
+            default -> "ORDER BY v.published_at DESC,v.id DESC";
+        });
+        sql.add("LIMIT ?", limit + 1);
+        List<VehicleListing> rows = jdbc.query(sql.sql.toString(), this::row, sql.args.toArray());
+        VehicleQueryResult result = page(rows, limit, v -> switch (f.sort()) {
+            case "PRICE_ASC", "PRICE_DESC" -> v.priceAmount().toPlainString();
+            case "DISTANCE" -> Double.toString(v.distanceMeters());
+            default -> v.publishedAt().toString();
+        });
+        return new VehicleQueryResult(result.items(), result.nextSortKey(), total);
+    }
+
+    private void addDiscoveryFilters(Sql sql, UUID viewerCountry,
+            Collection<UUID> accessibleCommunities, VehicleSearch f) {
         sql.add("WHERE v.status='PUBLISHED' AND (v.expires_at IS NULL OR v.expires_at>now())");
         addVisibility(sql, viewerCountry, accessibleCommunities);
         if (f.keyword() != null && !f.keyword().isBlank()) {
@@ -281,7 +401,13 @@ public class VehicleRepository {
         eq(sql, "v.model_id", f.modelId());
         eq(sql, "v.variant_id", f.variantId());
         range(sql, "v.model_year", f.yearMin(), f.yearMax());
-        range(sql, "v.mileage", f.mileageMin(), f.mileageMax());
+        BigDecimal mileageScale = "MILES".equals(f.mileageUnit()) ? new BigDecimal("1.609344") : BigDecimal.ONE;
+        range(sql, "(CASE WHEN v.mileage_unit='MILES' THEN v.mileage * 1.609344 "
+                        + "WHEN v.mileage_unit='KM' THEN v.mileage ELSE NULL END)",
+                f.mileageMin() == null ? null : BigDecimal.valueOf(f.mileageMin()).multiply(mileageScale),
+                f.mileageMax() == null ? null : BigDecimal.valueOf(f.mileageMax()).multiply(mileageScale));
+        eq(sql, "UPPER(v.colour)", f.colour());
+        eq(sql, "v.price_period", f.pricePeriod());
         range(sql, "v.price_amount", f.priceMin(), f.priceMax());
         range(sql, "v.engine_size_cc", f.engineSizeMin(), f.engineSizeMax());
         eq(sql, "v.currency_code", f.currency());
@@ -289,7 +415,12 @@ public class VehicleRepository {
         eq(sql, "v.transmission", f.transmission());
         eq(sql, "v.body_type", f.bodyType());
         eq(sql, "v.condition_key", f.condition());
+        eq(sql, "v.drive_type", f.driveType());
+        eq(sql, "v.seats", f.seats());
+        eq(sql, "v.doors", f.doors());
+        range(sql, "v.registration_year", f.registrationYearMin(), f.registrationYearMax());
         eq(sql, "v.country_id", f.countryId());
+        eq(sql, "v.business_listing_id", f.businessListingId());
         if (f.communityId() != null) {
             sql.add("AND (v.community_id=? OR EXISTS(SELECT 1 FROM vehicle_listing_communities fc "
                     + "WHERE fc.vehicle_listing_id=v.id AND fc.community_id=?))",
@@ -307,24 +438,10 @@ public class VehicleRepository {
         }
         f.attributeFilters().forEach((key, value) -> sql.add("AND v.additional_attributes @> ?::jsonb",
                 json(Map.of(key, jsonScalar(value)))));
-        addDiscoveryCursor(sql, f, cursor);
-        sql.add(switch (f.sort()) {
-            case "PRICE_ASC" -> "ORDER BY v.price_amount ASC,v.id ASC";
-            case "PRICE_DESC" -> "ORDER BY v.price_amount DESC,v.id DESC";
-            case "DISTANCE" -> "ORDER BY distance_meters ASC,v.id ASC";
-            default -> "ORDER BY v.published_at DESC,v.id DESC";
-        });
-        sql.add("LIMIT ?", limit + 1);
-        List<VehicleListing> rows = jdbc.query(sql.sql.toString(), this::row, sql.args.toArray());
-        return page(rows, limit, v -> switch (f.sort()) {
-            case "PRICE_ASC", "PRICE_DESC" -> v.priceAmount().toPlainString();
-            case "DISTANCE" -> Double.toString(v.distanceMeters());
-            default -> v.publishedAt().toString();
-        });
     }
 
     public VehicleQueryResult owned(UUID viewer, Collection<UUID> businessIds, UUID businessFilter,
-            String status, VehicleCursor cursor, int limit) {
+            UUID businessListingId, String status, VehicleCursor cursor, int limit) {
         Sql sql = new Sql(select("NULL::double precision"));
         sql.args.add(viewer);
         sql.add("WHERE v.status<>'REMOVED' AND (v.owner_user_id=?"
@@ -332,6 +449,7 @@ public class VehicleRepository {
                 + placeholders(businessIds.size()) + ")") + ")", viewer);
         sql.args.addAll(businessIds);
         eq(sql, "v.business_account_id", businessFilter);
+        eq(sql, "v.business_listing_id", businessListingId);
         eq(sql, "v.status", status);
         addCursor(sql, "OWNED", cursor);
         sql.add("ORDER BY v.created_at DESC,v.id DESC LIMIT ?", limit + 1);

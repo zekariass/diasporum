@@ -24,6 +24,7 @@ public class ProfileProjections {
                 row.maritalStatus(), row.hasChildren(), row.wantsChildren(), row.smoking(),
                 row.drinking(), row.activityLevel(), row.heightCm(), row.marriageTimeline(),
                 row.longDistanceRelationship(), row.religionImportance(),
-                row.willingToRelocate(), row.verificationStatus());
+                row.willingToRelocate(), row.verificationStatus(), row.bio(), row.publicLocation(),
+                row.interests(), row.languages(), row.nameVisibility(), row.photoVisibility());
     }
 }

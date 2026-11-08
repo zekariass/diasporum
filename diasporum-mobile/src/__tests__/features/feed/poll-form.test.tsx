@@ -15,6 +15,7 @@ import type { CategoryView, Poll } from "@/features/feed/types/feed-types";
 let mockPickerDate: Date | null = null;
 
 jest.mock("@/global.css", () => ({}));
+jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
 jest.mock("@react-native-community/datetimepicker", () => {
   const ReactActual = jest.requireActual<typeof import("react")>("react");
   const { Pressable } = jest.requireActual<typeof import("react-native")>("react-native");
@@ -103,7 +104,7 @@ describe("PollForm validation and request mapping", () => {
       categoryId: "category-1",
       question: "Which venue?",
       options: ["Hall", "Park"],
-      maxOptions: 10,
+      maxOptions: 20,
       closesAt: value.closesAt,
       allowMultiple: true,
       allowVoteChange: false,
@@ -145,6 +146,7 @@ describe("PollForm validation and request mapping", () => {
     expect(pollFormValueFromPoll(poll)).toEqual(validValue({
       question: "Which venue?",
       categoryId: "",
+      maxOptions: 10, // comes from the poll, not the 20-option create default
       options: ["Hall", "Park"],
       closesAt: null,
       allowMultiple: true,
@@ -171,14 +173,14 @@ describe("PollForm interactions", () => {
     await fireEvent(screen.getByLabelText("Allow vote changes"), "valueChange", true);
     await fireEvent(screen.getByLabelText("Allow vote withdrawal"), "valueChange", true);
     await fireEvent(screen.getByLabelText("Anonymous voting"), "valueChange", true);
-    await fireEvent.press(screen.getByLabelText("Results immediate"));
+    await fireEvent.press(screen.getByLabelText("Results immediately"));
     await fireEvent.press(screen.getByLabelText("Show poll preview"));
 
     expect(screen.queryByLabelText("Option 3 (required)")).toBeNull();
     expect(screen.getByTestId("poll-preview")).toBeTruthy();
     expect(screen.getByText("Best venue?")).toBeTruthy();
-    expect(screen.getByText("☐ Hall")).toBeTruthy();
-    expect(screen.getByText(/Multiple selections · Results immediate/)).toBeTruthy();
+    expect(screen.getByText("Hall")).toBeTruthy();
+    expect(screen.getByText(/0 voters · 0 votes/)).toBeTruthy();
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
       categoryId: "category-1",
       options: ["Hall", "Park"],
@@ -191,10 +193,13 @@ describe("PollForm interactions", () => {
   });
 
   it("enforces the configured option maximum", async () => {
-    await render(<Harness initial={validValue({ maxOptions: 2, closesAt: null })} />);
+    const atCap = await render(
+      <Harness initial={validValue({ maxOptions: 2, closesAt: null })} />
+    );
     expect(screen.queryByLabelText("Add poll option")).toBeNull();
+    await atCap.unmount();
 
-    await fireEvent.changeText(screen.getByLabelText("Maximum options"), "3");
+    await render(<Harness initial={validValue({ maxOptions: 3, closesAt: null })} />);
     await fireEvent.press(screen.getByLabelText("Add poll option"));
     expect(screen.getByLabelText("Option 3 (required)")).toBeTruthy();
     expect(screen.queryByLabelText("Add poll option")).toBeNull();
@@ -220,7 +225,7 @@ describe("PollForm interactions", () => {
     expect(screen.getByText(/locked after the first vote/)).toBeTruthy();
     expect(screen.getByLabelText("Question (required)")).toBeEnabled();
     expect(screen.getByLabelText("Option 1 (required)")).not.toBeEnabled();
-    expect(screen.getByLabelText("Maximum options")).not.toBeEnabled();
+    expect(screen.queryByLabelText("Maximum options")).toBeNull();
     expect(screen.getByLabelText("Allow multiple selections").props.disabled).toBe(true);
     expect(screen.getByLabelText("Add closing date and time").props.disabled).toBe(true);
     expect(screen.queryByLabelText("Add poll option")).toBeNull();
@@ -233,6 +238,6 @@ describe("PollForm interactions", () => {
     expect(screen.getByText("Closed or expired polls are read-only.")).toBeTruthy();
     expect(screen.getByLabelText("Question (required)")).not.toBeEnabled();
     expect(screen.getByLabelText("Choose closing date")).not.toBeEnabled();
-    expect(screen.getByLabelText("Results immediate")).not.toBeEnabled();
+    expect(screen.getByLabelText("Results immediately")).not.toBeEnabled();
   });
 });

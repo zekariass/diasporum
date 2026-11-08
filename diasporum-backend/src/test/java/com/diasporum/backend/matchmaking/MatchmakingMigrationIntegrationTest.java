@@ -49,8 +49,18 @@ class MatchmakingMigrationIntegrationTest {
                 + " WHERE user_a_id=least(?::uuid,?::uuid) AND user_b_id=greatest(?::uuid,?::uuid)",
                 Integer.class, a, b, a, b));
 
-        int migrations = Flyway.configure().dataSource(dataSource).load().migrate().migrationsExecuted;
-        assertEquals(6, migrations);
+        Flyway.configure().dataSource(dataSource).target("14").load().migrate();
+        jdbc.update("UPDATE profiles SET date_of_birth='1990-01-01',age_eligibility_confirmed_at=NULL WHERE id IN (?,?)", a, b);
+        Flyway.configure().dataSource(dataSource).target("15").load().migrate();
+        assertTrue(Boolean.TRUE.equals(jdbc.queryForObject("SELECT age_eligibility_confirmed_at IS NOT NULL FROM profiles WHERE id=?", Boolean.class, a)));
+        jdbc.update("UPDATE profiles SET age_eligibility_confirmed_at=(SELECT installed_on AT TIME ZONE current_setting('TIMEZONE') + INTERVAL '1 second' FROM flyway_schema_history WHERE version='15') WHERE id=?", b);
+        var upgraded = Flyway.configure().dataSource(dataSource).load();
+        assertTrue(upgraded.migrate().migrationsExecuted > 0);
+        assertEquals(0, upgraded.info().pending().length);
+        assertTrue(Boolean.TRUE.equals(jdbc.queryForObject("SELECT age_eligibility_confirmed_at IS NULL AND date_of_birth='1990-01-01' FROM profiles WHERE id=?", Boolean.class, a)));
+        assertTrue(Boolean.TRUE.equals(jdbc.queryForObject("SELECT age_eligibility_confirmed_at IS NOT NULL FROM profiles WHERE id=?", Boolean.class, b)));
+        assertTrue(Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM"
+                + " pg_proc WHERE proname='matchmaking_chat_is_accessible')", Boolean.class)));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM friendships"
                 + " WHERE user_a_id=least(?::uuid,?::uuid) AND user_b_id=greatest(?::uuid,?::uuid)",
                 Integer.class, a, b, a, b));

@@ -23,7 +23,8 @@ import org.springframework.web.server.ResponseStatusException;
 class PropertyRepository {
 
     static final String COLS = "p.id,p.country_id,p.community_id,p.owner_user_id,"
-            + "p.business_account_id,p.created_by_user_id,p.property_type_id,"
+            + "p.business_account_id,p.business_listing_id,p.created_by_user_id,"
+            + "p.property_type_id,"
             + "p.visibility_scope::text,p.listing_purpose,p.title,p.description,"
             + "p.additional_attributes::text AS attributes,p.price_amount,"
             + "p.currency_code,p.price_period,p.bedrooms,p.bathrooms,"
@@ -34,10 +35,18 @@ class PropertyRepository {
 
     static final String LIST_COLS = COLS + ",t.type_key,"
             + "COALESCE(cpt.local_name,t.default_name) AS type_name,"
+            + "(SELECT name FROM countries WHERE id=p.country_id) AS country_name,"
             + "a.city,a.region,ST_Y(a.discovery_location::geometry) AS discovery_lat,"
             + "ST_X(a.discovery_location::geometry) AS discovery_lng,"
             + "(SELECT pm.media_id FROM property_listing_media pm"
-            + " WHERE pm.property_listing_id=p.id AND pm.is_cover LIMIT 1) AS cover_media_id";
+            + " WHERE pm.property_listing_id=p.id AND pm.is_cover LIMIT 1) AS cover_media_id,"
+            + "(SELECT count(*) FROM user_content_views v"
+            + " WHERE v.content_type='PROPERTY' AND v.content_id=p.id) AS view_count,"
+            + "(SELECT count(*) FROM direct_conversations dc"
+            + " WHERE dc.context_type='PROPERTY_LISTING' AND dc.context_id=p.id)"
+            + " AS enquiry_count,"
+            + "(SELECT count(*) FROM property_listing_saves s2"
+            + " WHERE s2.property_listing_id=p.id) AS save_count";
 
     static final String LIST_FROM = " FROM property_listings p"
             + " JOIN property_types t ON t.id=p.property_type_id"
@@ -82,20 +91,22 @@ class PropertyRepository {
     Listed listed(ResultSet rs, int ignored) throws SQLException {
         Double lat = rs.getObject("discovery_lat", Double.class);
         Double lng = rs.getObject("discovery_lng", Double.class);
-        PublicLocation location = lat == null || lng == null ? null
-                : new PublicLocation(rs.getString("city"), rs.getString("region"),
-                        lat, lng);
+        String city = rs.getString("city");
+        String region = rs.getString("region");
+        PublicLocation location = new PublicLocation(city, region, lat, lng, rs.getString("country_name"));
         return new Listed(row(rs, 0), new PropertyTypeView(
                 rs.getObject("property_type_id", UUID.class), rs.getString("type_key"),
                 rs.getString("type_name")), location,
                 rs.getObject("cover_media_id", UUID.class), rs.getBoolean("saved"),
-                instant(rs, "cursor_time"));
+                rs.getLong("view_count"), rs.getLong("enquiry_count"),
+                rs.getLong("save_count"), instant(rs, "cursor_time"));
     }
 
     PropertyItem item(UUID viewer, Listed listed) {
         return new PropertyItem(listed.property(), listed.propertyType(),
                 listed.location(), listed.coverMediaId(), listed.saved(),
-                authorization.canManage(viewer, listed.property()));
+                authorization.canManage(viewer, listed.property()), listed.viewCount(),
+                listed.enquiryCount(), listed.saveCount());
     }
 
     Optional<Listed> findListed(UUID viewer, UUID id) {
@@ -145,6 +156,7 @@ class PropertyRepository {
                 rs.getObject("community_id", UUID.class),
                 rs.getObject("owner_user_id", UUID.class),
                 rs.getObject("business_account_id", UUID.class),
+                rs.getObject("business_listing_id", UUID.class),
                 rs.getObject("created_by_user_id", UUID.class),
                 rs.getObject("property_type_id", UUID.class),
                 rs.getString("visibility_scope"), rs.getString("listing_purpose"),

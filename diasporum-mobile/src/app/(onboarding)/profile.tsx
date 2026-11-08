@@ -20,6 +20,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -27,17 +28,21 @@ import { PrimaryButton } from '@/shared/components/primary-button';
 import { OnboardingHeader } from '@/shared/components/onboarding-header';
 import { FormInput } from '@/shared/components/form-input';
 import { BrandColors } from '@/shared/theme/colors';
-import { Spacing } from '@/shared/theme/spacing';
+import { BorderRadius, Spacing } from '@/shared/theme/spacing';
 import { useOnboarding } from '@/features/onboarding/hooks/use-onboarding';
 import { createProfileApi } from '@/features/profile/services/profile-api';
 import { useSession } from '@/core/session/session-provider';
+import { useTheme } from '@/hooks/use-theme';
 import { ApiError } from '@/core/api/api-error';
+import { DobSelect } from '@/shared/components/dob-select';
+import { formatDob, toIsoDate } from '@/shared/utils/date-of-birth';
 
 const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
 const BIO_MAX = 160;
 
 export default function ProfileInfoScreen() {
   const router = useRouter();
+  const theme = useTheme();
   const { apiClient } = useSession();
   const { session, updateProfile } = useOnboarding();
 
@@ -46,6 +51,10 @@ export default function ProfileInfoScreen() {
   );
   const [username, setUsername] = useState(session?.profile?.username ?? '');
   const [bio, setBio] = useState(session?.profile?.bio ?? '');
+  // DOB is one-time immutable: when a value exists it renders read-only and
+  // is never re-sent (the backend rejects a second write with 409 anyway).
+  const dobStored = Boolean(session?.profile?.dateOfBirth);
+  const [dob, setDob] = useState(session?.profile?.dateOfBirth ?? '');
 
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoMime, setPhotoMime] = useState<string>('image/jpeg');
@@ -164,11 +173,15 @@ export default function ProfileInfoScreen() {
         displayName: displayName.trim(),
         username: username.trim(),
         bio: bio.trim() || undefined,
+        ...(dob && !dobStored ? { dateOfBirth: dob } : {}),
         ...(avatarMediaId ? { avatarMediaId } : {}),
       });
       router.push('/(onboarding)/complete' as never);
     } catch (err) {
-      if (ApiError.isApiError(err) && err.httpStatus === 409) {
+      if (ApiError.isApiError(err) && err.httpStatus === 409
+          && /DATE_OF_BIRTH/i.test(err.message ?? '')) {
+        setSaveError('Your date of birth is already set and cannot be changed.');
+      } else if (ApiError.isApiError(err) && err.httpStatus === 409) {
         setErrors((e) => ({ ...e, username: 'This username is taken.' }));
       } else {
         setSaveError(
@@ -300,6 +313,31 @@ export default function ProfileInfoScreen() {
                   {bio.length}/{BIO_MAX}
                 </ThemedText>
               </View>
+
+              {/* Date of birth — required for Dating eligibility (18+),
+                  one-time immutable once stored. */}
+              <View>
+                <ThemedText style={styles.dobLabel}>
+                  Date of birth{dobStored ? '' : ' (optional)'}
+                </ThemedText>
+                {dobStored ? (
+                  <View
+                    style={[styles.dobInput, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
+                    accessibilityLabel={`Date of birth, ${formatDob(dob)}`}>
+                    <ThemedText style={styles.dobValue}>{formatDob(dob)}</ThemedText>
+                    <Ionicons name="lock-closed-outline" size={16} color={theme.textSecondary} />
+                  </View>
+                ) : (
+                  <DobSelect
+                    value={dob ? new Date(`${dob}T00:00:00`) : null}
+                    onChange={(date) => setDob(date ? toIsoDate(date) : '')} />
+                )}
+                <ThemedText style={styles.dobHint} themeColor="textSecondary">
+                  {dobStored
+                    ? "Date of birth can't be changed."
+                    : 'Required for Dating — members must be 18 or older. Set once, cannot be changed.'}
+                </ThemedText>
+              </View>
             </View>
 
             {saveError ? (
@@ -373,4 +411,17 @@ const styles = StyleSheet.create({
   legal: { fontSize: 12, lineHeight: 18, textAlign: 'center' },
   legalLink: { color: BrandColors.primary, fontWeight: '600' },
   cta: { marginTop: Spacing.one },
+  dobLabel: { fontSize: 14, fontWeight: '600', marginBottom: Spacing.one },
+  dobInput: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two + 2,
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dobValue: { fontSize: 15 },
+  dobHint: { fontSize: 12, lineHeight: 16, marginTop: 4 },
 });

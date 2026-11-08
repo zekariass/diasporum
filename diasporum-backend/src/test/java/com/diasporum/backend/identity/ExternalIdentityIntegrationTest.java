@@ -164,7 +164,7 @@ class ExternalIdentityIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}"))
                 .andExpect(status().isCreated()).andReturn();
-        return UUID.fromString(JSON.readTree(r.getResponse().getContentAsString()).get("userId").asText());
+        return UUID.fromString(JSON.readTree(r.getResponse().getContentAsString()).get("userId").asString());
     }
 
     private JsonNode passwordLogin(String email) throws Exception {
@@ -190,7 +190,7 @@ class ExternalIdentityIntegrationTest {
     void googleNewVerifiedEmailCreatesActiveAccountAndSession() throws Exception {
         String token = googleToken("g-sub-1", "newuser@diasporum.test", true);
         JsonNode res = externalLogin("google", token);
-        UUID userId = UUID.fromString(res.get("userId").asText());
+        UUID userId = UUID.fromString(res.get("userId").asString());
 
         assertEquals("ACTIVE", statusOf(userId));
         assertNotNull(jdbc.queryForObject(
@@ -198,7 +198,7 @@ class ExternalIdentityIntegrationTest {
         assertEquals(1, externalIdentitiesFor(userId));
         String method = jdbc.queryForObject(
                 "SELECT authentication_method FROM user_sessions WHERE id=?",
-                String.class, UUID.fromString(res.get("sessionId").asText()));
+                String.class, UUID.fromString(res.get("sessionId").asString()));
         assertEquals("GOOGLE", method);
     }
 
@@ -207,7 +207,7 @@ class ExternalIdentityIntegrationTest {
         String token = googleToken("g-sub-repeat", "repeat@diasporum.test", true);
         JsonNode first = externalLogin("google", token);
         JsonNode second = externalLogin("google", token);
-        assertEquals(first.get("userId").asText(), second.get("userId").asText());
+        assertEquals(first.get("userId").asString(), second.get("userId").asString());
         // last_login_at updated
         assertNotNull(jdbc.queryForObject(
                 "SELECT last_login_at FROM external_identities WHERE issuer=? AND subject=?",
@@ -222,7 +222,7 @@ class ExternalIdentityIntegrationTest {
         jdbc.update("UPDATE users SET account_status='ACTIVE',email_verified_at=now() WHERE id=?", userId);
 
         JsonNode res = externalLogin("google", googleToken("g-link-1", e, true));
-        assertEquals(userId.toString(), res.get("userId").asText());
+        assertEquals(userId.toString(), res.get("userId").asString());
         assertEquals(1, externalIdentitiesFor(userId));
     }
 
@@ -237,7 +237,7 @@ class ExternalIdentityIntegrationTest {
         // provider-verified email proves ownership → link + activate instead of
         // duplicate INSERT (which would hit ux_users_email_normalized → 500)
         JsonNode res = externalLogin("google", googleToken("g-pending-1", e, true));
-        assertEquals(userId.toString(), res.get("userId").asText());
+        assertEquals(userId.toString(), res.get("userId").asString());
         assertEquals("ACTIVE", statusOf(userId));
         assertEquals(1, externalIdentitiesFor(userId));
     }
@@ -293,12 +293,12 @@ class ExternalIdentityIntegrationTest {
     void applePrivateRelayEmailCreatesAccount() throws Exception {
         String relayEmail = "abc123@privaterelay.appleid.com";
         JsonNode res = externalLogin("apple", appleToken("apple-sub-1", relayEmail, true));
-        UUID userId = UUID.fromString(res.get("userId").asText());
+        UUID userId = UUID.fromString(res.get("userId").asString());
         assertEquals("ACTIVE", statusOf(userId));
         assertEquals(1, externalIdentitiesFor(userId));
         String method = jdbc.queryForObject(
                 "SELECT authentication_method FROM user_sessions WHERE id=?",
-                String.class, UUID.fromString(res.get("sessionId").asText()));
+                String.class, UUID.fromString(res.get("sessionId").asString()));
         assertEquals("APPLE", method);
     }
 
@@ -310,7 +310,7 @@ class ExternalIdentityIntegrationTest {
         UUID userId = registerPasswordUser(e);
         jdbc.update("UPDATE users SET account_status='ACTIVE' WHERE id=?", userId);
         JsonNode session = passwordLogin(e);
-        String at = session.get("accessToken").asText();
+        String at = session.get("accessToken").asString();
 
         // link google identity (different email is fine — explicit user action)
         mvc.perform(post("/api/v1/auth/link/google").header("Authorization", "Bearer " + at)
@@ -324,7 +324,7 @@ class ExternalIdentityIntegrationTest {
         registerPasswordUser(e2);
         jdbc.update("UPDATE users SET account_status='ACTIVE' WHERE email_normalized=?", e2);
         JsonNode s2 = passwordLogin(e2);
-        mvc.perform(post("/api/v1/auth/link/google").header("Authorization", "Bearer " + s2.get("accessToken").asText())
+        mvc.perform(post("/api/v1/auth/link/google").header("Authorization", "Bearer " + s2.get("accessToken").asString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"idToken\":\"" + googleToken("g-linked", e, true) + "\"}"))
                 .andExpect(status().isConflict())
@@ -332,15 +332,15 @@ class ExternalIdentityIntegrationTest {
 
         // linked identity can now log in via google
         JsonNode ext = externalLogin("google", googleToken("g-linked", e, true));
-        assertEquals(userId.toString(), ext.get("userId").asText());
+        assertEquals(userId.toString(), ext.get("userId").asString());
     }
 
     @Test
     void unlinkOwnIdentityWorksAndLastMethodIsProtected() throws Exception {
         // OAuth-only user — only sign-in method is the external identity
         JsonNode res = externalLogin("google", googleToken("g-only", "oauthonly@diasporum.test", true));
-        UUID userId = UUID.fromString(res.get("userId").asText());
-        String at = res.get("accessToken").asText();
+        UUID userId = UUID.fromString(res.get("userId").asString());
+        String at = res.get("accessToken").asString();
         UUID extId = jdbc.queryForObject(
                 "SELECT id FROM external_identities WHERE user_id=?", UUID.class, userId);
 
@@ -361,13 +361,13 @@ class ExternalIdentityIntegrationTest {
                 "SELECT id FROM external_identities WHERE user_id=?", UUID.class, pwUser);
         JsonNode pwSession = passwordLogin(e);
         mvc.perform(delete("/api/v1/auth/link/" + ext2)
-                        .header("Authorization", "Bearer " + pwSession.get("accessToken").asText()))
+                        .header("Authorization", "Bearer " + pwSession.get("accessToken").asString()))
                 .andExpect(status().isNoContent());
         assertEquals(0, externalIdentitiesFor(pwUser));
 
         // unlinking another user's identity is a silent no-op
         mvc.perform(delete("/api/v1/auth/link/" + extId)
-                        .header("Authorization", "Bearer " + pwSession.get("accessToken").asText()))
+                        .header("Authorization", "Bearer " + pwSession.get("accessToken").asString()))
                 .andExpect(status().isNoContent());
         assertEquals(1, externalIdentitiesFor(userId)); // untouched
     }
@@ -375,7 +375,7 @@ class ExternalIdentityIntegrationTest {
     @Test
     void suspendedUserCannotLoginViaLinkedExternalIdentity() throws Exception {
         JsonNode res = externalLogin("google", googleToken("g-susp", "susp@diasporum.test", true));
-        UUID userId = UUID.fromString(res.get("userId").asText());
+        UUID userId = UUID.fromString(res.get("userId").asString());
 
         jdbc.update("UPDATE users SET account_status='SUSPENDED' WHERE id=?", userId);
 

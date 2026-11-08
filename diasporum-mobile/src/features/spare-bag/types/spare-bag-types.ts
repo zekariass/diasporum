@@ -19,6 +19,7 @@ export type ContactStatus =
   | "CLOSED";
 export type PriceUnit = "PER_KG" | "PER_PARCEL";
 export type ContactDirection = "INCOMING" | "OUTGOING";
+export type DiscoverySort = "TRAVEL_DATE" | "NEWEST";
 
 export interface Airport {
   id: string;
@@ -41,6 +42,7 @@ export interface Owner {
   id: string;
   username: string;
   displayName: string | null;
+  avatarMediaId: string | null;
 }
 
 export interface Address {
@@ -135,6 +137,14 @@ export interface DiscoveryFilters {
   minimumCapacityKg?: string;
   priceCurrency?: string;
   categoryKey?: string;
+  maxWeightKg?: string;
+  sort?: DiscoverySort;
+}
+
+/** Per-type totals returned by the discovery counts endpoint. */
+export interface ListingCounts {
+  passengerOffers: number;
+  senderRequests: number;
 }
 
 export interface ContactRequestInput {

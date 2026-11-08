@@ -6,6 +6,7 @@ import com.diasporum.backend.community.CommunityApi;
 import com.diasporum.backend.identity.IdentityApi;
 import com.diasporum.backend.identity.IdentityApi.ProfileSummary;
 import com.diasporum.backend.media.MediaApi;
+import com.diasporum.backend.moderation.ModerationApi;
 import com.diasporum.backend.social.SocialApi;
 import com.diasporum.backend.taxonomy.TaxonomyApi;
 import com.diasporum.backend.taxonomy.TaxonomyApi.CommunityView;
@@ -45,9 +46,6 @@ public class EventService {
     private static final Set<String> MODES = Set.of("IN_PERSON", "ONLINE_EXTERNAL");
     private static final Set<String> RSVP_INPUTS = Set.of("GOING", "INTERESTED",
             "NOT_GOING");
-    private static final Set<String> REPORT_REASONS = Set.of("SPAM", "SCAM",
-            "HARASSMENT", "HATE", "SEXUAL_MISCONDUCT", "MISINFORMATION",
-            "IMPERSONATION", "PRIVACY", "OTHER");
     private static final int DEFAULT_PAGE = 20;
     private static final int MAX_PAGE = 50;
 
@@ -58,10 +56,13 @@ public class EventService {
     private final MediaApi media;
     private final SocialApi social;
     private final BusinessAccountsApi businessAccounts;
+    private final ModerationApi moderation;
+    private final EventNotifications notifications;
 
     public EventService(JdbcTemplate jdbc, IdentityApi identity,
             CommunityApi community, TaxonomyApi taxonomy, MediaApi media,
-            SocialApi social, BusinessAccountsApi businessAccounts) {
+            SocialApi social, BusinessAccountsApi businessAccounts,
+            ModerationApi moderation, EventNotifications notifications) {
         this.jdbc = jdbc;
         this.identity = identity;
         this.community = community;
@@ -69,6 +70,8 @@ public class EventService {
         this.media = media;
         this.social = social;
         this.businessAccounts = businessAccounts;
+        this.moderation = moderation;
+        this.notifications = notifications;
     }
 
     // =================== row types ===================
@@ -120,7 +123,7 @@ public class EventService {
             + "e.published_at,e.cancelled_at,e.cancel_reason,e.created_at,"
             + "e.updated_at,(SELECT em.media_id FROM event_media em"
             + " WHERE em.event_id=e.id AND em.is_cover LIMIT 1) AS cover_media_id,"
-            + "e.voice_room_id";
+            + "e.linked_voice_room_id AS voice_room_id";
 
     private static EventRow event(java.sql.ResultSet rs, int i)
             throws java.sql.SQLException {
@@ -195,6 +198,19 @@ public class EventService {
                 .orElseThrow(() -> bad("INVALID_CATEGORY"));
     }
 
+    /** Display lookup — tolerant of a category that was deactivated or
+     * re-scoped after the event was created; detail must never 400 on it. */
+    private CategoryRow categoryForDisplay(UUID categoryId) {
+        return jdbc.query("SELECT id,country_id,category_key,display_name,"
+                        + "sort_order FROM event_categories WHERE id=?",
+                        (rs, i) -> new CategoryRow(rs.getObject("id", UUID.class),
+                                rs.getObject("country_id", UUID.class),
+                                rs.getString("category_key"),
+                                rs.getString("display_name"),
+                                rs.getInt("sort_order")), categoryId)
+                .stream().findFirst().orElse(null);
+    }
+
     // =================== authorization ===================
 
     /** True if the actor owns the event personally or through a business
@@ -212,9 +228,10 @@ public class EventService {
         return false;
     }
 
-    /** Visibility rule: community events need active membership; country-scope
-     * events are visible to users whose current country matches; managers
-     * always see their own events, including drafts. */
+    /** Visibility rule: community-scope events need active membership in the
+     * event's community; country-scope events need a matching current country —
+     * the destination country is the hard boundary and community membership
+     * never broadens it. Managers always see their own events, incl. drafts. */
     public boolean canView(UUID viewer, EventRow e) {
         if ("DELETED".equals(e.status())) {
             return false;
@@ -225,9 +242,9 @@ public class EventService {
         if (!"PUBLISHED".equals(e.status())) {
             return false;
         }
-        if (e.communityId() != null
-                && community.canAccess(viewer, e.communityId())) {
-            return true;
+        if ("COMMUNITY".equals(e.visibilityScope())) {
+            return e.communityId() != null
+                    && community.canAccess(viewer, e.communityId());
         }
         if ("COUNTRY".equals(e.visibilityScope())) {
             var p = identity.profileSummary(viewer).orElse(null);
@@ -417,9 +434,10 @@ public class EventService {
     @Transactional
     public EventItem update(UUID actor, UUID eventId, String visibilityScope,
             String title, String description, String eventMode, Instant startsAt,
-            Instant endsAt, String timezone, String locationName,
-            String externalUrl, Integer capacity, UUID categoryId,
-            UUID countryTopicCategoryId, UUID coverMediaId, boolean clearCover) {
+            Instant endsAt, boolean clearEndsAt, String timezone,
+            String locationName, String externalUrl, Integer capacity,
+            UUID categoryId, UUID countryTopicCategoryId,
+            boolean clearCountryTopic, UUID coverMediaId, boolean clearCover) {
         var e = requireManagedLocked(actor, eventId);
         if (e.cancelledAt() != null) {
             throw conflict("EVENT_CANCELLED");
@@ -431,7 +449,7 @@ public class EventService {
         validateVisibilityChange(actor, e, visibilityScope);
         Instant now = Instant.now();
         boolean started = e.startsAt() != null && e.startsAt().isBefore(now);
-        boolean reschedules = startsAt != null || endsAt != null;
+        boolean reschedules = startsAt != null || endsAt != null || clearEndsAt;
         // Raising capacity only adds spots — never a reason to block an
         // already-started event (waitlisted participants get promoted).
         boolean raisesCapacity = capacity != null
@@ -445,7 +463,8 @@ public class EventService {
         String newDescription = description != null ? description : e.description();
         String newMode = eventMode != null ? eventMode : e.eventMode();
         Instant newStarts = startsAt != null ? startsAt : e.startsAt();
-        Instant newEnds = endsAt != null ? endsAt : e.endsAt();
+        Instant newEnds = clearEndsAt ? null
+                : (endsAt != null ? endsAt : e.endsAt());
         String newTz = timezone != null ? timezone : e.timezone();
         String newLocation = locationName != null ? locationName : e.locationName();
         String newUrl = externalUrl != null ? externalUrl : e.externalUrl();
@@ -473,11 +492,16 @@ public class EventService {
                 throw conflict("CAPACITY_BELOW_PARTICIPANTS");
             }
         }
+        // A category change is re-validated; an event whose category was
+        // deactivated after creation stays editable in its other fields.
         UUID newCategory = categoryId != null ? categoryId : e.categoryId();
-        requireCategory(newCategory, e.countryId());
-        UUID newTopic = countryTopicCategoryId != null ? countryTopicCategoryId
-                : e.countryTopicCategoryId();
-        if (newTopic != null
+        if (categoryId != null) {
+            requireCategory(categoryId, e.countryId());
+        }
+        UUID newTopic = clearCountryTopic ? null
+                : (countryTopicCategoryId != null ? countryTopicCategoryId
+                        : e.countryTopicCategoryId());
+        if (newTopic != null && !newTopic.equals(e.countryTopicCategoryId())
                 && !taxonomy.isCategoryActiveInCountry(newTopic, e.countryId(),
                         "EVENT")) {
             throw bad("INVALID_COUNTRY_TOPIC");
@@ -496,12 +520,41 @@ public class EventService {
         // while seats remain. The row lock held for this transaction keeps
         // concurrent RSVP writers out until the promotion is done.
         if (newCapacity != null && raisesCapacity) {
-            promoteWaitlistToCapacity(eventId, newCapacity);
+            notifications.promoted(e,
+                    promoteWaitlistToCapacity(eventId, newCapacity));
+        }
+        // Participants hear about meaningful schedule/venue changes on a
+        // published event; content edits and capacity raises are silent.
+        if ("PUBLISHED".equals(e.status()) && changedSignificantly(e, newMode,
+                newStarts, newEnds, newTz, newLocation, newUrl)) {
+            notifications.detailsChanged(e, participantIds(eventId),
+                    changeKey(eventId, newMode, newStarts, newEnds, newTz,
+                            newLocation, newUrl));
         }
         if (coverMediaId != null || clearCover) {
             replaceCover(eventId, clearCover ? null : coverMediaId, actor);
         }
         return detail(actor, eventId);
+    }
+
+    private static boolean changedSignificantly(EventRow e, String newMode,
+            Instant newStarts, Instant newEnds, String newTz, String newLocation,
+            String newUrl) {
+        return !java.util.Objects.equals(e.eventMode(), newMode)
+                || !java.util.Objects.equals(e.startsAt(), newStarts)
+                || !java.util.Objects.equals(e.endsAt(), newEnds)
+                || !java.util.Objects.equals(e.timezone(), newTz)
+                || !java.util.Objects.equals(e.locationName(), newLocation)
+                || !java.util.Objects.equals(e.externalUrl(), newUrl);
+    }
+
+    /** Deterministic per-resulting-state key — a retried identical change is
+     * deduplicated, a genuinely different change produces a fresh key. */
+    private static String changeKey(UUID eventId, String mode, Instant starts,
+            Instant ends, String tz, String location, String url) {
+        return "event:" + eventId + ":chg:"
+                + Integer.toHexString(java.util.Objects.hash(mode, starts, ends,
+                        tz, location, url));
     }
 
     /** Argument list for the whitelist UPDATE above (visibility optional).
@@ -592,7 +645,7 @@ public class EventService {
 
     @Transactional
     public EventItem publish(UUID actor, UUID eventId) {
-        var e = requireManaged(actor, eventId);
+        var e = requireManagedLocked(actor, eventId);
         if ("DELETED".equals(e.status())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                     "EVENT_NOT_FOUND");
@@ -610,7 +663,7 @@ public class EventService {
 
     @Transactional
     public EventItem cancel(UUID actor, UUID eventId, String reason) {
-        var e = requireManaged(actor, eventId);
+        var e = requireManagedLocked(actor, eventId);
         if ("DELETED".equals(e.status())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                     "EVENT_NOT_FOUND");
@@ -626,15 +679,21 @@ public class EventService {
         }
         jdbc.update("UPDATE events SET cancelled_at=now(),cancel_reason=?,"
                 + "updated_at=now() WHERE id=?", reason, eventId);
+        // Participants are told inside the same transaction; the actor and
+        // other manager-side users are excluded from the fan-out.
+        notifications.cancelled(e, participantIds(eventId), reason);
         return detail(actor, eventId);
     }
 
-    /** Soft delete — only while nobody is GOING or WAITLISTED. */
+    /** Soft delete — before start only, and while nobody is GOING/WAITLISTED. */
     @Transactional
     public void delete(UUID actor, UUID eventId) {
-        var e = requireManaged(actor, eventId);
+        var e = requireManagedLocked(actor, eventId);
         if ("DELETED".equals(e.status())) {
             return;                                   // idempotent
+        }
+        if (e.startsAt() != null && e.startsAt().isBefore(Instant.now())) {
+            throw conflict("EVENT_ALREADY_STARTED");
         }
         int active = rsvpCount(eventId, "GOING")
                 + rsvpCount(eventId, "WAITLISTED");
@@ -649,7 +708,7 @@ public class EventService {
 
     public EventItem detail(UUID viewer, UUID eventId) {
         var e = requireViewable(viewer, eventId);
-        var category = requireCategory(e.categoryId(), e.countryId());
+        var category = categoryForDisplay(e.categoryId());
         var counts = counts(eventId);
         var my = myRsvp(viewer, eventId);
         boolean saved = isSaved(viewer, eventId);
@@ -679,19 +738,28 @@ public class EventService {
      * ordered by starts_at, id.
      */
     public EventPage discover(UUID viewer, UUID communityId, String scope,
-            UUID categoryId, String mode, Instant from, Instant to, String search,
-            String cursor, int size) {
+            UUID categoryId, UUID topicCategoryId, String mode, String location,
+            Instant from, Instant to, String search, String cursor, int size) {
         int limit = clamp(size);
         var args = new ArrayList<Object>();
         args.add(viewer);                              // my.user_id / save join
         args.add(viewer);
         String where = " WHERE e.status='PUBLISHED' AND e.cancelled_at IS NULL";
+        var country = identity.profileSummary(viewer)
+                .map(ProfileSummary::currentCountryId).orElse(null);
         if (communityId != null) {
             if (!community.canAccess(viewer, communityId)) {
                 throw forbidden("NOT_A_MEMBER");
             }
-            where += " AND e.community_id=?";
+            // Community listings still honour the country boundary: members
+            // abroad see the community's COMMUNITY events only.
+            where += " AND e.community_id=? AND (e.visibility_scope='COMMUNITY'";
             args.add(communityId);
+            if (country != null) {
+                where += " OR (e.visibility_scope='COUNTRY' AND e.country_id=?)";
+                args.add(country);
+            }
+            where += ")";
         } else {
             var memberships = community.membershipsOf(viewer);
             String communityFilter;
@@ -700,10 +768,9 @@ public class EventService {
             } else {
                 String ph = String.join(",", java.util.Collections.nCopies(
                         memberships.size(), "?"));
-                communityFilter = "e.community_id IN (" + ph + ")";
+                communityFilter = "e.visibility_scope='COMMUNITY'"
+                        + " AND e.community_id IN (" + ph + ")";
             }
-            var country = identity.profileSummary(viewer)
-                    .map(ProfileSummary::currentCountryId).orElse(null);
             String countryFilter = country == null
                     ? "FALSE" : "e.visibility_scope='COUNTRY' AND e.country_id=?";
             where += " AND (" + countryFilter + " OR " + communityFilter + ")";
@@ -721,9 +788,17 @@ public class EventService {
             where += " AND e.event_category_id=?";
             args.add(categoryId);
         }
+        if (topicCategoryId != null) {
+            where += " AND e.country_topic_category_id=?";
+            args.add(topicCategoryId);
+        }
         if (mode != null && MODES.contains(mode)) {
             where += " AND e.event_mode=?::event_mode";
             args.add(mode);
+        }
+        if (location != null && !location.isBlank()) {
+            where += " AND e.location_name ILIKE ?";
+            args.add("%" + location.trim() + "%");
         }
         Instant effectiveFrom = from != null ? from : Instant.now();
         where += " AND e.starts_at >= ?";
@@ -733,7 +808,8 @@ public class EventService {
             args.add(Timestamp.from(to));
         }
         if (search != null && !search.isBlank()) {
-            where += " AND e.title ILIKE ?";
+            where += " AND (e.title ILIKE ? OR e.description ILIKE ?)";
+            args.add("%" + search.trim() + "%");
             args.add("%" + search.trim() + "%");
         }
         if (cursor != null) {
@@ -767,11 +843,12 @@ public class EventService {
         return page(rows, limit);
     }
 
-    /** Community-specific listing — any scope, membership enforced. */
+    /** Community-specific listing — membership enforced; country-scope rows
+     * remain restricted to viewers in the event's country. */
     public EventPage communityEvents(UUID viewer, UUID communityId,
             String cursor, int size) {
         return discover(viewer, communityId, null, null, null, null, null, null,
-                cursor, size);
+                null, null, cursor, size);
     }
 
     private record Listed(EventRow event, CategoryRow category,
@@ -847,6 +924,10 @@ public class EventService {
         if (e.cancelledAt() != null) {
             throw conflict("EVENT_CANCELLED");
         }
+        // Drafts (manager-visible) reject RSVP too — only published counts.
+        if (!"PUBLISHED".equals(e.status())) {
+            throw conflict("EVENT_NOT_PUBLISHED");
+        }
         if (e.startsAt().isBefore(Instant.now())) {
             throw conflict("EVENT_ALREADY_STARTED");
         }
@@ -866,6 +947,13 @@ public class EventService {
         UUID promoted = null;
         if ("GOING".equals(previous) && !"GOING".equals(assigned)) {
             promoted = promoteFromWaitlist(eventId);
+            if (promoted != null) {
+                notifications.promoted(e, List.of(promoted));
+            }
+        }
+        if (!assigned.equals(previous)) {
+            notifications.rsvpChanged(e, userId, previous, assigned,
+                    participantName(userId));
         }
         return new RsvpResult(assigned, counts(eventId), e.capacity(), promoted);
     }
@@ -886,7 +974,29 @@ public class EventService {
                 eventId, userId);
         UUID promoted = "GOING".equals(previous) ? promoteFromWaitlist(eventId)
                 : null;
+        if (promoted != null) {
+            notifications.promoted(e, List.of(promoted));
+        }
         return new RsvpResult(null, counts(eventId), e.capacity(), promoted);
+    }
+
+    /** Active participant user ids (GOING/INTERESTED/WAITLISTED) — fan-out
+     * target set for cancellation/change notifications. */
+    private List<UUID> participantIds(UUID eventId) {
+        return jdbc.queryForList("SELECT user_id FROM event_rsvps"
+                        + " WHERE event_id=? AND status IN"
+                        + " ('GOING','INTERESTED','WAITLISTED')",
+                UUID.class, eventId);
+    }
+
+    /** Display name for notification bodies; falls back to a neutral label. */
+    private String participantName(UUID userId) {
+        return identity.profileSummary(userId)
+                .map(p -> p.displayName() != null && !p.displayName().isBlank()
+                        ? p.displayName()
+                        : p.username() != null ? "@" + p.username()
+                                : "A participant")
+                .orElse("A participant");
     }
 
     private EventRow lockEvent(UUID eventId) {
@@ -1007,10 +1117,48 @@ public class EventService {
         return n != null && n > 0;
     }
 
-    /** Saved events, newest save first. */
+    /**
+     * Saved events, newest save first. The listing honours the same
+     * authorisation rules as event detail: rows the viewer can no longer see
+     * (lost membership, moved country, unshared draft) are filtered out;
+     * deleted events are excluded; cancelled-but-visible events stay listed.
+     */
     public Map<String, Object> savedEvents(UUID viewer, int page, int size) {
         size = clamp(size);
         page = Math.max(page, 0);
+        var args = new ArrayList<Object>();
+        args.add(viewer);                              // my_rsvp join
+        args.add(viewer);                              // s.user_id
+        args.add(viewer);                              // owner/organizer/creator
+        args.add(viewer);
+        args.add(viewer);
+        var accounts = businessAccounts.membershipsOf(viewer).stream()
+                .map(AccountMembershipView::accountId).toList();
+        String businessFilter = "FALSE";
+        if (!accounts.isEmpty()) {
+            businessFilter = "e.business_account_id IN ("
+                    + String.join(",", java.util.Collections.nCopies(
+                            accounts.size(), "?")) + ")";
+            accounts.forEach(args::add);
+        }
+        var memberships = community.membershipsOf(viewer);
+        String communityFilter = "FALSE";
+        if (!memberships.isEmpty()) {
+            communityFilter = "e.visibility_scope='COMMUNITY'"
+                    + " AND e.community_id IN ("
+                    + String.join(",", java.util.Collections.nCopies(
+                            memberships.size(), "?")) + ")";
+            memberships.forEach(m -> args.add(m.communityId()));
+        }
+        var country = identity.profileSummary(viewer)
+                .map(ProfileSummary::currentCountryId).orElse(null);
+        String countryFilter = "FALSE";
+        if (country != null) {
+            countryFilter = "e.visibility_scope='COUNTRY' AND e.country_id=?";
+            args.add(country);
+        }
+        args.add(size);
+        args.add(page * size);
         var rows = jdbc.query("SELECT " + COLS + ",c.id AS cat_id,"
                         + "c.country_id AS cat_country_id,c.category_key,"
                         + "c.display_name,c.sort_order AS cat_sort,"
@@ -1027,13 +1175,20 @@ public class EventService {
                         + " JOIN event_categories c ON c.id=e.event_category_id"
                         + " LEFT JOIN event_rsvps my ON my.event_id=e.id"
                         + " AND my.user_id=?"
-                        + " WHERE s.user_id=? AND e.status<>'DELETED'"
+                        + " WHERE s.user_id=? AND e.status<>'DELETED' AND ("
+                        + "e.owner_user_id=? OR e.organizer_id=?"
+                        + " OR e.created_by_user_id=? OR " + businessFilter
+                        + " OR (e.status='PUBLISHED' AND (" + communityFilter
+                        + " OR " + countryFilter + ")))"
                         + " ORDER BY s.created_at DESC,s.event_id DESC"
                         + " LIMIT ? OFFSET ?",
                 (rs, i) -> new Listed(event(rs, i), cat(rs), counts(rs),
                         rs.getString("my_rsvp"), true),
-                viewer, viewer, size, page * size);
+                args.toArray());
         return Map.of("items", rows.stream()
+                // The SQL predicate is a superset; canView applies the exact
+                // rule (manager roles, country match, membership state).
+                .filter(r -> canView(viewer, r.event()))
                 .map(r -> new EventItem(r.event(), r.category(), r.counts(),
                         r.myRsvp(), true, canManage(viewer, r.event())))
                 .toList(), "page", page, "size", size);
@@ -1099,35 +1254,20 @@ public class EventService {
                 args.toArray());
         return Map.of("items", rows.stream()
                 .map(r -> new EventItem(r.event(), r.category(), r.counts(),
-                        r.myRsvp(), r.myRsvp() != null && isSaved(viewer,
-                                r.event().id()), true))
+                        r.myRsvp(), isSaved(viewer, r.event().id()),
+                        canManage(viewer, r.event())))
                 .toList(), "page", page, "size", size);
     }
 
     // =================== reporting ===================
 
+    /** Report intake is delegated to the shared moderation boundary — the
+     * events module only authorizes target visibility first. */
     @Transactional
     public UUID report(UUID reporter, UUID eventId, String reason, String details) {
         var e = requireViewable(reporter, eventId);
-        if (reason == null || !REPORT_REASONS.contains(reason)) {
-            throw bad("INVALID_REPORT_REASON");
-        }
-        if (details != null && details.length() > 4000) {
-            throw bad("REPORT_DETAILS_TOO_LONG");
-        }
-        Integer open = jdbc.queryForObject("SELECT count(*) FROM reports"
-                + " WHERE reporter_id=? AND target_type='EVENT' AND target_id=?"
-                + " AND status='OPEN'", Integer.class, reporter, eventId);
-        if (open != null && open > 0) {
-            throw conflict("REPORT_DUPLICATE");
-        }
-        UUID id = UUID.randomUUID();
-        jdbc.update("INSERT INTO reports(id,reporter_id,country_id,community_id,"
-                        + "target_type,target_id,reason,details) VALUES(?,?,?,?,"
-                        + "?::report_target_type,?,?,?)",
-                id, reporter, e.countryId(), e.communityId(), "EVENT", eventId,
-                reason, details);
-        return id;
+        return moderation.report(reporter, "EVENT", eventId, e.countryId(),
+                e.communityId(), reason, details);
     }
 
     // =================== organizer helpers ===================

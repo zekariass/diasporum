@@ -1,0 +1,685 @@
+openapi: 3.1.0
+info:
+  title: Diasporum Community Access and Extended Billing API
+  version: 1.0.0
+  description: >-
+    Contracts added or extended for Default/Extended Community access, action
+    eligibility, audited administration and durable Feed/Help publication replay.
+    The authenticated Diasporum principal is authoritative; client-supplied access
+    types, prices, balances and entitlement decisions are not accepted.
+servers:
+  - url: /
+tags:
+  - name: Community access
+  - name: Feed publication
+  - name: Administration
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/communities/my-access:
+    get:
+      tags: [Community access]
+      summary: Return validated Default and Extended community capabilities
+      operationId: getMyCommunityAccess
+      responses:
+        "200":
+          description: Active memberships with server-derived effective modules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyAccessView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/me/active-community:
+    put:
+      tags: [Community access]
+      summary: Switch the persisted active community after membership validation
+      operationId: setActiveCommunity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                communityId:
+                  $ref: "#/components/schemas/Uuid"
+              required: [communityId]
+      responses:
+        "200":
+          description: Active community updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  communityId:
+                    type: string
+                required: [communityId]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: NOT_A_MEMBER or another community access denial
+  /api/v1/me/community-actions/{actionKey}/eligibility:
+    get:
+      tags: [Community access]
+      summary: Preview an Extended action in the persisted active community
+      description: >-
+        Non-mutating UX preview. The subsequent domain endpoint revalidates access
+        and consumes entitlement transactionally; this response is not authorization.
+      operationId: getCommunityActionEligibility
+      parameters:
+        - name: actionKey
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ExtendedActionKey"
+      responses:
+        "200":
+          description: Server-derived action and Billing decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionEligibility"
+        "400":
+          description: UNKNOWN_EXTENDED_ACTION
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Account, membership, origin, community or module denial
+        "422":
+          description: ACTIVE_COMMUNITY_REQUIRED
+  /api/v1/feed/posts:
+    post:
+      tags: [Feed publication]
+      summary: Publish a Feed post or Reel with optional durable request replay
+      description: >-
+        GENERAL and REEL publications in an Extended Community use their respective
+        Billing features after domain validation. Reels use this same endpoint.
+        Equivalent idempotency-key retries return the original response. Reusing a
+        key with a different payload returns 409 IDEMPOTENCY_KEY_REUSED.
+      operationId: createFeedPost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePostRequest"
+      responses:
+        "200":
+          description: New or replayed publication response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostRow"
+        "400":
+          description: Validation failure or FEED_IDEMPOTENCY_KEY_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Community/module denial or insufficient entitlement
+        "409":
+          description: IDEMPOTENCY_KEY_REUSED
+  /api/v1/feed/community-help:
+    post:
+      tags: [Feed publication]
+      summary: Publish a Community Help REQUEST or OFFER with optional replay
+      description: >-
+        REQUEST publication in an Extended Community uses
+        EXTENDED_COMMUNITY_HELP_REQUEST_PUBLISH. OFFER does not invoke that feature.
+      operationId: createCommunityHelpPost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateHelpPostRequest"
+      responses:
+        "200":
+          description: New or replayed Help publication and lifecycle state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HelpPostResponse"
+        "400":
+          description: Validation failure or FEED_IDEMPOTENCY_KEY_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Community/module denial or insufficient entitlement
+        "409":
+          description: IDEMPOTENCY_KEY_REUSED
+  /api/v1/admin/community-access/modules:
+    get:
+      tags: [Administration]
+      summary: List module flags at global, country or community scope
+      operationId: listCommunityModuleFlags
+      parameters:
+        - name: countryId
+          in: query
+          schema:
+            $ref: "#/components/schemas/Uuid"
+        - name: communityId
+          in: query
+          schema:
+            $ref: "#/components/schemas/Uuid"
+      responses:
+        "200":
+          description: Scoped flags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModuleFlagView"
+        "400":
+          description: INVALID_CONFIGURATION_SCOPE, COUNTRY_NOT_FOUND or COMMUNITY_NOT_FOUND
+        "403":
+          $ref: "#/components/responses/PlatformAdminRequired"
+  /api/v1/admin/community-access/modules/{moduleKey}:
+    put:
+      tags: [Administration]
+      summary: Set an audited module flag at one scope
+      operationId: setCommunityModuleFlag
+      parameters:
+        - name: moduleKey
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScopedEnabledRequest"
+      responses:
+        "200":
+          description: Updated flag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleFlagView"
+        "400":
+          description: UNKNOWN_COMMUNITY_MODULE or invalid scope
+        "403":
+          $ref: "#/components/responses/PlatformAdminRequired"
+  /api/v1/admin/community-access/communities/{communityId}:
+    patch:
+      tags: [Administration]
+      summary: Activate or deactivate a community with an audit record
+      operationId: setCommunityActive
+      parameters:
+        - name: communityId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Uuid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                active:
+                  type: boolean
+              required: [active]
+      responses:
+        "200":
+          description: Community state updated
+        "403":
+          $ref: "#/components/responses/PlatformAdminRequired"
+        "404":
+          description: COMMUNITY_NOT_FOUND
+  /api/v1/admin/billing/extended-features:
+    get:
+      tags: [Administration]
+      summary: List Extended feature entitlements for a plan
+      operationId: listExtendedBillingConfiguration
+      parameters:
+        - name: planKey
+          in: query
+          schema:
+            type: string
+            default: FREE
+      responses:
+        "200":
+          description: Feature catalogue and plan configuration
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FeatureConfigurationView"
+        "400":
+          description: BILLING_PLAN_NOT_FOUND
+        "403":
+          $ref: "#/components/responses/PlatformAdminRequired"
+  /api/v1/admin/billing/extended-features/{featureKey}/plans/{planKey}:
+    put:
+      tags: [Administration]
+      summary: Set an audited plan allowance for an Extended feature
+      operationId: setExtendedBillingEntitlement
+      parameters:
+        - name: featureKey
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ExtendedActionKey"
+        - name: planKey
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetEntitlementRequest"
+      responses:
+        "200":
+          description: Updated feature configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeatureConfigurationView"
+        "400":
+          description: UNKNOWN_EXTENDED_BILLING_FEATURE or INVALID_ENTITLEMENT_QUOTA
+        "403":
+          $ref: "#/components/responses/PlatformAdminRequired"
+  /api/v1/admin/billing/extended-features/{featureKey}/fallback:
+    put:
+      tags: [Administration]
+      summary: Set the unconfigured-free fallback at one scope
+      operationId: setExtendedBillingFallback
+      parameters:
+        - name: featureKey
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ExtendedActionKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetFallbackRequest"
+      responses:
+        "200":
+          description: Fallback updated and audited
+        "400":
+          description: UNKNOWN_EXTENDED_BILLING_FEATURE or INVALID_CONFIGURATION_SCOPE
+        "403":
+          $ref: "#/components/responses/PlatformAdminRequired"
+  /api/v1/admin/billing/usage/{usageRecordId}/reverse:
+    post:
+      tags: [Administration]
+      summary: Reverse successful usage and restore any finite grant
+      operationId: reverseBillingUsage
+      parameters:
+        - name: usageRecordId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Uuid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+              required: [reason]
+      responses:
+        "200":
+          description: Usage reversed without deleting its audit history
+        "400":
+          description: Invalid or already reversed usage
+        "403":
+          $ref: "#/components/responses/PlatformAdminRequired"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    Unauthorized:
+      description: A valid active Diasporum session is required
+    BadRequest:
+      description: Invalid request or community identifier
+    PlatformAdminRequired:
+      description: PLATFORM_ADMIN_REQUIRED; an unrevoked global PLATFORM_ADMIN role is required
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    ExtendedActionKey:
+      type: string
+      enum:
+        - EXTENDED_FEED_POST_PUBLISH
+        - EXTENDED_REEL_PUBLISH
+        - EXTENDED_MATCHMAKING_LIKE
+        - EXTENDED_COMMUNITY_HELP_REQUEST_PUBLISH
+    MyAccessView:
+      type: object
+      properties:
+        defaultCommunityId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        activeCommunityId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        communities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommunityContext"
+      required: [defaultCommunityId, activeCommunityId, communities]
+    CommunityContext:
+      type: object
+      properties:
+        communityId:
+          $ref: "#/components/schemas/Uuid"
+        communityName:
+          type: string
+        accessType:
+          type: string
+          enum: [DEFAULT, ORIGIN_EXTENDED]
+        originCountryId:
+          $ref: "#/components/schemas/Uuid"
+        destinationCountryId:
+          $ref: "#/components/schemas/Uuid"
+        modules:
+          type: object
+          description: Effective module map; absent or false entries are denied
+          additionalProperties:
+            type: boolean
+      required:
+        - communityId
+        - communityName
+        - accessType
+        - originCountryId
+        - destinationCountryId
+        - modules
+    ActionEligibility:
+      type: object
+      properties:
+        allowed:
+          type: boolean
+        chargeRequired:
+          type: boolean
+        consumptionRequired:
+          type: boolean
+        quantity:
+          type: integer
+          format: int64
+        remainingFreeQuota:
+          type: [integer, "null"]
+          format: int64
+        availableCredits:
+          type: [integer, "null"]
+          format: int64
+        source:
+          type: string
+          examples:
+            [
+              DEFAULT_COMMUNITY,
+              UNCONFIGURED_FREE,
+              PLAN_ENTITLEMENT,
+              ENTITLEMENT_GRANT,
+              NONE,
+            ]
+        reason:
+          type: string
+      required:
+        - allowed
+        - chargeRequired
+        - consumptionRequired
+        - quantity
+        - remainingFreeQuota
+        - availableCredits
+        - source
+        - reason
+    CreatePostRequest:
+      type: object
+      properties:
+        communityId:
+          $ref: "#/components/schemas/Uuid"
+        postType:
+          type: string
+          enum:
+            [
+              GENERAL,
+              ANNOUNCEMENT,
+              RECOMMENDATION,
+              RESOURCE,
+              WARNING,
+              OPPORTUNITY,
+              EVENT_NOTICE,
+              POLL,
+              REEL,
+              COMMUNITY_HELP,
+            ]
+        title:
+          type: [string, "null"]
+        body:
+          type: [string, "null"]
+        linkUrl:
+          type: [string, "null"]
+        visibilityScope:
+          type: string
+          enum: [COMMUNITY, COUNTRY]
+          default: COMMUNITY
+        categoryId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        mediaIds:
+          type: array
+          items:
+            $ref: "#/components/schemas/Uuid"
+        tags:
+          type: array
+          items:
+            type: string
+        idempotencyKey:
+          type: string
+          maxLength: 120
+          description: Optional per-publication client key; retained for exact retries
+      required: [communityId, postType]
+    CreateHelpPostRequest:
+      type: object
+      properties:
+        communityId:
+          $ref: "#/components/schemas/Uuid"
+        categoryId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        helpKind:
+          type: string
+          enum: [REQUEST, OFFER]
+        title:
+          type: [string, "null"]
+        body:
+          type: string
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+        mediaIds:
+          type: array
+          items:
+            $ref: "#/components/schemas/Uuid"
+        tags:
+          type: array
+          items:
+            type: string
+        idempotencyKey:
+          type: string
+          maxLength: 120
+      required: [communityId, helpKind, body]
+    PostRow:
+      type: object
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        authorId:
+          $ref: "#/components/schemas/Uuid"
+        communityId:
+          $ref: "#/components/schemas/Uuid"
+        countryId:
+          $ref: "#/components/schemas/Uuid"
+        postType:
+          type: string
+        status:
+          type: string
+        scope:
+          type: string
+        title:
+          type: [string, "null"]
+        body:
+          type: [string, "null"]
+        linkUrl:
+          type: [string, "null"]
+        categoryId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        commentsEnabled:
+          type: boolean
+        commentCount:
+          type: integer
+        reactionCount:
+          type: integer
+        shareCount:
+          type: integer
+        publishedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - authorId
+        - communityId
+        - countryId
+        - postType
+        - status
+        - scope
+        - commentsEnabled
+        - commentCount
+        - reactionCount
+        - shareCount
+        - publishedAt
+        - createdAt
+    HelpPostResponse:
+      type: object
+      properties:
+        post:
+          $ref: "#/components/schemas/PostRow"
+        helpKind:
+          type: string
+          enum: [REQUEST, OFFER]
+        helpStatus:
+          type: string
+          example: OPEN
+      required: [post, helpKind, helpStatus]
+    ScopedEnabledRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        countryId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        communityId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+      required: [enabled]
+    ModuleFlagView:
+      type: object
+      properties:
+        moduleKey:
+          type: string
+        flagKey:
+          type: string
+        countryId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        communityId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        enabled:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+      required: [moduleKey, flagKey, countryId, communityId, enabled, updatedAt]
+    SetEntitlementRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        quantityLimit:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+          description: Null means unlimited when enabled
+        resetPeriod:
+          type: [string, "null"]
+          enum: [DAY, WEEK, MONTH, YEAR, SUBSCRIPTION_PERIOD, NEVER, null]
+      required: [enabled, quantityLimit, resetPeriod]
+    FeatureConfigurationView:
+      type: object
+      properties:
+        featureKey:
+          $ref: "#/components/schemas/ExtendedActionKey"
+        displayName:
+          type: string
+        quotaScope:
+          type: string
+          example: PER_TARGET
+        featureActive:
+          type: boolean
+        enabled:
+          type: boolean
+        quantityLimit:
+          type: [integer, "null"]
+          format: int64
+        resetPeriod:
+          type: [string, "null"]
+      required:
+        - featureKey
+        - displayName
+        - quotaScope
+        - featureActive
+        - enabled
+        - quantityLimit
+        - resetPeriod
+    SetFallbackRequest:
+      type: object
+      properties:
+        unconfiguredFree:
+          type: boolean
+        countryId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        communityId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+      required: [unconfiguredFree]

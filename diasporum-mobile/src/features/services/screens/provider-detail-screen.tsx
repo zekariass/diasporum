@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, ScrollView, TextInput, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ThemedView } from "@/components/themed-view";
@@ -79,6 +79,7 @@ export default function ProviderDetailScreen() {
         {loading ? <LoadingScreen /> : !provider ? (
           <ErrorState message={error ?? "Provider not found."} onRetry={() => { setLoading(true); void load(); }} />
         ) : (
+          <KeyboardAvoidingView style={serviceStyles.keyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <ScrollView contentContainerStyle={serviceStyles.content}>
             <ThemedText type="title">{provider.displayName}</ThemedText>
             <ThemedText type="smallBold" style={{ color: BrandColors.primary }}>
@@ -113,6 +114,7 @@ export default function ProviderDetailScreen() {
               canRespond={provider.canManage} onUpdated={(updated) =>
                 setReviews((current) => current.map((item) => item.id === updated.id ? updated : item))} />)}
           </ScrollView>
+          </KeyboardAvoidingView>
         )}
       </SafeAreaView>
     </ThemedView>

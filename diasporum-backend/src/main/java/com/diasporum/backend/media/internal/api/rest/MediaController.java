@@ -42,13 +42,17 @@ public class MediaController {
         var purpose = (String) body.get("purpose");
         var mimeType = (String) body.get("mimeType");
         var declared = body.get("declaredSizeBytes");
+        var declaredDuration = body.get("durationMs");
         if (purpose == null || mimeType == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "PURPOSE_AND_MIME_REQUIRED");
         }
         Long size = declared == null ? null
                 : Long.parseLong(declared.toString());
-        var r = service.initiate(principal.userId(), purpose, mimeType, size);
+        Long duration = declaredDuration == null ? null
+                : Long.parseLong(declaredDuration.toString());
+        var r = service.initiate(principal.userId(), purpose, mimeType, size,
+                duration);
         return Map.of("assetId", r.assetId(), "uploadUrl", r.uploadUrl());
     }
 
@@ -58,7 +62,9 @@ public class MediaController {
             Map<String, Object> body) {
         Long size = body == null || body.get("declaredSizeBytes") == null ? null
                 : Long.parseLong(body.get("declaredSizeBytes").toString());
-        return service.complete(principal.userId(), assetId, size);
+        Long duration = body == null || body.get("durationMs") == null ? null
+                : Long.parseLong(body.get("durationMs").toString());
+        return service.complete(principal.userId(), assetId, size, duration);
     }
 
     @DeleteMapping("/uploads/{assetId}")

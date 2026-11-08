@@ -18,6 +18,7 @@ import { ApiError } from "@/core/api/api-error";
 import { useSession } from "@/core/session/session-provider";
 import { useTheme } from "@/hooks/use-theme";
 import { LoadingScreen } from "@/shared/components/loading-screen";
+import { PrimaryButton } from "@/shared/components/primary-button";
 import { BrandColors } from "@/shared/theme/colors";
 import { Spacing } from "@/shared/theme/spacing";
 import { BusinessCard } from "../components/business-card";
@@ -113,6 +114,12 @@ export default function BusinessCollectionScreen({
             )
           }
         />
+        {!saved && accountId ? (
+          <ThemedText style={styles.accountNote} themeColor="textSecondary">
+            Public Business Profiles managed by this Business Account. Listings
+            published under a profile appear on it.
+          </ThemedText>
+        ) : null}
         {error ? (
           <View style={styles.error}>
             <DirectoryMessage error>{error}</DirectoryMessage>
@@ -163,6 +170,18 @@ export default function BusinessCollectionScreen({
             ) : undefined
           }
         />
+        {!saved ? (
+          <View style={styles.footer}>
+            <PrimaryButton
+              label="Create Business Profile"
+              onPress={() =>
+                router.push(
+                  `/(app)/businesses/create${accountId ? `?accountId=${accountId}` : ""}` as never,
+                )
+              }
+            />
+          </View>
+        ) : null}
       </SafeAreaView>
     </ThemedView>
   );
@@ -180,4 +199,11 @@ const styles = StyleSheet.create({
   },
   retry: { color: BrandColors.primary, fontWeight: "700" },
   more: { padding: Spacing.three },
+  accountNote: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginHorizontal: Spacing.four,
+    marginTop: Spacing.two,
+  },
+  footer: { padding: Spacing.four },
 });

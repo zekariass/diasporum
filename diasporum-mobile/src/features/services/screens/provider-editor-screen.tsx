@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Location from "expo-location";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -122,6 +122,7 @@ export default function ProviderEditorScreen() {
       <SafeAreaView style={serviceStyles.root} edges={["top", "left", "right"]}>
         <ScreenHeader back title={id ? "Edit provider profile" : "Offer services"} />
         {loading ? <LoadingScreen /> : (
+          <KeyboardAvoidingView style={serviceStyles.keyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <ScrollView contentContainerStyle={serviceStyles.content} keyboardShouldPersistTaps="handled">
             <LeadMarketplaceNotice />
             {!id ? <TextInput accessibilityLabel="Business account ID" placeholder="Business account ID (optional; blank for personal)"
@@ -157,6 +158,7 @@ export default function ProviderEditorScreen() {
             {error ? <ThemedText accessibilityRole="alert" style={{ color: BrandColors.error }}>{error}</ThemedText> : null}
             <PrimaryButton label={id ? "Save provider profile" : "Create provider profile"} loading={saving} onPress={() => void save()} />
           </ScrollView>
+          </KeyboardAvoidingView>
         )}
       </SafeAreaView>
     </ThemedView>

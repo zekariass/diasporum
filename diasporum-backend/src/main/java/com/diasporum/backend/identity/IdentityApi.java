@@ -28,12 +28,21 @@ public interface IdentityApi {
      */
     Optional<ProfileSummary> profileSummary(UUID profileId);
 
+    /**
+     * Resolves a username (case-insensitive, trimmed) to a profile summary.
+     * Used by flows that address people by handle, e.g. business team invites.
+     */
+    Optional<ProfileSummary> findByUsername(String username);
+
     /** Batch version of {@link #profileSummary} — one query for many ids,
      * for cross-module list enrichment (e.g. social relationship pages). */
     List<ProfileSummary> profileSummaries(Collection<UUID> profileIds);
 
     /** The user's persisted active community selection ({@code user_settings}), if set. */
     Optional<UUID> activeCommunityId(UUID profileId);
+
+    /** The user's persisted default community selection, if set. */
+    Optional<UUID> defaultCommunityId(UUID profileId);
 
     /**
      * Stores the user's active community selection in {@code user_settings}.
@@ -49,6 +58,11 @@ public interface IdentityApi {
      */
     void setDefaultCommunity(UUID profileId, UUID communityId);
 
+    /** Synchronous domain event; community reconciliation participates in the profile transaction. */
+    record CountriesChangedEvent(UUID profileId, UUID previousOriginCountryId,
+            UUID previousCurrentCountryId, UUID originCountryId, UUID currentCountryId) {
+    }
+
     /** External-identity mapping view. */
     record IdentityView(UUID profileId, String issuer, String subject) {
     }
@@ -56,6 +70,7 @@ public interface IdentityApi {
     /** Cross-module-safe profile projection. */
     record ProfileSummary(UUID id, String username, String displayName,
             String accountStatus, boolean profileCompleted,
-            UUID originCountryId, UUID currentCountryId) {
+            UUID originCountryId, UUID currentCountryId,
+            UUID avatarMediaId) {
     }
 }

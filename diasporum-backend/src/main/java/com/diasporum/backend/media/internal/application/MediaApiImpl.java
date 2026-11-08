@@ -54,12 +54,18 @@ public class MediaApiImpl implements MediaApi {
     }
 
     @Override
+    public Optional<UUID> blurredImageDerivative(UUID sourceAssetId, String purpose) {
+        return service.blurredImageDerivative(sourceAssetId, purpose);
+    }
+
+    @Override
     public void deleteAsset(UUID requesterId, UUID assetId) {
         service.delete(requesterId, assetId);
     }
 
     private static AssetView toApi(MediaService.AssetView v) {
         return new AssetView(v.id(), v.ownerId(), v.purpose(), v.status(),
-                v.mimeType(), v.sizeBytes(), v.detectedMimeType());
+                v.mimeType(), v.sizeBytes(), v.detectedMimeType(),
+                v.durationMs());
     }
 }

@@ -8,6 +8,7 @@ import com.diasporum.backend.social.SocialApi;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.Address;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.Airport;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.Category;
+import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.DiscoveryCounts;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.DiscoveryFilters;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.Listing;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.ListingInput;
@@ -49,6 +50,7 @@ public class SpareBagListingService {
     private static final Set<String> PRICE_UNITS = Set.of("PER_KG", "PER_PARCEL");
     private static final Set<String> OWNER_STATUSES = Set.of("DRAFT", "PENDING_REVIEW",
             "PUBLISHED", "PAUSED", "MATCHED", "CLOSED", "EXPIRED", "REMOVED");
+    private static final Set<String> DISCOVERY_SORTS = Set.of("TRAVEL_DATE", "NEWEST");
     private static final Set<String> REPORT_REASONS = Set.of("SPAM", "SCAM",
             "HARASSMENT", "HATE", "SEXUAL_MISCONDUCT", "MISINFORMATION",
             "IMPERSONATION", "PRIVACY", "OTHER");
@@ -169,19 +171,21 @@ public class SpareBagListingService {
                 .orElseThrow(() -> forbidden("PROFILE_REQUIRED"));
         List<UUID> memberships = community.membershipsOf(actor).stream()
                 .map(CommunityApi.MembershipView::communityId).toList();
-        LocalDate cursorDate = null;
+        String sort = filters.sort() == null ? "TRAVEL_DATE" : filters.sort();
+        Object cursorKey = null;
         UUID cursorId = null;
         if (cursor != null && !cursor.isBlank()) {
             String[] parts = decode(cursor);
-            cursorDate = LocalDate.parse(parts[0]);
+            cursorKey = "NEWEST".equals(sort) ? Instant.parse(parts[0])
+                    : LocalDate.parse(parts[0]);
             cursorId = UUID.fromString(parts[1]);
         }
         int limit = clamp(size);
         List<Listing> rows = repository.discover(profile.currentCountryId(), memberships,
-                filters, cursorDate, cursorId, limit + 1);
+                filters, sort, cursorKey, cursorId, limit + 1);
         boolean hasMore = rows.size() > limit;
         List<Listing> pageRows = hasMore ? new ArrayList<>(rows.subList(0, limit)) : rows;
-        String next = hasMore ? encode(pageRows.getLast().travelDateStart().toString(),
+        String next = hasMore ? encode(sortKey(pageRows.getLast(), sort),
                 pageRows.getLast().id()) : null;
         Set<UUID> blocked = social.blockedWith(actor,
                 pageRows.stream().map(Listing::ownerUserId).toList());
@@ -189,6 +193,26 @@ public class SpareBagListingService {
                 .filter(l -> !blocked.contains(l.ownerUserId()))
                 .toList();
         return new Page<>(views(actor, visible), next);
+    }
+
+    /** Grouped totals behind the same visibility and filter predicates —
+     * powers per-type tab counts without listing-type restriction. */
+    @Transactional(readOnly = true)
+    public DiscoveryCounts countDiscover(UUID actor, DiscoveryFilters filters) {
+        validateFilters(filters);
+        var profile = identity.profileSummary(actor)
+                .orElseThrow(() -> forbidden("PROFILE_REQUIRED"));
+        List<UUID> memberships = community.membershipsOf(actor).stream()
+                .map(CommunityApi.MembershipView::communityId).toList();
+        Map<String, Long> counts = repository.countDiscover(
+                profile.currentCountryId(), memberships, filters);
+        return new DiscoveryCounts(counts.getOrDefault("PASSENGER_OFFER", 0L),
+                counts.getOrDefault("SENDER_REQUEST", 0L));
+    }
+
+    private static String sortKey(Listing listing, String sort) {
+        return "NEWEST".equals(sort) ? listing.publishedAt().toString()
+                : listing.travelDateStart().toString();
     }
 
     @Transactional(readOnly = true)
@@ -285,7 +309,8 @@ public class SpareBagListingService {
         Set<UUID> ownerIds = listings.stream().map(Listing::ownerUserId)
                 .collect(Collectors.toSet());
         Map<UUID, Owner> owners = identity.profileSummaries(ownerIds).stream()
-                .map(p -> new Owner(p.id(), p.username(), p.displayName()))
+                .map(p -> new Owner(p.id(), p.username(), p.displayName(),
+                        p.avatarMediaId()))
                 .collect(Collectors.toMap(Owner::id, Function.identity()));
         Set<UUID> addressIds = new HashSet<>();
         for (Listing listing : listings) {
@@ -477,10 +502,12 @@ public class SpareBagListingService {
 
     private void validateFilters(DiscoveryFilters f) {
         if (f.listingType() != null && !LISTING_TYPES.contains(f.listingType())
+                || f.sort() != null && !DISCOVERY_SORTS.contains(f.sort())
                 || f.dateFrom() != null && f.dateTo() != null
                 && f.dateFrom().isAfter(f.dateTo())
                 || f.maxPrice() != null && f.maxPrice().signum() < 0
-                || f.minimumCapacityKg() != null && f.minimumCapacityKg().signum() < 0) {
+                || f.minimumCapacityKg() != null && f.minimumCapacityKg().signum() < 0
+                || f.maxWeightKg() != null && f.maxWeightKg().signum() < 0) {
             throw bad("INVALID_DISCOVERY_FILTERS");
         }
     }

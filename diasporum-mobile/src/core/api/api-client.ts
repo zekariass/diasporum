@@ -136,7 +136,12 @@ async function request<T>(
 
   if (response.ok) {
     if (response.status === 204) return undefined as T;
-    return (await response.json()) as T;
+    try {
+      return (await response.json()) as T;
+    } catch {
+      // Spring void endpoints return 200 with an empty body — not a failure
+      return undefined as T;
+    }
   }
 
   // On 401 and not a retry, attempt refresh and retry once
@@ -160,7 +165,11 @@ async function request<T>(
 
     if (retryResponse.ok) {
       if (retryResponse.status === 204) return undefined as T;
-      return (await retryResponse.json()) as T;
+      try {
+        return (await retryResponse.json()) as T;
+      } catch {
+        return undefined as T;
+      }
     }
 
     const apiErr = await parseErrorResponse(retryResponse);

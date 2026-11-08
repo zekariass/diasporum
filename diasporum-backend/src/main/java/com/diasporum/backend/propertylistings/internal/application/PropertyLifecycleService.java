@@ -32,6 +32,8 @@ public class PropertyLifecycleService {
             "UNFURNISHED", "UNSPECIFIED");
     private static final Set<String> CONDITIONS = Set.of("NEW", "EXCELLENT", "GOOD",
             "FAIR", "NEEDS_RENOVATION", "UNSPECIFIED");
+    private static final Set<String> EDITABLE = Set.of("DRAFT", "PUBLISHED",
+            "PAUSED", "EXPIRED");
     private static final int MAX_MEDIA = 12;
 
     private final JdbcTemplate jdbc;
@@ -72,16 +74,18 @@ public class PropertyLifecycleService {
                 type.typeKey());
         boolean business = command.businessAccountId() != null;
         jdbc.update("INSERT INTO property_listings(id,country_id,community_id,"
-                        + "owner_user_id,business_account_id,created_by_user_id,"
+                        + "owner_user_id,business_account_id,business_listing_id,"
+                        + "created_by_user_id,"
                         + "property_type_id,visibility_scope,listing_purpose,title,"
                         + "description,additional_attributes,price_amount,currency_code,"
                         + "price_period,address_id,bedrooms,bathrooms,reception_rooms,"
                         + "floor_area,floor_area_unit,furnished_status,rental_deposit,"
                         + "bills_included,minimum_tenancy_months,availability_date,tenure,"
-                        + "condition_key,status) VALUES(?,?,?,?,?,?,?,?::visibility_scope,"
+                        + "condition_key,status) VALUES(?,?,?,?,?,?,?,?,?::visibility_scope,"
                         + "?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DRAFT')",
                 id, command.countryId(), command.communityId(),
-                business ? null : actor, command.businessAccountId(), actor,
+                business ? null : actor, command.businessAccountId(),
+                command.businessListingId(), actor,
                 command.propertyTypeId(), visibility(command), command.listingPurpose(),
                 command.title().trim(), command.description().trim(), attributesJson,
                 command.priceAmount(), command.currencyCode(), pricePeriod(command),
@@ -107,6 +111,7 @@ public class PropertyLifecycleService {
         String attributesJson = attributes.validate(effective.additionalAttributes(),
                 type.typeKey());
         jdbc.update("UPDATE property_listings SET country_id=?,community_id=?,"
+                        + "business_listing_id=?,"
                         + "property_type_id=?,visibility_scope=?::visibility_scope,"
                         + "listing_purpose=?,title=?,description=?,additional_attributes=?::jsonb,"
                         + "price_amount=?,currency_code=?,price_period=?,address_id=?,"
@@ -114,7 +119,8 @@ public class PropertyLifecycleService {
                         + "floor_area_unit=?,furnished_status=?,rental_deposit=?,"
                         + "bills_included=?,minimum_tenancy_months=?,availability_date=?,"
                         + "tenure=?,condition_key=?,updated_at=now() WHERE id=?",
-                effective.countryId(), effective.communityId(), effective.propertyTypeId(),
+                effective.countryId(), effective.communityId(), effective.businessListingId(),
+                effective.propertyTypeId(),
                 visibility(effective), effective.listingPurpose(), effective.title().trim(),
                 effective.description().trim(), attributesJson, effective.priceAmount(),
                 effective.currencyCode(), pricePeriod(effective), addressId,
@@ -167,7 +173,7 @@ public class PropertyLifecycleService {
     @Transactional
     public PropertyDetail reopen(UUID actor, UUID propertyId) {
         PropertyRow property = access.requireManagedLocked(actor, propertyId);
-        if (!"PAUSED".equals(property.status())) {
+        if (!Set.of("PAUSED", "EXPIRED").contains(property.status())) {
             throw conflict("PROPERTY_NOT_PAUSED");
         }
         requirePublishable(propertyId);
@@ -186,8 +192,36 @@ public class PropertyLifecycleService {
         if ("REMOVED".equals(property.status())) {
             throw PropertyRepository.notFound();
         }
+        if (Set.of("SOLD", "RENTED").contains(property.status())) {
+            throw conflict("INVALID_PROPERTY_TRANSITION");
+        }
         jdbc.update("UPDATE property_listings SET status='CLOSED',closed_at=now(),"
                 + "updated_at=now() WHERE id=?", propertyId);
+        return queryService.detail(actor, propertyId);
+    }
+
+    @Transactional
+    public PropertyDetail sold(UUID actor, UUID propertyId) {
+        return terminalOutcome(actor, propertyId, "SALE", "SOLD");
+    }
+
+    @Transactional
+    public PropertyDetail rented(UUID actor, UUID propertyId) {
+        return terminalOutcome(actor, propertyId, "RENT", "RENTED");
+    }
+
+    private PropertyDetail terminalOutcome(UUID actor, UUID propertyId,
+            String purpose, String status) {
+        PropertyRow property = access.requireManagedLocked(actor, propertyId);
+        if (status.equals(property.status())) {
+            return queryService.detail(actor, propertyId);
+        }
+        if (!purpose.equals(property.listingPurpose())
+                || !Set.of("PUBLISHED", "PAUSED").contains(property.status())) {
+            throw conflict("INVALID_PROPERTY_TRANSITION");
+        }
+        jdbc.update("UPDATE property_listings SET status=?,updated_at=now()"
+                + " WHERE id=?", status, propertyId);
         return queryService.detail(actor, propertyId);
     }
 
@@ -281,9 +315,12 @@ public class PropertyLifecycleService {
         if (mediaCount == null || mediaCount == 0) {
             throw conflict("PROPERTY_MEDIA_REQUIRED");
         }
+        // A public location is required: either a rounded discovery point for
+        // radius search, or a city-only approximate address (design E.1).
         Integer discoverable = jdbc.queryForObject("SELECT count(*) FROM property_listings p"
                 + " JOIN addresses a ON a.id=p.address_id WHERE p.id=?"
-                + " AND a.discovery_location IS NOT NULL", Integer.class, propertyId);
+                + " AND (a.discovery_location IS NOT NULL"
+                + " OR btrim(COALESCE(a.city,''))<>'')", Integer.class, propertyId);
         if (discoverable == null || discoverable == 0) {
             throw conflict("PROPERTY_DISCOVERY_LOCATION_REQUIRED");
         }
@@ -299,6 +336,17 @@ public class PropertyLifecycleService {
         var type = repository.requireType(c.countryId(), c.propertyTypeId());
         if (c.businessAccountId() != null) {
             authorization.requireBusinessManager(actor, c.businessAccountId());
+        }
+        if (c.businessListingId() != null) {
+            if (c.businessAccountId() == null) {
+                throw bad("BUSINESS_PROFILE_REQUIRES_ACCOUNT");
+            }
+            Integer owned = jdbc.queryForObject("SELECT count(*) FROM business_listings b"
+                    + " WHERE b.id=? AND b.business_account_id=? AND b.deleted_at IS NULL",
+                    Integer.class, c.businessListingId(), c.businessAccountId());
+            if (owned == null || owned == 0) {
+                throw bad("INVALID_BUSINESS_PROFILE");
+            }
         }
         if (c.title() == null || c.title().trim().isEmpty()
                 || c.title().trim().length() > 220) {
@@ -483,6 +531,7 @@ public class PropertyLifecycleService {
 
     private static PropertyCommand withOwnership(PropertyCommand c, PropertyRow row) {
         return new PropertyCommand(c.countryId(), c.communityId(), row.businessAccountId(),
+                c.businessListingId() != null ? c.businessListingId() : row.businessListingId(),
                 c.propertyTypeId(), c.visibilityScope(), c.listingPurpose(), c.title(),
                 c.description(), c.additionalAttributes(), c.priceAmount(), c.currencyCode(),
                 c.pricePeriod(), c.address(), c.bedrooms(), c.bathrooms(), c.receptionRooms(),
@@ -497,6 +546,9 @@ public class PropertyLifecycleService {
         }
         if ("CLOSED".equals(property.status())) {
             throw conflict("PROPERTY_CLOSED");
+        }
+        if (!EDITABLE.contains(property.status())) {
+            throw conflict("PROPERTY_NOT_EDITABLE");
         }
     }
 

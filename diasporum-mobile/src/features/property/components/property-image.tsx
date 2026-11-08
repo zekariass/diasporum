@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -20,7 +20,17 @@ interface Props {
   label?: string;
 }
 
-export function PropertyImage({
+export function PropertyImage(props: Props) {
+  const { session } = useSession();
+  return (
+    <PropertyImageSource
+      key={`${session?.me.id}:${session?.profile?.currentCountryId}:${props.propertyId}:${props.mediaId}`}
+      {...props}
+    />
+  );
+}
+
+function PropertyImageSource({
   propertyId,
   mediaId,
   style,
@@ -32,37 +42,32 @@ export function PropertyImage({
   const [loading, setLoading] = useState(Boolean(mediaId));
   const [failed, setFailed] = useState(false);
   const [retried, setRetried] = useState(false);
+  const active = useRef(true);
 
   const load = useCallback(() => {
     if (!mediaId) return Promise.resolve();
     return createPropertyApi(apiClient)
       .mediaUrl(propertyId, mediaId)
       .then((result) => {
+        if (!active.current) return;
         setUri(result.downloadUrl);
         setFailed(false);
       })
-      .catch(() => setFailed(true))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (active.current) setFailed(true);
+      })
+      .finally(() => {
+        if (active.current) setLoading(false);
+      });
   }, [apiClient, mediaId, propertyId]);
 
   useEffect(() => {
-    let active = true;
-    if (!mediaId) return () => {};
-    void createPropertyApi(apiClient)
-      .mediaUrl(propertyId, mediaId)
-      .then((result) => {
-        if (active) setUri(result.downloadUrl);
-      })
-      .catch(() => {
-        if (active) setFailed(true);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+    active.current = true;
+    void load();
     return () => {
-      active = false;
+      active.current = false;
     };
-  }, [apiClient, mediaId, propertyId]);
+  }, [load]);
 
   const retryExpiredUrl = useCallback(() => {
     if (retried) {
@@ -77,7 +82,11 @@ export function PropertyImage({
   if (!mediaId || failed) {
     return (
       <View
-        style={[styles.placeholder, style, { backgroundColor: theme.backgroundElement }]}
+        style={[
+          styles.placeholder,
+          style,
+          { backgroundColor: theme.backgroundElement },
+        ]}
         accessibilityLabel="No property image"
       >
         <Ionicons name="home-outline" size={28} color={theme.textSecondary} />
@@ -87,7 +96,11 @@ export function PropertyImage({
   if (loading || !uri) {
     return (
       <View
-        style={[styles.placeholder, style, { backgroundColor: theme.backgroundElement }]}
+        style={[
+          styles.placeholder,
+          style,
+          { backgroundColor: theme.backgroundElement },
+        ]}
         accessibilityLabel="Loading property image"
       >
         <ActivityIndicator color={BrandColors.primary} />

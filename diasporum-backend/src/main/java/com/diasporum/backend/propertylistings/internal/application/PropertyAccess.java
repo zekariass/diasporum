@@ -42,9 +42,12 @@ class PropertyAccess {
                 && property.expiresAt().isBefore(Instant.now()))) {
             return false;
         }
+        if (identity.profileSummary(viewer).map(ProfileSummary::currentCountryId)
+                .filter(property.countryId()::equals).isEmpty()) {
+            return false;
+        }
         if ("COUNTRY".equals(property.visibilityScope())) {
-            return identity.profileSummary(viewer).map(ProfileSummary::currentCountryId)
-                    .filter(property.countryId()::equals).isPresent();
+            return true;
         }
         if ("COMMUNITY".equals(property.visibilityScope())) {
             return property.communityId() != null
@@ -60,7 +63,7 @@ class PropertyAccess {
     }
 
     PropertyRow requireViewable(UUID viewer, UUID id) {
-        PropertyRow property = repository.require(id);
+        PropertyRow property = lazyExpire(repository.require(id));
         if (!canView(viewer, property)) {
             throw PropertyRepository.notFound();
         }
@@ -68,7 +71,7 @@ class PropertyAccess {
     }
 
     PropertyRow requireManaged(UUID actor, UUID id) {
-        PropertyRow property = repository.require(id);
+        PropertyRow property = lazyExpire(repository.require(id));
         if (!canManage(actor, property)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "NOT_PROPERTY_MANAGER");
@@ -77,11 +80,25 @@ class PropertyAccess {
     }
 
     PropertyRow requireManagedLocked(UUID actor, UUID id) {
-        PropertyRow property = repository.requireLocked(id);
+        PropertyRow property = lazyExpire(repository.requireLocked(id));
         if (!canManage(actor, property)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "NOT_PROPERTY_MANAGER");
         }
         return property;
+    }
+
+    /**
+     * Lazy expiry: a PUBLISHED listing past {@code expires_at} transitions to
+     * EXPIRED on first touch; the scheduled worker covers untouched rows.
+     */
+    private PropertyRow lazyExpire(PropertyRow property) {
+        if (!"PUBLISHED".equals(property.status()) || property.expiresAt() == null
+                || property.expiresAt().isAfter(Instant.now())) {
+            return property;
+        }
+        repository.jdbc().update("UPDATE property_listings SET status='EXPIRED',"
+                + "updated_at=now() WHERE id=? AND status='PUBLISHED'", property.id());
+        return repository.require(property.id());
     }
 }

@@ -7,6 +7,7 @@ import { Pressable, ScrollView, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
+import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import type { CategoryView, FeedMode } from "../types/feed-types";
 
@@ -25,12 +26,15 @@ export function CategoryFilter({
   const chip = (active: boolean) => [
     styles.chip,
     active
-      ? { backgroundColor: theme.text, borderColor: theme.text }
-      : { backgroundColor: "transparent", borderColor: theme.border },
+      ? {
+          backgroundColor: BrandColors.primary,
+          borderColor: BrandColors.primary,
+        }
+      : { backgroundColor: theme.background, borderColor: theme.border },
   ];
   const chipText = (active: boolean) => [
     styles.chipText,
-    { color: active ? theme.background : theme.text },
+    { color: active ? BrandColors.white : theme.textSecondary },
   ];
 
   return (
@@ -41,7 +45,10 @@ export function CategoryFilter({
     >
       <Pressable
         onPress={() => onSelect(null)}
-        style={chip(selected === null)}
+        style={({ pressed }) => [
+          chip(selected === null),
+          pressed && styles.pressed,
+        ]}
         accessibilityRole="button"
         accessibilityState={{ selected: selected === null }}
         accessibilityLabel="All posts"
@@ -54,7 +61,7 @@ export function CategoryFilter({
           <Pressable
             key={c.id}
             onPress={() => onSelect(active ? null : c.id)}
-            style={chip(active)}
+            style={({ pressed }) => [chip(active), pressed && styles.pressed]}
             accessibilityRole="button"
             accessibilityState={{ selected: active }}
             accessibilityLabel={c.name}
@@ -102,16 +109,19 @@ const styles = StyleSheet.create({
   strip: {
     flexDirection: "row",
     gap: Spacing.two,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.two,
+    paddingTop: Spacing.three,
+    paddingBottom: Spacing.one,
   },
   chip: {
-    paddingHorizontal: 14,
+    minHeight: 34,
+    justifyContent: "center",
+    paddingHorizontal: Spacing.three,
     paddingVertical: 6,
     borderRadius: BorderRadius.full,
     borderWidth: 1,
   },
-  chipText: { fontSize: 13, fontWeight: "600", lineHeight: 18 },
+  chipText: { fontSize: 12, fontWeight: "600", lineHeight: 17 },
   mode: {
     flexDirection: "row",
     alignItems: "center",

@@ -23,6 +23,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import * as Crypto from "expo-crypto";
 
 import { safeBack } from "@/core/navigation/safe-back";
 
@@ -34,16 +35,28 @@ import { BrandColors } from "@/shared/theme/colors";
 import { Spacing, BorderRadius } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
 import { ApiError } from "@/core/api/api-error";
-import type { CategoryView, HelpKind } from "../types/feed-types";
+import type {
+  CategoryView,
+  CreateHelpPostRequest,
+  CreatePostRequest,
+  HelpKind,
+  TagView,
+} from "../types/feed-types";
 import {
   createPollRequest,
   emptyPollFormValue,
   PollForm,
   validatePollForm,
 } from "../components/poll-form";
+import {
+  VoiceRecorder,
+  type RecordedVoice,
+} from "../components/voice-recorder";
+import { MAX_TAGS, normalizeTag } from "../utils/hashtags";
+import { confirmCommunityAction } from "@/core/session/community-actions";
 
 type ComposerMode = "general" | "poll" | "help" | "announcement";
-type AttachmentKind = "image" | "video" | "document";
+type AttachmentKind = "image" | "video" | "document" | "audio";
 
 interface ComposerAttachment {
   id: string;
@@ -52,12 +65,29 @@ interface ComposerAttachment {
   name: string;
   mimeType: string;
   size?: number;
+  durationMs?: number;
+}
+
+interface PendingPublication {
+  fingerprint: string;
+  request: CreatePostRequest | CreateHelpPostRequest;
 }
 
 const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_AUDIO_MS = 300_000;
 const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const VIDEO_MIME_TYPES = ["video/mp4", "video/quicktime"];
+const AUDIO_MIME_TYPES = [
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/aac",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/webm",
+  "audio/ogg",
+];
 const DOCUMENT_MIME_TYPES = [
   "application/pdf",
   "application/msword",
@@ -83,11 +113,22 @@ const EXTENSION_MIME_TYPES: Record<string, string> = {
   ppt: "application/vnd.ms-powerpoint",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   txt: "text/plain",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  wav: "audio/wav",
+  webm: "audio/webm",
+  ogg: "audio/ogg",
 };
 
 function mimeTypeFor(name: string | null | undefined, fallback: string) {
   const extension = name?.split(".").pop()?.toLowerCase();
   return extension ? (EXTENSION_MIME_TYPES[extension] ?? fallback) : fallback;
+}
+
+function formatDuration(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 function formatFileSize(size?: number) {
@@ -104,28 +145,42 @@ export default function CreatePostScreen() {
   const feedApi = React.useMemo(() => createFeedApi(apiClient), [apiClient]);
 
   const [mode, setMode] = useState<ComposerMode>(
-    params.mode === "help" ? "help" : params.mode === "poll" ? "poll" : "general",
+    params.mode === "help"
+      ? "help"
+      : params.mode === "poll"
+        ? "poll"
+        : "general",
   );
   const [body, setBody] = useState("");
   const [helpKind, setHelpKind] = useState<HelpKind>("REQUEST");
+  const [helpTitle, setHelpTitle] = useState("");
+  const [helpExpiryDays, setHelpExpiryDays] = useState<number | null>(null);
   const [poll, setPoll] = useState(emptyPollFormValue);
   const [categories, setCategories] = useState<CategoryView[]>([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
+  const [tagSuggestions, setTagSuggestions] = useState<TagView[]>([]);
+  const [recording, setRecording] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pendingPublication = React.useRef<PendingPublication | null>(null);
 
   const communityId = session?.activeCommunityId ?? "";
-  const supportsAttachments = mode === "general" || mode === "announcement";
+  const supportsAttachments = mode !== "poll";
   const canAnnounce = session?.memberships.some(
     (m) =>
       m.communityId === communityId &&
       (m.role === "MODERATOR" || m.role === "ADMIN"),
   );
 
+  // Categories are required for every post — module differs per mode.
+  const categoryModule = mode === "help" ? "COMMUNITY_HELP" : "FEED";
   React.useEffect(() => {
-    if (mode !== "poll" || !communityId) return;
+    if (!communityId) return;
     let cancelled = false;
     async function loadCategories() {
       setCategories([]);
@@ -135,10 +190,14 @@ export default function CreatePostScreen() {
         if (!community.destinationCountryId) {
           throw new Error("Missing destination country");
         }
-        const response = await feedApi.feedCategories(community.destinationCountryId);
-        if (!cancelled) setCategories(response.items.filter((category) => category.active));
+        const response = await feedApi.feedCategories(
+          community.destinationCountryId,
+          categoryModule,
+        );
+        if (!cancelled)
+          setCategories(response.items.filter((category) => category.active));
       } catch {
-        if (!cancelled) setError("Failed to load FEED categories.");
+        if (!cancelled) setError("Failed to load post categories.");
       } finally {
         if (!cancelled) setCategoriesLoading(false);
       }
@@ -147,7 +206,50 @@ export default function CreatePostScreen() {
     return () => {
       cancelled = true;
     };
-  }, [communityId, feedApi, mode]);
+  }, [communityId, feedApi, categoryModule]);
+
+  // Debounced hashtag suggestions while typing in the tag field.
+  React.useEffect(() => {
+    const t = setTimeout(() => {
+      const q = normalizeTag(tagInput);
+      if (!q) {
+        setTagSuggestions([]);
+        return;
+      }
+      feedApi
+        .suggestTags(q)
+        .then(setTagSuggestions)
+        .catch(() => setTagSuggestions([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [tagInput, feedApi]);
+
+  // tags hold the author's display form (e.g. "StudentLife"); the normalized
+  // key is derived per entry for dedupe/validation. The backend preserves the
+  // submitted display casing in feed_tags.display_name.
+  const draftTagKey = normalizeTag(tagInput);
+  const tagDuplicate =
+    draftTagKey !== null && tags.some((t) => normalizeTag(t) === draftTagKey);
+  const tagCanAdd =
+    draftTagKey !== null && !tagDuplicate && tags.length < MAX_TAGS;
+
+  function addTag(raw: string) {
+    const key = normalizeTag(raw);
+    if (!key) return;
+    if (tags.some((t) => normalizeTag(t) === key)) {
+      setTagInput("");
+      return;
+    }
+    if (tags.length >= MAX_TAGS) {
+      setError(`You can add up to ${MAX_TAGS} hashtags.`);
+      return;
+    }
+    const display = raw.trim().replace(/^#+/, "").trim();
+    setTags((current) => [...current, display || key]);
+    setTagInput("");
+    setTagSuggestions([]);
+    setError(null);
+  }
 
   function addAttachments(incoming: ComposerAttachment[]) {
     const allowedTypes = (kind: AttachmentKind) =>
@@ -155,7 +257,9 @@ export default function CreatePostScreen() {
         ? IMAGE_MIME_TYPES
         : kind === "video"
           ? VIDEO_MIME_TYPES
-          : DOCUMENT_MIME_TYPES;
+          : kind === "audio"
+            ? AUDIO_MIME_TYPES
+            : DOCUMENT_MIME_TYPES;
     const invalid = incoming.find(
       (a) => !allowedTypes(a.kind).includes(a.mimeType),
     );
@@ -249,6 +353,50 @@ export default function CreatePostScreen() {
     }
   }
 
+  async function pickAudio() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: AUDIO_MIME_TYPES,
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+      const now = Date.now();
+      addAttachments(
+        result.assets.map((asset, index) => ({
+          id: `${now}-${index}-${asset.uri}`,
+          kind: "audio" as const,
+          uri: asset.uri,
+          name: asset.name,
+          mimeType: (
+            asset.mimeType ?? mimeTypeFor(asset.name, "audio/mpeg")
+          ).toLowerCase(),
+          size: asset.size,
+        })),
+      );
+    } catch {
+      setError("Unable to open the file picker. Please try again.");
+    }
+  }
+
+  function attachRecording(file: RecordedVoice) {
+    setRecording(false);
+    if (file.durationMs > MAX_AUDIO_MS) {
+      setError("Voice messages are limited to 5 minutes.");
+      return;
+    }
+    addAttachments([
+      {
+        id: `voice-${Date.now()}`,
+        kind: "audio",
+        uri: file.uri,
+        name: file.name,
+        mimeType: file.mimeType,
+        durationMs: file.durationMs,
+      },
+    ]);
+  }
+
   async function uploadAttachment(
     attachment: ComposerAttachment,
   ): Promise<string> {
@@ -262,10 +410,17 @@ export default function CreatePostScreen() {
         ? "FEED_IMAGE"
         : attachment.kind === "video"
           ? "FEED_VIDEO"
-          : "DOCUMENT";
+          : attachment.kind === "audio"
+            ? "FEED_AUDIO"
+            : "DOCUMENT";
     const init = await apiClient.post<{ assetId: string; uploadUrl: string }>(
       "/api/v1/media/uploads",
-      { purpose, mimeType: attachment.mimeType, declaredSizeBytes: file.size },
+      {
+        purpose,
+        mimeType: attachment.mimeType,
+        declaredSizeBytes: file.size,
+        durationMs: attachment.durationMs,
+      },
       { authenticated: true },
     );
     try {
@@ -277,7 +432,7 @@ export default function CreatePostScreen() {
       if (!uploadResponse.ok) throw new Error("Attachment upload failed.");
       await apiClient.post(
         `/api/v1/media/uploads/${init.assetId}/complete`,
-        { declaredSizeBytes: file.size },
+        { declaredSizeBytes: file.size, durationMs: attachment.durationMs },
         { authenticated: true },
       );
       return init.assetId;
@@ -293,8 +448,42 @@ export default function CreatePostScreen() {
     if (!communityId) return "No active community.";
     if (mode === "poll") {
       return validatePollForm(poll);
-    } else if (!body.trim()) return "Write something first.";
+    }
+    if (!categoryId) return "Choose a category for your post.";
+    if (mode === "help" && !helpTitle.trim()) return "Give your post a title.";
+    if (mode !== "help" && !body.trim() && attachments.length === 0)
+      return "Write something first.";
+    if (mode === "help" && !body.trim()) return "Write something first.";
     return null;
+  }
+
+  const canPost =
+    !submitting &&
+    (mode === "poll"
+      ? !!poll.question.trim()
+      : mode === "help"
+        ? !!helpTitle.trim() && !!body.trim()
+        : !!body.trim());
+
+  function publicationFingerprint() {
+    return JSON.stringify({
+      communityId,
+      mode,
+      categoryId,
+      body: body.trim(),
+      helpKind,
+      helpTitle: helpTitle.trim(),
+      helpExpiryDays,
+      tags,
+      attachments: attachments.map((a) => [
+        a.id,
+        a.uri,
+        a.name,
+        a.mimeType,
+        a.size,
+        a.durationMs,
+      ]),
+    });
   }
 
   async function handleSubmit() {
@@ -305,55 +494,105 @@ export default function CreatePostScreen() {
     }
     setSubmitting(true);
     setError(null);
-    const mediaIds: string[] = [];
+    const fingerprint = publicationFingerprint();
+    const retrying = pendingPublication.current?.fingerprint === fingerprint;
+    if (!retrying) pendingPublication.current = null;
     try {
+      const actionKey =
+        mode === "help" && helpKind === "REQUEST"
+          ? ("EXTENDED_COMMUNITY_HELP_REQUEST_PUBLISH" as const)
+          : mode === "general"
+            ? ("EXTENDED_FEED_POST_PUBLISH" as const)
+            : null;
+      if (actionKey && !retrying) {
+        const confirmed = await confirmCommunityAction(
+          apiClient,
+          session?.access,
+          {
+            actionKey,
+            title: mode === "help" ? "Publish help request?" : "Publish post?",
+            confirmLabel: "Publish",
+          },
+        );
+        if (!confirmed) return;
+      }
       if (mode === "poll") {
         await feedApi.createPoll(createPollRequest(poll, communityId));
-      } else if (mode === "help") {
-        await feedApi.createHelpPost({
-          communityId,
-          helpKind,
-          body: body.trim(),
-          title: body.trim().slice(0, 120),
-        });
       } else {
-        try {
-          for (const [index, attachment] of attachments.entries()) {
-            setUploadProgress(
-              `Uploading ${index + 1} of ${attachments.length}…`,
-            );
-            mediaIds.push(await uploadAttachment(attachment));
+        let request: CreatePostRequest | CreateHelpPostRequest;
+        const pending = retrying ? pendingPublication.current : null;
+        if (pending) {
+          request = pending.request;
+        } else {
+          const mediaIds: string[] = [];
+          try {
+            for (const [index, attachment] of attachments.entries()) {
+              setUploadProgress(
+                `Uploading ${index + 1} of ${attachments.length}…`,
+              );
+              mediaIds.push(await uploadAttachment(attachment));
+            }
+          } catch (uploadError) {
+            mediaIds.forEach((id) => {
+              apiClient
+                .delete(`/api/v1/media/${id}`, { authenticated: true })
+                .catch(() => {});
+            });
+            throw uploadError;
           }
-        } catch (uploadError) {
-          mediaIds.forEach((id) => {
-            apiClient
-              .delete(`/api/v1/media/${id}`, { authenticated: true })
-              .catch(() => {});
-          });
-          throw uploadError;
+          request =
+            mode === "help"
+              ? {
+                  communityId,
+                  categoryId: categoryId ?? undefined,
+                  helpKind,
+                  title: helpTitle.trim(),
+                  body: body.trim(),
+                  expiresAt:
+                    helpExpiryDays === null
+                      ? undefined
+                      : new Date(
+                          Date.now() + helpExpiryDays * 86_400_000,
+                        ).toISOString(),
+                  mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
+                  tags: tags.length > 0 ? tags : undefined,
+                  idempotencyKey: Crypto.randomUUID(),
+                }
+              : {
+                  communityId,
+                  postType:
+                    mode === "announcement" ? "ANNOUNCEMENT" : "GENERAL",
+                  body: body.trim(),
+                  categoryId: categoryId ?? undefined,
+                  mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
+                  tags: tags.length > 0 ? tags : undefined,
+                  idempotencyKey: Crypto.randomUUID(),
+                };
+          pendingPublication.current = { fingerprint, request };
         }
         setUploadProgress(null);
         try {
-          await feedApi.createPost({
-            communityId,
-            postType: mode === "announcement" ? "ANNOUNCEMENT" : "GENERAL",
-            body: body.trim(),
-            mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
-          });
+          if ("helpKind" in request) {
+            await feedApi.createHelpPost(request);
+          } else {
+            await feedApi.createPost(request);
+          }
+          pendingPublication.current = null;
         } catch (postError) {
-          // A 4xx means the post was not created. On a timeout it may exist,
-          // so retain the assets rather than breaking a successfully created post.
+          // Retain the exact request after an ambiguous failure. A definite 4xx
+          // starts a fresh attempt and can safely clean up the uploaded assets.
           if (
             ApiError.isApiError(postError) &&
             postError.httpStatus !== undefined &&
             postError.httpStatus >= 400 &&
             postError.httpStatus < 500
           ) {
-            mediaIds.forEach((id) => {
+            request.mediaIds?.forEach((id) => {
               apiClient
                 .delete(`/api/v1/media/${id}`, { authenticated: true })
                 .catch(() => {});
             });
+            pendingPublication.current = null;
           }
           throw postError;
         }
@@ -380,31 +619,64 @@ export default function CreatePostScreen() {
       <StatusBar style="auto" />
       <SafeAreaView style={styles.safeArea}>
         <View style={[styles.navBar, { borderBottomColor: theme.border }]}>
-          <Pressable onPress={() => safeBack()} hitSlop={8}>
-            <ThemedText style={{ color: theme.textSecondary }}>
-              Cancel
-            </ThemedText>
-          </Pressable>
-          <ThemedText style={styles.navTitle}>New post</ThemedText>
           <Pressable
-            onPress={handleSubmit}
+            onPress={() => safeBack()}
+            hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel="Publish post"
-            disabled={
-              submitting || (mode === "poll" ? !poll.question.trim() : !body.trim())
-            }
+            accessibilityLabel="Cancel"
             style={[
-              styles.postBtn,
+              styles.cancelBtn,
               {
-                backgroundColor:
-                  submitting || (mode === "poll" ? !poll.question.trim() : !body.trim())
-                    ? theme.border
-                    : BrandColors.primary,
+                borderColor: theme.border,
+                backgroundColor: theme.backgroundElement,
               },
             ]}
           >
-            <ThemedText style={styles.postBtnText}>Post</ThemedText>
+            <Ionicons name="close" size={15} color={theme.text} />
+            <ThemedText style={styles.cancelBtnText}>Cancel</ThemedText>
           </Pressable>
+          <View style={styles.navTitleWrap}>
+            <ThemedText style={styles.navTitle}>
+              {mode === "poll"
+                ? "Create a Poll"
+                : mode === "help"
+                  ? "Community help"
+                  : "New post"}
+            </ThemedText>
+            {mode === "poll" && (
+              <ThemedText style={styles.navSubtitle} themeColor="textSecondary">
+                Ask your community and hear what they think.
+              </ThemedText>
+            )}
+            {mode === "help" && (
+              <ThemedText style={styles.navSubtitle} themeColor="textSecondary">
+                Ask for help or offer a hand.
+              </ThemedText>
+            )}
+          </View>
+          {mode === "poll" || mode === "help" ? (
+            <View style={styles.postBtnSpacer} />
+          ) : (
+            <Pressable
+              onPress={handleSubmit}
+              accessibilityRole="button"
+              accessibilityLabel="Publish post"
+              disabled={!canPost}
+              accessibilityState={{ disabled: !canPost, busy: submitting }}
+              style={[
+                styles.postBtn,
+                {
+                  backgroundColor: canPost ? BrandColors.primary : theme.border,
+                },
+              ]}
+            >
+              {submitting ? (
+                <ActivityIndicator size="small" color={BrandColors.white} />
+              ) : (
+                <ThemedText style={styles.postBtnText}>Post</ThemedText>
+              )}
+            </Pressable>
+          )}
         </View>
 
         {/* Mode tabs */}
@@ -495,36 +767,89 @@ export default function CreatePostScreen() {
             {/* Help kind toggle */}
             {mode === "help" && (
               <View style={styles.helpKindRow}>
-                {(["REQUEST", "OFFER"] as const).map((k) => (
-                  <Pressable
-                    key={k}
-                    onPress={() => setHelpKind(k)}
-                    style={[
-                      styles.helpKindBtn,
-                      {
-                        borderColor:
-                          helpKind === k ? BrandColors.primary : theme.border,
-                        backgroundColor:
-                          helpKind === k
+                {(["REQUEST", "OFFER"] as const).map((k) => {
+                  const selected = helpKind === k;
+                  return (
+                    <Pressable
+                      key={k}
+                      onPress={() => setHelpKind(k)}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        k === "REQUEST" ? "Request help" : "Offer help"
+                      }
+                      accessibilityState={{ selected }}
+                      style={[
+                        styles.helpKindBtn,
+                        styles.flex,
+                        {
+                          borderColor: selected
+                            ? BrandColors.primary
+                            : theme.border,
+                          backgroundColor: selected
                             ? BrandColors.primarySurface
                             : "transparent",
-                      },
-                    ]}
-                  >
-                    <ThemedText
-                      style={{
-                        color:
-                          helpKind === k
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={
+                          k === "REQUEST"
+                            ? "help-circle-outline"
+                            : "hand-left-outline"
+                        }
+                        size={16}
+                        color={
+                          selected ? BrandColors.primary : theme.textSecondary
+                        }
+                      />
+                      <ThemedText
+                        style={{
+                          color: selected
                             ? BrandColors.primary
                             : theme.textSecondary,
-                        fontSize: 13,
-                        fontWeight: "600",
-                      }}
-                    >
-                      {k === "REQUEST" ? "Requesting help" : "Offering help"}
-                    </ThemedText>
-                  </Pressable>
-                ))}
+                          fontSize: 13,
+                          fontWeight: "600",
+                        }}
+                      >
+                        {k === "REQUEST" ? "Request help" : "Offer help"}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* Help title */}
+            {mode === "help" && (
+              <View style={styles.helpFieldWrap}>
+                <ThemedText
+                  style={styles.categoryLabel}
+                  themeColor="textSecondary"
+                >
+                  Title{" "}
+                  <ThemedText style={{ color: BrandColors.error }}>
+                    *
+                  </ThemedText>
+                </ThemedText>
+                <View
+                  style={[styles.helpTitleRow, { borderColor: theme.border }]}
+                >
+                  <TextInput
+                    style={[styles.helpTitleInput, { color: theme.text }]}
+                    placeholder={
+                      helpKind === "REQUEST"
+                        ? "What do you need? e.g. Ride to the airport Saturday"
+                        : "What are you offering? e.g. Spare winter coat"
+                    }
+                    placeholderTextColor={theme.textMuted}
+                    value={helpTitle}
+                    onChangeText={setHelpTitle}
+                    maxLength={200}
+                    autoFocus
+                    returnKeyType="next"
+                    accessibilityLabel="Help post title"
+                  />
+                </View>
               </View>
             )}
 
@@ -539,68 +864,107 @@ export default function CreatePostScreen() {
                 disabled={submitting}
               />
             ) : (
-              <TextInput
-                style={[styles.textInput, { color: theme.text }]}
-                placeholder="What's happening in your community?"
-                placeholderTextColor={theme.textSecondary}
-                value={body}
-                onChangeText={setBody}
-                multiline
-                autoFocus
-                maxLength={4000}
-              />
+              <View>
+                {mode === "help" && (
+                  <ThemedText
+                    style={[
+                      styles.categoryLabel,
+                      { marginBottom: Spacing.two },
+                    ]}
+                    themeColor="textSecondary"
+                  >
+                    Details{" "}
+                    <ThemedText style={{ color: BrandColors.error }}>
+                      *
+                    </ThemedText>
+                  </ThemedText>
+                )}
+                <TextInput
+                  style={[
+                    styles.textInput,
+                    { color: theme.text },
+                    mode === "help" && styles.helpBodyInput,
+                  ]}
+                  placeholder={
+                    mode === "help"
+                      ? helpKind === "REQUEST"
+                        ? "Describe what you need — when, where, and anything people should know."
+                        : "Describe what you can offer and how people can reach you."
+                      : "What's happening in your community?"
+                  }
+                  placeholderTextColor={theme.textMuted}
+                  value={body}
+                  onChangeText={setBody}
+                  multiline
+                  autoFocus={mode !== "help"}
+                  maxLength={4000}
+                  accessibilityLabel={
+                    mode === "help" ? "Help post details" : "Post text"
+                  }
+                />
+                {body.length >= 3500 && (
+                  <ThemedText
+                    style={[
+                      styles.charCount,
+                      body.length >= 3950 && { color: BrandColors.error },
+                    ]}
+                    themeColor="textSecondary"
+                  >
+                    {body.length}/4000
+                  </ThemedText>
+                )}
+              </View>
             )}
 
-            {/* Attachment previews */}
-            {supportsAttachments && attachments.length > 0 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.attachmentList}
-              >
-                {attachments.map((attachment) => {
-                  const sizeLabel = formatFileSize(attachment.size);
+            {/* Voice / audio attachments — compact rows */}
+            {supportsAttachments &&
+              attachments
+                .filter((a) => a.kind === "audio")
+                .map((attachment) => {
+                  const meta = [
+                    attachment.durationMs
+                      ? formatDuration(attachment.durationMs)
+                      : null,
+                    formatFileSize(attachment.size),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
                   return (
                     <View
                       key={attachment.id}
                       style={[
-                        styles.attachmentCard,
+                        styles.audioRow,
                         { backgroundColor: theme.backgroundElement },
                       ]}
                     >
-                      {attachment.kind === "image" ? (
-                        <Image
-                          source={{ uri: attachment.uri }}
-                          style={styles.attachmentPreview}
-                          contentFit="cover"
-                        />
-                      ) : (
-                        <View style={styles.attachmentPreview}>
-                          <Ionicons
-                            name={
-                              attachment.kind === "video"
-                                ? "videocam-outline"
-                                : "document-text-outline"
-                            }
-                            size={36}
-                            color={BrandColors.primary}
-                          />
-                        </View>
-                      )}
-                      <ThemedText
-                        style={styles.attachmentName}
-                        numberOfLines={1}
+                      <View
+                        style={[
+                          styles.audioIcon,
+                          { backgroundColor: BrandColors.primarySurface },
+                        ]}
                       >
-                        {attachment.name}
-                      </ThemedText>
-                      {sizeLabel && (
+                        <Ionicons
+                          name="mic"
+                          size={18}
+                          color={BrandColors.primary}
+                        />
+                      </View>
+                      <View style={styles.flex}>
                         <ThemedText
-                          style={styles.attachmentSize}
-                          themeColor="textSecondary"
+                          style={styles.attachmentName}
+                          numberOfLines={1}
                         >
-                          {sizeLabel}
+                          {attachment.name}
                         </ThemedText>
-                      )}
+                        {meta ? (
+                          <ThemedText
+                            style={styles.attachmentSize}
+                            themeColor="textSecondary"
+                          >
+                            {meta}
+                          </ThemedText>
+                        ) : null}
+                      </View>
                       <Pressable
                         onPress={() =>
                           setAttachments((current) =>
@@ -609,76 +973,336 @@ export default function CreatePostScreen() {
                         }
                         disabled={submitting}
                         hitSlop={8}
-                        style={[
-                          styles.removeAttachment,
-                          { backgroundColor: theme.background },
-                        ]}
                         accessibilityRole="button"
                         accessibilityLabel={`Remove ${attachment.name}`}
                       >
-                        <Ionicons name="close" size={16} color={theme.text} />
+                        <Ionicons
+                          name="close-circle"
+                          size={22}
+                          color={theme.textSecondary}
+                        />
                       </Pressable>
                     </View>
                   );
                 })}
-              </ScrollView>
+
+            {/* Image / video / document previews */}
+            {supportsAttachments &&
+              attachments.some((a) => a.kind !== "audio") && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.attachmentList}
+                >
+                  {attachments
+                    .filter((a) => a.kind !== "audio")
+                    .map((attachment) => {
+                      const sizeLabel = formatFileSize(attachment.size);
+                      return (
+                        <View
+                          key={attachment.id}
+                          style={[
+                            styles.attachmentCard,
+                            { backgroundColor: theme.backgroundElement },
+                          ]}
+                        >
+                          {attachment.kind === "image" ? (
+                            <Image
+                              source={{ uri: attachment.uri }}
+                              style={styles.attachmentPreview}
+                              contentFit="cover"
+                            />
+                          ) : (
+                            <View style={styles.attachmentPreview}>
+                              <Ionicons
+                                name={
+                                  attachment.kind === "video"
+                                    ? "videocam-outline"
+                                    : "document-text-outline"
+                                }
+                                size={36}
+                                color={BrandColors.primary}
+                              />
+                            </View>
+                          )}
+                          <ThemedText
+                            style={styles.attachmentName}
+                            numberOfLines={1}
+                          >
+                            {attachment.name}
+                          </ThemedText>
+                          {sizeLabel && (
+                            <ThemedText
+                              style={styles.attachmentSize}
+                              themeColor="textSecondary"
+                            >
+                              {sizeLabel}
+                            </ThemedText>
+                          )}
+                          <Pressable
+                            onPress={() =>
+                              setAttachments((current) =>
+                                current.filter((a) => a.id !== attachment.id),
+                              )
+                            }
+                            disabled={submitting}
+                            hitSlop={8}
+                            style={[
+                              styles.removeAttachment,
+                              { backgroundColor: theme.background },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Remove ${attachment.name}`}
+                          >
+                            <Ionicons
+                              name="close"
+                              size={16}
+                              color={theme.text}
+                            />
+                          </Pressable>
+                        </View>
+                      );
+                    })}
+                </ScrollView>
+              )}
+
+            {/* Voice recorder card */}
+            {supportsAttachments && recording && (
+              <VoiceRecorder
+                visible={recording}
+                disabled={submitting}
+                onRecorded={attachRecording}
+                onCancel={() => setRecording(false)}
+                onError={setError}
+              />
             )}
 
-            {supportsAttachments && (
-              <View
-                style={[
-                  styles.attachmentToolbar,
-                  { borderTopColor: theme.border },
-                ]}
-              >
-                <Pressable
-                  onPress={() => pickMedia("image")}
-                  disabled={submitting || attachments.length >= MAX_ATTACHMENTS}
-                  style={styles.attachmentAction}
-                  accessibilityRole="button"
-                  accessibilityLabel="Add images"
+            {/* Help expiry — maps to expiresAt; backend lazy-expires past it */}
+            {mode === "help" && (
+              <View style={styles.helpFieldWrap}>
+                <ThemedText
+                  style={styles.categoryLabel}
+                  themeColor="textSecondary"
                 >
-                  <Ionicons
-                    name="image-outline"
-                    size={23}
-                    color={BrandColors.primary}
-                  />
-                  <ThemedText style={styles.attachmentActionText}>
-                    Image
-                  </ThemedText>
-                </Pressable>
-                <Pressable
-                  onPress={() => pickMedia("video")}
-                  disabled={submitting || attachments.length >= MAX_ATTACHMENTS}
-                  style={styles.attachmentAction}
-                  accessibilityRole="button"
-                  accessibilityLabel="Add videos"
+                  Active for
+                </ThemedText>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={styles.categoryChips}
                 >
-                  <Ionicons
-                    name="videocam-outline"
-                    size={24}
-                    color={BrandColors.primary}
-                  />
-                  <ThemedText style={styles.attachmentActionText}>
-                    Video
-                  </ThemedText>
-                </Pressable>
-                <Pressable
-                  onPress={pickDocument}
-                  disabled={submitting || attachments.length >= MAX_ATTACHMENTS}
-                  style={styles.attachmentAction}
-                  accessibilityRole="button"
-                  accessibilityLabel="Add documents"
+                  {[
+                    { label: "No expiry", days: null },
+                    { label: "3 days", days: 3 },
+                    { label: "7 days", days: 7 },
+                    { label: "14 days", days: 14 },
+                    { label: "30 days", days: 30 },
+                  ].map((option) => {
+                    const selected = helpExpiryDays === option.days;
+                    return (
+                      <Pressable
+                        key={option.label}
+                        onPress={() => setHelpExpiryDays(option.days)}
+                        style={[
+                          styles.helpKindBtn,
+                          {
+                            borderColor: selected
+                              ? BrandColors.primary
+                              : theme.border,
+                            backgroundColor: selected
+                              ? BrandColors.primarySurface
+                              : "transparent",
+                          },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Expiry ${option.label}`}
+                        accessibilityState={{ selected }}
+                      >
+                        <ThemedText
+                          style={{
+                            color: selected
+                              ? BrandColors.primary
+                              : theme.textSecondary,
+                            fontSize: 13,
+                            fontWeight: "600",
+                          }}
+                        >
+                          {option.label}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Category picker — required for all post modes */}
+            {mode !== "poll" && (
+              <View style={styles.categoryWrap}>
+                <ThemedText
+                  style={styles.categoryLabel}
+                  themeColor="textSecondary"
                 >
-                  <Ionicons
-                    name="document-text-outline"
-                    size={22}
-                    color={BrandColors.primary}
-                  />
-                  <ThemedText style={styles.attachmentActionText}>
-                    Document
+                  Category{" "}
+                  <ThemedText style={{ color: BrandColors.error }}>
+                    *
                   </ThemedText>
-                </Pressable>
+                </ThemedText>
+                {categoriesLoading ? (
+                  <ActivityIndicator size="small" color={BrandColors.primary} />
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={styles.categoryChips}
+                  >
+                    {categories.map((c) => (
+                      <Pressable
+                        key={c.id}
+                        onPress={() => setCategoryId(c.id)}
+                        style={[
+                          styles.helpKindBtn,
+                          {
+                            borderColor:
+                              categoryId === c.id
+                                ? BrandColors.primary
+                                : theme.border,
+                            backgroundColor:
+                              categoryId === c.id
+                                ? BrandColors.primarySurface
+                                : "transparent",
+                          },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Category ${c.name}`}
+                        accessibilityState={{ selected: categoryId === c.id }}
+                      >
+                        <ThemedText
+                          style={{
+                            color:
+                              categoryId === c.id
+                                ? BrandColors.primary
+                                : theme.textSecondary,
+                            fontSize: 13,
+                            fontWeight: "600",
+                          }}
+                        >
+                          {c.name}
+                        </ThemedText>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+            )}
+
+            {/* Hashtag entry + suggestions (all modes except poll) */}
+            {mode !== "poll" && (
+              <View style={styles.tagSection}>
+                <ThemedText
+                  style={styles.categoryLabel}
+                  themeColor="textSecondary"
+                >
+                  Hashtags
+                </ThemedText>
+                <View
+                  style={[styles.tagInputRow, { borderColor: theme.border }]}
+                >
+                  <ThemedText
+                    style={styles.tagPrefix}
+                    themeColor="textSecondary"
+                  >
+                    #
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.tagInputField, { color: theme.text }]}
+                    placeholder="Add a hashtag"
+                    placeholderTextColor={theme.textMuted}
+                    value={tagInput}
+                    onChangeText={(text) =>
+                      setTagInput(text.replace(/^#+/, ""))
+                    }
+                    onSubmitEditing={() => addTag(tagInput)}
+                    returnKeyType="done"
+                    autoCapitalize="none"
+                    maxLength={60}
+                    accessibilityLabel="Hashtag input"
+                  />
+                  <Pressable
+                    onPress={() => addTag(tagInput)}
+                    disabled={!tagCanAdd}
+                    style={[styles.tagAddBtn, !tagCanAdd && { opacity: 0.4 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add hashtag"
+                    accessibilityState={{ disabled: !tagCanAdd }}
+                  >
+                    <ThemedText
+                      style={[styles.tagAddText, { color: BrandColors.white }]}
+                    >
+                      Add
+                    </ThemedText>
+                  </Pressable>
+                </View>
+                {tagSuggestions.length > 0 && (
+                  <View
+                    style={[
+                      styles.suggestBox,
+                      {
+                        backgroundColor: theme.backgroundElement,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                  >
+                    {tagSuggestions.map((s) => (
+                      <Pressable
+                        key={s.tagKey}
+                        onPress={() => addTag(s.displayName)}
+                        style={styles.suggestItem}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Use hashtag ${s.displayName}`}
+                      >
+                        <ThemedText style={styles.suggestText}>
+                          #{s.displayName}
+                        </ThemedText>
+                        <ThemedText
+                          style={styles.suggestCount}
+                          themeColor="textSecondary"
+                        >
+                          {s.postCount} posts
+                        </ThemedText>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+                {tags.length > 0 && (
+                  <View style={styles.tagChips}>
+                    {tags.map((t) => (
+                      <View
+                        key={t}
+                        style={[styles.tagChip, { borderColor: theme.border }]}
+                      >
+                        <ThemedText style={styles.tagChipText}>#{t}</ThemedText>
+                        <Pressable
+                          onPress={() =>
+                            setTags((current) => current.filter((x) => x !== t))
+                          }
+                          hitSlop={6}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove hashtag ${t}`}
+                        >
+                          <ThemedText
+                            style={styles.tagChipRemove}
+                            themeColor="textSecondary"
+                          >
+                            ×
+                          </ThemedText>
+                        </Pressable>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </View>
             )}
 
@@ -695,6 +1319,143 @@ export default function CreatePostScreen() {
             )}
             {error && <ThemedText style={styles.error}>{error}</ThemedText>}
           </ScrollView>
+          {supportsAttachments && (
+            <View
+              style={[
+                styles.attachmentToolbar,
+                { borderTopColor: theme.border },
+              ]}
+            >
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                style={styles.flex}
+                contentContainerStyle={styles.attachmentToolbarContent}
+              >
+                <Pressable
+                  onPress={() => pickMedia("image")}
+                  disabled={submitting || attachments.length >= MAX_ATTACHMENTS}
+                  style={styles.attachmentAction}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add images"
+                >
+                  <Ionicons
+                    name="image-outline"
+                    size={28}
+                    color={BrandColors.primary}
+                  />
+                </Pressable>
+                <Pressable
+                  onPress={() => pickMedia("video")}
+                  disabled={submitting || attachments.length >= MAX_ATTACHMENTS}
+                  style={styles.attachmentAction}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add videos"
+                >
+                  <Ionicons
+                    name="videocam-outline"
+                    size={28}
+                    color={BrandColors.primary}
+                  />
+                </Pressable>
+                <Pressable
+                  onPress={pickDocument}
+                  disabled={submitting || attachments.length >= MAX_ATTACHMENTS}
+                  style={styles.attachmentAction}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add documents"
+                >
+                  <Ionicons
+                    name="document-text-outline"
+                    size={28}
+                    color={BrandColors.primary}
+                  />
+                </Pressable>
+                <Pressable
+                  onPress={() => setRecording(true)}
+                  disabled={
+                    submitting ||
+                    recording ||
+                    attachments.length >= MAX_ATTACHMENTS
+                  }
+                  style={styles.attachmentAction}
+                  accessibilityRole="button"
+                  accessibilityLabel="Record voice message"
+                >
+                  <Ionicons
+                    name="mic-outline"
+                    size={28}
+                    color={BrandColors.primary}
+                  />
+                </Pressable>
+                <Pressable
+                  onPress={pickAudio}
+                  disabled={submitting || attachments.length >= MAX_ATTACHMENTS}
+                  style={styles.attachmentAction}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add audio file"
+                >
+                  <Ionicons
+                    name="musical-notes-outline"
+                    size={28}
+                    color={BrandColors.primary}
+                  />
+                </Pressable>
+              </ScrollView>
+              <ThemedText
+                style={[
+                  styles.attachmentCount,
+                  attachments.length >= MAX_ATTACHMENTS && {
+                    color: BrandColors.error,
+                  },
+                ]}
+                themeColor="textSecondary"
+                accessibilityLabel={`${attachments.length} of ${MAX_ATTACHMENTS} attachments`}
+              >
+                {attachments.length}/{MAX_ATTACHMENTS}
+              </ThemedText>
+            </View>
+          )}
+          {(mode === "poll" || mode === "help") && (
+            <View style={[styles.publishBar, { borderTopColor: theme.border }]}>
+              <Pressable
+                onPress={handleSubmit}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  mode === "poll"
+                    ? "Publish poll"
+                    : helpKind === "REQUEST"
+                      ? "Publish help request"
+                      : "Publish help offer"
+                }
+                disabled={!canPost}
+                accessibilityState={{ disabled: !canPost, busy: submitting }}
+                style={[
+                  styles.publishBtn,
+                  {
+                    backgroundColor: canPost
+                      ? BrandColors.primary
+                      : theme.border,
+                  },
+                ]}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color={BrandColors.white} />
+                ) : (
+                  <ThemedText
+                    style={[styles.postBtnText, !canPost && { opacity: 0.7 }]}
+                  >
+                    {mode === "poll"
+                      ? "Publish Poll"
+                      : helpKind === "REQUEST"
+                        ? "Publish request"
+                        : "Publish offer"}
+                  </ThemedText>
+                )}
+              </Pressable>
+            </View>
+          )}
         </KeyboardAvoidingView>
       </SafeAreaView>
     </ThemedView>
@@ -713,9 +1474,36 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  navTitleWrap: {
+    alignItems: "center",
+    flex: 1,
+    paddingHorizontal: Spacing.two,
+  },
   navTitle: { fontSize: 15, fontWeight: "600" },
+  cancelBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 6,
+  },
+  cancelBtnText: { fontSize: 13, fontWeight: "600" },
+  navSubtitle: { fontSize: 11, marginTop: 1 },
+  postBtnSpacer: { width: 84 },
   postBtn: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 6 },
   postBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
+  publishBar: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+  },
+  publishBtn: {
+    borderRadius: BorderRadius.full,
+    alignItems: "center",
+    paddingVertical: Spacing.three,
+  },
   modeTabs: {
     flexDirection: "row",
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -740,8 +1528,71 @@ const styles = StyleSheet.create({
   avatarText: { fontSize: 17, fontWeight: "700" },
   authorName: { fontSize: 14, fontWeight: "600" },
   helpKindRow: { flexDirection: "row", gap: Spacing.two },
+  helpFieldWrap: { gap: 6 },
+  helpTitleRow: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.three,
+  },
+  helpTitleInput: { fontSize: 15, fontWeight: "600", paddingVertical: 10 },
+  helpBodyInput: { minHeight: 140 },
+  categoryWrap: { gap: 6 },
+  categoryLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+  },
+  categoryChips: { flexDirection: "row", gap: Spacing.two },
+  tagSection: { gap: Spacing.two },
+  tagChips: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
+  tagInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: BorderRadius.md,
+    paddingLeft: Spacing.three,
+    paddingRight: 4,
+    gap: Spacing.one,
+  },
+  tagPrefix: { fontSize: 14, fontWeight: "600" },
+  tagInputField: { flex: 1, fontSize: 14, paddingVertical: 8 },
+  tagAddBtn: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.sm,
+    backgroundColor: BrandColors.primary,
+  },
+  tagAddText: { fontSize: 13, fontWeight: "600" },
+  tagChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  tagChipText: { fontSize: 13, color: BrandColors.primary },
+  tagChipRemove: { fontSize: 14, fontWeight: "600" },
+  suggestBox: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: BorderRadius.md,
+    overflow: "hidden",
+  },
+  suggestItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 10,
+  },
+  suggestText: { fontSize: 14, fontWeight: "600", color: BrandColors.primary },
+  suggestCount: { fontSize: 12 },
   helpKindBtn: {
-    borderWidth: 1.5,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1,
     borderRadius: BorderRadius.full,
     paddingHorizontal: Spacing.three,
     paddingVertical: 6,
@@ -780,9 +1631,29 @@ const styles = StyleSheet.create({
   },
   attachmentToolbar: {
     flexDirection: "row",
-    gap: Spacing.four,
+    alignItems: "center",
+    gap: Spacing.three,
     borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+  },
+  attachmentToolbarContent: { gap: Spacing.four, alignItems: "center" },
+  attachmentCount: { fontSize: 12, fontVariant: ["tabular-nums"] },
+  charCount: { fontSize: 11, textAlign: "right", marginTop: 2 },
+  audioRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.two,
+    borderRadius: BorderRadius.md,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+  },
+  audioIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   attachmentAction: {
     flexDirection: "row",

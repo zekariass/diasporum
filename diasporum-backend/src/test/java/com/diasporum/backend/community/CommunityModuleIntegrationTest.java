@@ -16,10 +16,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.diasporum.backend.billing.BillingApi;
 import com.diasporum.backend.identity.IdentityApi;
 import com.diasporum.backend.identity.IdentityTestSupport;
+import com.diasporum.backend.community.internal.application.CommunityCountryChangeListener;
 import com.diasporum.backend.community.internal.application.CommunityService;
-import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +52,8 @@ class CommunityModuleIntegrationTest {
 
     @Autowired CommunityApi api;
     @Autowired CommunityService service;
+    @Autowired CommunityCountryChangeListener countryChanges;
+    @Autowired BillingApi billing;
     @Autowired IdentityApi identity;
     @Autowired ApplicationContext ctx;
     @Autowired JdbcTemplate jdbc;
@@ -65,10 +68,17 @@ class CommunityModuleIntegrationTest {
 
     @BeforeEach
     void setup() {
-        for (String t : new String[]{"community_memberships", "external_identities",
-                "profiles", "communities", "airports", "countries"}) {
+        jdbc.update("UPDATE user_settings SET active_community_id=NULL,"
+                + " default_community_id=NULL");
+        for (String t : new String[]{"idempotency_keys", "feed_posts",
+                "billing_usage_records", "community_memberships",
+                "external_identities", "profiles", "communities", "airports", "countries"}) {
             jdbc.update("DELETE FROM " + t);
         }
+        jdbc.update("DELETE FROM billing_entitlement_grants WHERE feature_id IN "
+                + "(SELECT id FROM billing_features WHERE feature_key LIKE 'EXTENDED_%')");
+        jdbc.update("DELETE FROM billing_plan_entitlements WHERE feature_id IN "
+                + "(SELECT id FROM billing_features WHERE feature_key LIKE 'EXTENDED_%')");
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES"
                 + "('Ethiopia','ET','ETH'),('Germany','DE','DEU')");
         origin = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='ET'",
@@ -168,6 +178,133 @@ class CommunityModuleIntegrationTest {
     }
 
     @Test
+    void defaultAndExtendedCapabilitiesUseCentralPolicyAndReversibleBilling() {
+        service.completeOnboarding(u1);
+        assertEquals("DEFAULT", api.activeContext(u1).accessType());
+        assertTrue(api.activeContext(u1).moduleEnabled("PROPERTY"));
+        assertEquals("DEFAULT_COMMUNITY",
+                api.actionEligibility(u1, "EXTENDED_FEED_POST_PUBLISH").source());
+        assertThrows(ResponseStatusException.class, () -> service.leave(u1, community));
+
+        jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES('France','FR','FRA')");
+        UUID france = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='FR'", UUID.class);
+        jdbc.update("INSERT INTO communities(name,slug,origin_country_id,destination_country_id)"
+                + " VALUES('ET in FR','et-in-fr',?,?)", origin, france);
+        UUID extended = jdbc.queryForObject("SELECT id FROM communities WHERE slug='et-in-fr'", UUID.class);
+        service.join(u1, extended);
+        service.setActiveCommunity(u1, extended);
+
+        var context = api.activeContext(u1);
+        assertEquals("ORIGIN_EXTENDED", context.accessType());
+        assertTrue(context.moduleEnabled("FEED"));
+        assertTrue(context.moduleEnabled("REELS"));
+        assertTrue(context.moduleEnabled("MATCHMAKING"));
+        assertTrue(context.moduleEnabled("COMMUNITY_HELP"));
+        assertFalse(context.moduleEnabled("PROPERTY"));
+        assertThrows(ResponseStatusException.class, () -> api.requireModule(u1, extended, "PROPERTY"));
+        assertEquals("UNCONFIGURED_FREE",
+                api.actionEligibility(u1, "EXTENDED_FEED_POST_PUBLISH").source());
+
+        jdbc.update("INSERT INTO billing_plan_entitlements(plan_id,feature_id,enabled,"
+                + "quantity_limit,reset_period) SELECT p.id,f.id,true,2,'MONTH'"
+                + " FROM billing_plans p,billing_features f WHERE p.plan_key='FREE'"
+                + " AND f.feature_key='EXTENDED_FEED_POST_PUBLISH'"
+                + " ON CONFLICT(plan_id,feature_id) DO UPDATE SET enabled=true,"
+                + "quantity_limit=2,reset_period='MONTH'");
+        assertEquals(2, api.actionEligibility(u1, "EXTENDED_FEED_POST_PUBLISH")
+                .remainingFreeQuota());
+        api.consumeExtendedAction(u1, extended, "EXTENDED_FEED_POST_PUBLISH", "community-test-1");
+        api.consumeExtendedAction(u1, extended, "EXTENDED_FEED_POST_PUBLISH", "community-test-1");
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records"
+                + " WHERE target_id=?", Integer.class, extended));
+        assertEquals(1, api.actionEligibility(u1, "EXTENDED_FEED_POST_PUBLISH")
+                .remainingFreeQuota());
+
+        UUID usage = jdbc.queryForObject("SELECT id FROM billing_usage_records WHERE target_id=?",
+                UUID.class, extended);
+        billing.reverseUsage(usage, u1, "Integration test reversal");
+        assertEquals(2, api.actionEligibility(u1, "EXTENDED_FEED_POST_PUBLISH")
+                .remainingFreeQuota());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records"
+                + " WHERE target_id=? AND reversed_at IS NOT NULL", Integer.class, extended));
+
+        service.leave(u1, extended);
+        assertEquals("LEFT", api.membershipOf(u1, extended).orElseThrow().status());
+        assertEquals("ACTIVE", service.join(u1, extended).status());
+    }
+
+    @Test
+    void extendedPublicationReplayCreatesOnePostAndConsumesOneAllowance() throws Exception {
+        service.completeOnboarding(u1);
+        jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES('France','FR','FRA')");
+        UUID france = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='FR'", UUID.class);
+        jdbc.update("INSERT INTO communities(name,slug,origin_country_id,destination_country_id)"
+                + " VALUES('ET in FR','et-in-fr',?,?)", origin, france);
+        UUID extended = jdbc.queryForObject("SELECT id FROM communities WHERE slug='et-in-fr'",
+                UUID.class);
+        service.join(u1, extended);
+        service.setActiveCommunity(u1, extended);
+        jdbc.update("INSERT INTO billing_plan_entitlements(plan_id,feature_id,enabled,"
+                + "quantity_limit,reset_period) SELECT p.id,f.id,true,2,'MONTH'"
+                + " FROM billing_plans p,billing_features f WHERE p.plan_key='FREE'"
+                + " AND f.feature_key='EXTENDED_FEED_POST_PUBLISH'"
+                + " ON CONFLICT(plan_id,feature_id) DO UPDATE SET enabled=true,"
+                + "quantity_limit=2,reset_period='MONTH'");
+
+        var asU1 = authentication(new UsernamePasswordAuthenticationToken(
+                new DiasporumUserPrincipal(u1, UUID.randomUUID(), "c1@test.com", List.of()),
+                null, List.of()));
+        String request = "{\"communityId\":\"" + extended
+                + "\",\"postType\":\"GENERAL\",\"body\":\"one allowance\","
+                + "\"idempotencyKey\":\"extended-publication-replay\"}";
+        var first = mvc.perform(post("/api/v1/feed/posts").with(asU1)
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isOk()).andReturn();
+        String id = com.jayway.jsonpath.JsonPath.read(
+                first.getResponse().getContentAsString(), "$.id");
+        mvc.perform(post("/api/v1/feed/posts").with(asU1)
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(id));
+
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM feed_posts WHERE community_id=?",
+                Integer.class, extended));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records"
+                + " WHERE target_id=? AND reversed_at IS NULL", Integer.class, extended));
+        assertEquals(1, api.actionEligibility(u1, "EXTENDED_FEED_POST_PUBLISH")
+                .remainingFreeQuota());
+    }
+
+    @Test
+    void countryChangesReconcileDefaultAndOriginMembershipsWithoutDeletingHistory() {
+        jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES('France','FR','FRA')");
+        UUID france = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='FR'", UUID.class);
+        jdbc.update("INSERT INTO communities(name,slug,origin_country_id,destination_country_id)"
+                + " VALUES('ET in FR','et-in-fr',?,?),('DE in DE','de-in-de',?,?)",
+                origin, france, dest, dest);
+        UUID extended = jdbc.queryForObject("SELECT id FROM communities WHERE slug='et-in-fr'", UUID.class);
+        UUID newDefault = jdbc.queryForObject("SELECT id FROM communities WHERE slug='de-in-de'", UUID.class);
+        service.completeOnboarding(u1);
+        service.join(u1, extended);
+
+        jdbc.update("UPDATE profiles SET current_country_id=? WHERE id=?", france, u1);
+        countryChanges.onCountriesChanged(new IdentityApi.CountriesChangedEvent(
+                u1, origin, dest, origin, france));
+        assertEquals(extended, identity.defaultCommunityId(u1).orElseThrow());
+        assertEquals(extended, identity.activeCommunityId(u1).orElseThrow());
+        assertEquals("ACTIVE", api.membershipOf(u1, community).orElseThrow().status());
+
+        jdbc.update("UPDATE profiles SET origin_country_id=?,current_country_id=? WHERE id=?",
+                dest, dest, u1);
+        countryChanges.onCountriesChanged(new IdentityApi.CountriesChangedEvent(
+                u1, origin, france, dest, dest));
+        assertEquals(newDefault, identity.defaultCommunityId(u1).orElseThrow());
+        assertEquals(newDefault, identity.activeCommunityId(u1).orElseThrow());
+        assertEquals("LEFT", api.membershipOf(u1, community).orElseThrow().status());
+        assertEquals("LEFT", api.membershipOf(u1, extended).orElseThrow().status());
+        assertEquals("ACTIVE", api.membershipOf(u1, newDefault).orElseThrow().status());
+    }
+
+    @Test
     void httpEndpointsWork() throws Exception {
         var asU1 = authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(u1, UUID.randomUUID(), "c1@test.com", List.of()), null, List.of()));
         mvc.perform(post("/api/v1/communities/" + community + "/join").with(asU1))
@@ -183,6 +320,15 @@ class CommunityModuleIntegrationTest {
         mvc.perform(get("/api/v1/me/active-community").with(asU1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.communityId").value(community.toString()));
+        mvc.perform(get("/api/v1/communities/my-access").with(asU1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.communities[0].accessType").value("DEFAULT"))
+                .andExpect(jsonPath("$.communities[0].modules.PROPERTY").value(true));
+        mvc.perform(get("/api/v1/me/community-actions/EXTENDED_FEED_POST_PUBLISH/eligibility")
+                        .with(asU1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("DEFAULT_COMMUNITY"))
+                .andExpect(jsonPath("$.consumptionRequired").value(false));
         mvc.perform(get("/api/v1/communities/" + community + "/members").with(asU1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1));

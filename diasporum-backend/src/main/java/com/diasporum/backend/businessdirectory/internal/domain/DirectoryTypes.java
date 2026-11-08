@@ -39,8 +39,10 @@ public final class DirectoryTypes {
             String websiteUrl, String verificationStatus, String status,
             String visibilityScope, UUID communityId, BigDecimal averageRating,
             int reviewCount, boolean sponsored, Instant createdAt, Instant updatedAt,
-            boolean saved, boolean canManage, String businessAccountName,
-            UUID logoMediaId, UUID coverMediaId, Double distanceMeters) {
+            boolean saved, boolean canManage, UUID businessAccountId,
+            String businessAccountName,
+            UUID logoMediaId, UUID coverMediaId, Double distanceMeters,
+            long listingCount, long locationCount) {
     }
 
     public record ReviewView(UUID id, UUID businessId, int rating, String body,

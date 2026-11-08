@@ -11,6 +11,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -20,6 +21,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Repository;
 
 /** PostgreSQL persistence for listings, reference data, attachments and saves. */
@@ -135,7 +137,7 @@ public class SpareBagListingRepository {
                 + "JOIN countries c ON c.id=a.country_id "
                 + "WHERE a.is_active=true AND c.is_active=true "
                 + "AND (?::uuid IS NULL OR a.country_id=?) "
-                + "AND (?::text IS NULL OR lower(a.name||' '||a.city||' '||a.iata_code) LIKE ?) "
+                + "AND (?::text IS NULL OR lower(a.name||' '||a.city||' '||a.iata_code||' '||c.name) LIKE ?) "
                 + "ORDER BY a.city,a.name LIMIT ?", SpareBagListingRepository::airport,
                 countryId, countryId, pattern, pattern, limit);
     }
@@ -242,10 +244,44 @@ public class SpareBagListingRepository {
     }
 
     public List<Listing> discover(UUID viewerCountryId, List<UUID> communityIds,
-            DiscoveryFilters f, LocalDate cursorDate, UUID cursorId, int limit) {
+            DiscoveryFilters f, String sort, Object cursorKey, UUID cursorId,
+            int limit) {
         List<Object> args = new ArrayList<>();
-        StringBuilder sql = new StringBuilder("SELECT ").append(COLS).append(FROM)
-                .append("WHERE l.deleted_at IS NULL AND l.status='PUBLISHED' ")
+        StringBuilder sql = new StringBuilder("SELECT ").append(COLS).append(FROM);
+        discoveryPredicates(sql, args, viewerCountryId, communityIds, f, true);
+        boolean newest = "NEWEST".equals(sort);
+        if (cursorKey != null) {
+            sql.append(newest ? "AND (l.published_at,l.id)<(?,?) "
+                    : "AND (l.travel_date_start,l.id)>(?,?) ");
+            args.add(cursorKey instanceof Instant instant
+                    ? instant.atOffset(ZoneOffset.UTC) : cursorKey);
+            args.add(cursorId);
+        }
+        sql.append(newest ? "ORDER BY l.published_at DESC,l.id DESC LIMIT ?"
+                : "ORDER BY l.travel_date_start,l.id LIMIT ?");
+        args.add(limit);
+        return jdbc.query(sql.toString(), SpareBagListingRepository::listing, args.toArray());
+    }
+
+    /** Grouped totals mirroring {@link #discover} predicates — powers the
+     * per-type tab counts; blocked-owner filtering stays page-scoped. */
+    public Map<String, Long> countDiscover(UUID viewerCountryId,
+            List<UUID> communityIds, DiscoveryFilters f) {
+        List<Object> args = new ArrayList<>();
+        StringBuilder sql = new StringBuilder("SELECT l.listing_type::text,COUNT(*)")
+                .append(FROM);
+        discoveryPredicates(sql, args, viewerCountryId, communityIds, f, false);
+        sql.append("GROUP BY l.listing_type");
+        Map<String, Long> counts = new HashMap<>();
+        jdbc.query(sql.toString(), (RowCallbackHandler) rs ->
+                counts.put(rs.getString(1), rs.getLong(2)), args.toArray());
+        return counts;
+    }
+
+    private static void discoveryPredicates(StringBuilder sql, List<Object> args,
+            UUID viewerCountryId, List<UUID> communityIds, DiscoveryFilters f,
+            boolean includeType) {
+        sql.append("WHERE l.deleted_at IS NULL AND l.status='PUBLISHED' ")
                 .append("AND COALESCE(l.travel_date_end,l.travel_date_start)>=CURRENT_DATE ")
                 .append("AND (l.closes_at IS NULL OR l.closes_at>now()) ");
         sql.append("AND ((l.visibility_scope='COUNTRY' AND oa.country_id=?) ");
@@ -256,7 +292,9 @@ public class SpareBagListingRepository {
             args.addAll(communityIds);
         }
         sql.append(") ");
-        filter(sql, args, "l.listing_type=?::spare_bag_listing_type", f.listingType());
+        if (includeType) {
+            filter(sql, args, "l.listing_type=?::spare_bag_listing_type", f.listingType());
+        }
         filter(sql, args, "l.community_id=?", f.communityId());
         filter(sql, args, "oa.country_id=?", f.originCountryId());
         filter(sql, args, "da.country_id=?", f.destinationCountryId());
@@ -266,20 +304,13 @@ public class SpareBagListingRepository {
         filter(sql, args, "l.travel_date_start<=?", f.dateTo());
         filter(sql, args, "l.price_amount<=?", f.maxPrice());
         filter(sql, args, "l.available_capacity_kg>=?", f.minimumCapacityKg());
+        filter(sql, args, "l.requested_weight_kg<=?", f.maxWeightKg());
         filter(sql, args, "l.price_currency=?", f.priceCurrency());
         if (f.categoryKey() != null) {
             sql.append("AND EXISTS(SELECT 1 FROM spare_bag_listing_categories fc "
                     + "WHERE fc.listing_id=l.id AND fc.category_key=?) ");
             args.add(f.categoryKey());
         }
-        if (cursorDate != null) {
-            sql.append("AND (l.travel_date_start,l.id)>(?,?) ");
-            args.add(cursorDate);
-            args.add(cursorId);
-        }
-        sql.append("ORDER BY l.travel_date_start,l.id LIMIT ?");
-        args.add(limit);
-        return jdbc.query(sql.toString(), SpareBagListingRepository::listing, args.toArray());
     }
 
     public List<Listing> mine(UUID ownerId, String status, Instant cursorTs,

@@ -37,10 +37,13 @@ function makePollItem(communityId: string): FeedItem {
     mediaIds: [],
     commentCount: 0,
     reactionCount: 0,
+    shareCount: 0,
     viewerReaction: null,
     viewed: false,
     saved: false,
     payload: {},
+    media: [],
+    tags: [],
   };
 }
 

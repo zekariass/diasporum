@@ -68,7 +68,8 @@ public class EventController {
     }
 
     /** Update-event request — null fields keep their current values.
-     * visibilityScope may be switched between COMMUNITY and COUNTRY. */
+     * visibilityScope may be switched between COMMUNITY and COUNTRY.
+     * clearEndsAt/clearCountryTopic explicitly clear optional fields. */
     public record UpdateEventRequest(
             String visibilityScope,
             @Size(max = 200) String title,
@@ -76,12 +77,14 @@ public class EventController {
             String eventMode,
             Instant startsAt,
             Instant endsAt,
+            Boolean clearEndsAt,
             @Size(max = 100) String timezone,
             @Size(max = 200) String locationName,
             @Size(max = 2000) String externalUrl,
             Integer capacity,
             UUID categoryId,
             UUID countryTopicCategoryId,
+            Boolean clearCountryTopic,
             UUID coverMediaId,
             Boolean clearCover) {
     }
@@ -140,9 +143,11 @@ public class EventController {
             @jakarta.validation.Valid @RequestBody UpdateEventRequest req) {
         return toDetail(principal.userId(), service.update(principal.userId(),
                 eventId, req.visibilityScope(), req.title(), req.description(),
-                req.eventMode(), req.startsAt(), req.endsAt(), req.timezone(),
+                req.eventMode(), req.startsAt(), req.endsAt(),
+                Boolean.TRUE.equals(req.clearEndsAt()), req.timezone(),
                 req.locationName(), req.externalUrl(), req.capacity(),
-                req.categoryId(), req.countryTopicCategoryId(), req.coverMediaId(),
+                req.categoryId(), req.countryTopicCategoryId(),
+                Boolean.TRUE.equals(req.clearCountryTopic()), req.coverMediaId(),
                 Boolean.TRUE.equals(req.clearCover())));
     }
 
@@ -188,15 +193,17 @@ public class EventController {
             @RequestParam(required = false) UUID communityId,
             @RequestParam(required = false) String scope,
             @RequestParam(required = false) UUID categoryId,
+            @RequestParam(required = false) UUID topicCategoryId,
             @RequestParam(required = false) String mode,
+            @RequestParam(required = false) String location,
             @RequestParam(required = false) Instant from,
             @RequestParam(required = false) Instant to,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int size) {
         var viewer = principal.userId();
-        var page = service.discover(viewer, communityId, scope, categoryId, mode,
-                from, to, search, cursor, size);
+        var page = service.discover(viewer, communityId, scope, categoryId,
+                topicCategoryId, mode, location, from, to, search, cursor, size);
         return new EventPage(page.items().stream()
                 .map(i -> withManage(viewer, i)).toList(), page.nextCursor());
     }

@@ -6,7 +6,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Closes only match state; friendship, GENERAL conversation, and messages remain. */
+/** Closes the match and linked chat; messages and independent relationships remain. */
 @Service
 public class UnmatchService {
 
@@ -23,6 +23,12 @@ public class UnmatchService {
         if (reason != null && (reason.isBlank() || reason.length() > 500)) {
             throw MatchmakingSupport.bad("INVALID_UNMATCH_REASON");
         }
+        var participant = repository.match(matchId).orElseThrow(
+                () -> MatchmakingSupport.notFound("MATCHMAKING_MATCH_NOT_FOUND"));
+        if (!participant.includes(actor) || !repository.adult(actor)) {
+            throw MatchmakingSupport.notFound("MATCHMAKING_MATCH_NOT_FOUND");
+        }
+        repository.pairLock(participant.userAId(), participant.userBId());
         var match = repository.matchForUpdate(matchId).orElseThrow(
                 () -> MatchmakingSupport.notFound("MATCHMAKING_MATCH_NOT_FOUND"));
         if (!match.includes(actor)) {

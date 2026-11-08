@@ -158,25 +158,25 @@ class VehicleListingsModuleIntegrationTest {
     }
 
     private VehicleInput input() {
-        return new VehicleInput(null, "COUNTRY", null, List.of(), "SALE", category, make, model,
+        return new VehicleInput(null, null, "COUNTRY", null, List.of(), "SALE", category, make, model,
                 variant, "Reliable test car", "A well maintained vehicle used for integration tests",
                 2022, 12000, "KM", "HYBRID", "AUTOMATIC", "AWD", "SUV", 1998, "Blue", 5, 5,
                 "GOOD", 2023, 1, Map.of(), null, "FULL", new BigDecimal("12500.00"), "EUR", "TOTAL",
                 null, null, null, new VehicleInput.LocationInput("Berlin", "Berlin",
                 "Berlin, Germany", 52.52, 13.405), List.of(feature),
-                Instant.now().plus(30, ChronoUnit.DAYS), false, false, Set.of());
+                Instant.now().plus(30, ChronoUnit.DAYS), false, false, Set.of(), null, false);
     }
 
     private VehicleInput businessInput(UUID accountId) {
         VehicleInput v = input();
-        return new VehicleInput(accountId, v.visibilityScope(), v.communityId(), v.selectedCommunityIds(),
+        return new VehicleInput(accountId, null, v.visibilityScope(), v.communityId(), v.selectedCommunityIds(),
                 v.listingPurpose(), v.categoryId(), v.makeId(), v.modelId(), v.variantId(), v.title(),
                 v.description(), v.modelYear(), v.mileage(), v.mileageUnit(), v.fuelType(), v.transmission(),
                 v.driveType(), v.bodyType(), v.engineSizeCc(), v.colour(), v.doors(), v.seats(), v.condition(),
                 v.registrationYear(), v.previousOwners(), v.additionalAttributes(), v.motExpiry(),
                 v.serviceHistory(), v.priceAmount(), v.currencyCode(), v.pricePeriod(), v.rentalDeposit(),
                 v.mileageAllowance(), v.rentalConditions(), v.location(), v.featureIds(), v.expiresAt(),
-                false, false, Set.of());
+                false, false, Set.of(), null, false);
     }
 
     private VehicleView published() {
@@ -271,35 +271,35 @@ class VehicleListingsModuleIntegrationTest {
         assertEquals("PUBLISHED", vehicles.publish(owner, draft.listing().id()).listing().status());
 
         VehicleInput sale = input();
-        VehicleInput invalidRent = new VehicleInput(null, "COUNTRY", null, List.of(), "RENT",
+        VehicleInput invalidRent = new VehicleInput(null, null, "COUNTRY", null, List.of(), "RENT",
                 category, make, model, variant, "Rental", "A rental listing with valid description",
                 2022, 1, "KM", "ELECTRIC", "AUTOMATIC", "FWD", "SUV", null, null, 5, 5,
                 "GOOD", 2022, 0, Map.of(), null, null, BigDecimal.TEN, "EUR", "TOTAL",
-                null, null, null, sale.location(), List.of(), null, false, false, Set.of());
+                null, null, null, sale.location(), List.of(), null, false, false, Set.of(), null, false);
         assertThrows(ResponseStatusException.class, () -> vehicles.create(owner, invalidRent));
     }
 
     @Test
     void categoryAttributesAndCatalogueRelationshipsAreValidated() {
         VehicleInput base = input();
-        VehicleInput attributes = new VehicleInput(null, "COUNTRY", null, List.of(), "SALE",
+        VehicleInput attributes = new VehicleInput(null, null, "COUNTRY", null, List.of(), "SALE",
                 category, make, model, variant, base.title(), base.description(), base.modelYear(),
                 base.mileage(), base.mileageUnit(), base.fuelType(), base.transmission(), base.driveType(),
                 base.bodyType(), base.engineSizeCc(), base.colour(), base.doors(), base.seats(), base.condition(),
                 base.registrationYear(), base.previousOwners(), Map.of("TOW_CAPACITY", 1500), base.motExpiry(),
                 base.serviceHistory(), base.priceAmount(), base.currencyCode(), base.pricePeriod(),
                 base.rentalDeposit(), base.mileageAllowance(), base.rentalConditions(), base.location(),
-                base.featureIds(), base.expiresAt(), false, false, Set.of());
+                base.featureIds(), base.expiresAt(), false, false, Set.of(), null, false);
         assertEquals(1500, vehicles.create(owner, attributes).listing().additionalAttributes()
                 .get("TOW_CAPACITY"));
-        VehicleInput wrongModel = new VehicleInput(null, "COUNTRY", null, List.of(), "SALE",
+        VehicleInput wrongModel = new VehicleInput(null, null, "COUNTRY", null, List.of(), "SALE",
                 category, make, UUID.randomUUID(), variant, base.title(), base.description(), base.modelYear(),
                 base.mileage(), base.mileageUnit(), base.fuelType(), base.transmission(), base.driveType(),
                 base.bodyType(), base.engineSizeCc(), base.colour(), base.doors(), base.seats(), base.condition(),
                 base.registrationYear(), base.previousOwners(), Map.of("UNKNOWN", 1), base.motExpiry(),
                 base.serviceHistory(), base.priceAmount(), base.currencyCode(), base.pricePeriod(),
                 base.rentalDeposit(), base.mileageAllowance(), base.rentalConditions(), base.location(),
-                base.featureIds(), base.expiresAt(), false, false, Set.of());
+                base.featureIds(), base.expiresAt(), false, false, Set.of(), null, false);
         assertThrows(ResponseStatusException.class, () -> vehicles.create(owner, wrongModel));
     }
 
@@ -334,7 +334,7 @@ class VehicleListingsModuleIntegrationTest {
         assertFalse(found.items().getFirst().listing().location().formattedAddress().contains("13.405"));
         var nearby = vehicles.discover(buyer, new VehicleSearch(null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, 52.521, 13.404, 5000.0, Map.of(), "DISTANCE"), null, 20);
+                null, null, null, 52.521, 13.404, 5000.0, Map.of(), "DISTANCE", null, null, null, null, null, null), null, 20);
         assertEquals(1, nearby.items().size());
         var filtered = vehicles.discover(buyer, search("HYBRID", new BigDecimal("12000"),
                 new BigDecimal("13000"), "PRICE_ASC"), null, 1);
@@ -352,27 +352,64 @@ class VehicleListingsModuleIntegrationTest {
                 .items().isEmpty());
     }
 
+    @Test
+    void discoveryConvertsMileageUnitsAndFiltersColourAndRentalPeriod() throws Exception {
+        VehicleView miles = published();
+        VehicleView kilometers = published();
+        jdbc.update("UPDATE vehicle_listings SET mileage=100,mileage_unit='MILES' WHERE id=?", miles.listing().id());
+        jdbc.update("UPDATE vehicle_listings SET mileage=161,mileage_unit='KM' WHERE id=?", kilometers.listing().id());
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("mileageMax", "100").param("mileageUnit", "MILES"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].listing.id").value(miles.listing().id().toString()));
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("mileageMin", "100").param("mileageMax", "100").param("mileageUnit", "MILES"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1));
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("mileageMax", "160"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("mileageMax", "161").param("mileageUnit", "KM"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(2));
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("mileageMin", "161"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].listing.id").value(kilometers.listing().id().toString()));
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("colour", "blue"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(2));
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("colour", "Silver"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(0));
+        jdbc.update("UPDATE vehicle_listings SET listing_purpose='RENT',price_period='DAY' WHERE id=?", miles.listing().id());
+        jdbc.update("UPDATE vehicle_listings SET listing_purpose='RENT',price_period='MONTH' WHERE id=?", kilometers.listing().id());
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("purpose", "RENT").param("pricePeriod", "DAY"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].listing.id").value(miles.listing().id().toString()));
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("mileageUnit", "INVALID"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("mileageMin", "200").param("mileageMax", "100"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("mileageMax", "-1"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/vehicles").with(asUser(buyer)).param("pricePeriod", "INVALID"))
+                .andExpect(status().isBadRequest());
+    }
+
     private VehicleSearch search(String fuel, BigDecimal min, BigDecimal max, String sort) {
         return new VehicleSearch(null, null, null, null, null, null, null, null, null, null,
                 min, max, min == null && max == null && !sort.startsWith("PRICE") ? null : "EUR",
                 fuel, null, null, null, null, null, null, null, null, null, null, null, null,
-                Map.of(), sort);
+                Map.of(), sort, null, null, null, null, null, null);
     }
 
     @Test
     void communityFilterIncludesSelectedCommunitiesListings() {
-        VehicleView draft = vehicles.create(owner, new VehicleInput(null, "SELECTED_COMMUNITIES",
+        VehicleView draft = vehicles.create(owner, new VehicleInput(null, null, "SELECTED_COMMUNITIES",
                 null, List.of(community), "SALE", category, make, model, variant, "Shared car",
                 "A car visible only to selected communities", 2021, 8000, "KM", "PETROL",
                 "MANUAL", "FWD", "HATCHBACK", null, null, 5, 5, "GOOD", 2021, 0, Map.of(),
                 null, null, new BigDecimal("9000.00"), "EUR", "TOTAL", null, null, null,
                 new VehicleInput.LocationInput("Berlin", "Berlin", "Berlin, Germany", null, null),
-                List.of(), null, false, false, Set.of()));
+                List.of(), null, false, false, Set.of(), null, false));
         grant(owner, null, 1);
         vehicles.publish(owner, draft.listing().id());
         var found = vehicles.discover(buyer, new VehicleSearch(null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null, community, null, null, null, null, null, Map.of(), "NEWEST"),
+                null, null, community, null, null, null, null, null, Map.of(), "NEWEST", null, null, null, null, null, null),
                 null, 20);
         assertEquals(1, found.items().size());
     }
@@ -426,6 +463,86 @@ class VehicleListingsModuleIntegrationTest {
         vehicles.unsave(buyer, listing.listing().id());
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM vehicle_listing_saves "
                 + "WHERE vehicle_listing_id=?", Integer.class, listing.listing().id()));
+    }
+
+    @Test
+    void contactChannelsAreFlagFilteredPatchableAndEnquiryIsNotified() {
+        VehicleInput base = input();
+        VehicleInput withContact = new VehicleInput(null, null, "COUNTRY", null, List.of(), "SALE",
+                category, make, model, variant, base.title(), base.description(), base.modelYear(),
+                base.mileage(), base.mileageUnit(), base.fuelType(), base.transmission(),
+                base.driveType(), base.bodyType(), base.engineSizeCc(), base.colour(), base.doors(),
+                base.seats(), base.condition(), base.registrationYear(), base.previousOwners(),
+                base.additionalAttributes(), base.motExpiry(), base.serviceHistory(),
+                base.priceAmount(), base.currencyCode(), base.pricePeriod(), base.rentalDeposit(),
+                base.mileageAllowance(), base.rentalConditions(), base.location(), base.featureIds(),
+                base.expiresAt(), false, false, Set.of(),
+                new VehicleInput.ContactInput("+4912345", null, "seller@example.test",
+                        "phone", true, false, false), false);
+        VehicleView draft = vehicles.create(owner, withContact);
+        grant(owner, null, 1);
+        VehicleView publishedView = vehicles.publish(owner, draft.listing().id());
+
+        VehicleView publicDetail = vehicles.detail(buyer, publishedView.listing().id());
+        assertEquals("+4912345", publicDetail.contact().phone());
+        assertEquals(null, publicDetail.contact().whatsapp());
+        assertEquals(null, publicDetail.contact().email());
+        assertEquals("PHONE", publicDetail.contact().preferredMethod());
+        VehicleView ownerDetail = vehicles.detail(owner, publishedView.listing().id());
+        assertEquals("seller@example.test", ownerDetail.contact().email());
+
+        UUID conversation = vehicles.contact(buyer, publishedView.listing().id(), null);
+        assertNotNull(conversation);
+        // Repeated contact reuses the thread and does not re-notify (dedupe key).
+        assertEquals(conversation, vehicles.contact(buyer, publishedView.listing().id(), null));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications "
+                + "WHERE type='VEHICLE_ENQUIRY' AND target_id=?", Integer.class,
+                publishedView.listing().id()));
+
+        // Empty contact object and channel-less preference are rejected.
+        VehicleInput emptyContact = new VehicleInput(null, null, "COUNTRY", null, List.of(), "SALE",
+                category, make, model, variant, base.title(), base.description(), base.modelYear(),
+                base.mileage(), base.mileageUnit(), base.fuelType(), base.transmission(),
+                base.driveType(), base.bodyType(), base.engineSizeCc(), base.colour(), base.doors(),
+                base.seats(), base.condition(), base.registrationYear(), base.previousOwners(),
+                base.additionalAttributes(), base.motExpiry(), base.serviceHistory(),
+                base.priceAmount(), base.currencyCode(), base.pricePeriod(), base.rentalDeposit(),
+                base.mileageAllowance(), base.rentalConditions(), base.location(), base.featureIds(),
+                base.expiresAt(), false, false, Set.of(),
+                new VehicleInput.ContactInput(null, null, null, null, null, null, null), false);
+        assertThrows(ResponseStatusException.class, () -> vehicles.create(owner, emptyContact));
+
+        // clearContact removes stored channels on patch.
+        VehicleInput clear = new VehicleInput(null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, false, false, Set.of(), null, true);
+        vehicles.update(owner, publishedView.listing().id(), clear);
+        assertEquals(null, vehicles.detail(owner, publishedView.listing().id()).contact());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM vehicle_listing_contacts "
+                + "WHERE vehicle_listing_id=?", Integer.class, publishedView.listing().id()));
+    }
+
+    @Test
+    void newDiscoveryFiltersAndExpiryWorkerSweep() {
+        VehicleView listing = published();
+        var found = vehicles.discover(buyer, new VehicleSearch(null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, Map.of(), "NEWEST", "AWD", 5, 5, 2023, 2023, null),
+                null, 20);
+        assertEquals(1, found.items().size());
+        var miss = vehicles.discover(buyer, new VehicleSearch(null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, Map.of(), "NEWEST", "RWD", null, null, null,
+                null, null), null, 20);
+        assertTrue(miss.items().isEmpty());
+        jdbc.update("UPDATE vehicle_listings SET expires_at=now()-interval '1 hour' WHERE id=?",
+                listing.listing().id());
+        assertEquals(1, ctx.getBean(
+                com.diasporum.backend.vehiclelistings.internal.application.VehicleExpiryWorker.class)
+                .expire());
+        assertEquals("EXPIRED", jdbc.queryForObject("SELECT status FROM vehicle_listings "
+                + "WHERE id=?", String.class, listing.listing().id()));
     }
 
     @Test

@@ -1,12 +1,12 @@
 package com.diasporum.backend.matchmaking.internal.application;
 
 import com.diasporum.backend.billing.BillingApi;
+import com.diasporum.backend.community.CommunityApi;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.SwipeResult;
 import com.diasporum.backend.matchmaking.internal.infrastructure.persistence.MatchmakingRepository;
 import com.diasporum.backend.messaging.MessagingApi;
 import com.diasporum.backend.notifications.NotificationsApi;
 import com.diasporum.backend.notifications.NotificationsApi.NotificationCommand;
-import com.diasporum.backend.social.SocialApi;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -20,20 +20,20 @@ public class RecordSwipeService {
 
     private final MatchmakingRepository repository;
     private final MatchmakingAccess access;
-    private final SocialApi social;
     private final MessagingApi messaging;
     private final BillingApi billing;
     private final NotificationsApi notifications;
+    private final CommunityApi community;
 
     public RecordSwipeService(MatchmakingRepository repository, MatchmakingAccess access,
-            SocialApi social, MessagingApi messaging, BillingApi billing,
-            NotificationsApi notifications) {
+            MessagingApi messaging, BillingApi billing,
+            NotificationsApi notifications, CommunityApi community) {
         this.repository = repository;
         this.access = access;
-        this.social = social;
         this.messaging = messaging;
         this.billing = billing;
         this.notifications = notifications;
+        this.community = community;
     }
 
     @Transactional
@@ -42,18 +42,40 @@ public class RecordSwipeService {
             throw MatchmakingSupport.bad("INVALID_MATCHMAKING_SWIPE");
         }
         access.requireEligible(actor);
+        var context = community.requireActiveModule(actor, "MATCHMAKING");
+        repository.actorLock(actor);
         repository.pairLock(actor, target);
         access.requireDiscoverableTarget(actor, target);
         if (!repository.compatible(actor, target)) {
             throw MatchmakingSupport.conflict("MATCHMAKING_PROFILES_INCOMPATIBLE");
         }
-        if (repository.swipe(actor, target).isPresent()
-                || repository.matchExistsForPair(actor, target)) {
+        var existing = repository.swipe(actor, target).orElse(null);
+        if (existing == null && !community.isActiveMember(target, context.communityId())) {
+            throw MatchmakingSupport.notFound("MATCHMAKING_PROFILE_NOT_FOUND");
+        }
+        var match = repository.matchForPair(actor, target).orElse(null);
+        if (match != null && !"MATCHED".equals(match.status())) {
             throw MatchmakingSupport.conflict("MATCHMAKING_SWIPE_CONFLICT");
         }
+        if (existing != null && "ACTIVE".equals(existing.status())) {
+            if (!action.equals(existing.action())) {
+                throw MatchmakingSupport.conflict("MATCHMAKING_SWIPE_CONFLICT");
+            }
+            return new SwipeResult(action, "ACTIVE", match != null,
+                    match == null ? null : match.id(),
+                    match == null ? null : messaging.conversationIdForMatch(match.id()).orElse(null));
+        }
+        if (match != null) throw MatchmakingSupport.conflict("MATCHMAKING_SWIPE_CONFLICT");
 
-        UUID historyEventId = repository.insertSwipe(actor, target, action);
-        billing.consumePersonalFeature(actor, "MATCHMAKING_INTERACT", historyEventId.toString());
+        UUID historyEventId = repository.insertSwipe(actor, target, action,
+                context.communityId());
+        if (context.isDefault()) {
+            billing.consumePersonalFeature(actor, "MATCHMAKING_INTERACT",
+                    historyEventId.toString());
+        } else if ("LIKE".equals(action)) {
+            community.consumeExtendedAction(actor, context.communityId(),
+                    "EXTENDED_MATCHMAKING_LIKE", historyEventId.toString());
+        }
         if ("LIKE".equals(action)) {
             notifyLike(actor, target);
         }
@@ -62,7 +84,6 @@ public class RecordSwipeService {
         }
 
         UUID matchId = repository.insertMatch(actor, target);
-        social.establishMatchmakingFriendship(actor, target);
         UUID conversationId = messaging.ensureAcceptedGeneralConversation(actor, target, matchId);
         notifyMatch(actor, matchId);
         notifyMatch(target, matchId);

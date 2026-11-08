@@ -4,7 +4,7 @@ import {
   toUpdateJobRequest,
   validateJobForm,
   type JobFormState,
-} from "@/features/jobs/components/job-form";
+} from "@/features/jobs/utils/job-form-state";
 import { canTransitionApplication } from "@/features/jobs/utils/job-format";
 
 jest.mock("@/global.css", () => ({}));

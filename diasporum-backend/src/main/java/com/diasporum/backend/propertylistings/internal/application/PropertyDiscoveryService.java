@@ -4,6 +4,7 @@ import com.diasporum.backend.businessaccounts.BusinessAccountsApi;
 import com.diasporum.backend.community.CommunityApi;
 import com.diasporum.backend.identity.IdentityApi;
 import com.diasporum.backend.identity.IdentityApi.ProfileSummary;
+import com.diasporum.backend.propertylistings.internal.application.PropertyModels.BrowseOptions;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.Listed;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.PropertyPage;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.SearchCriteria;
@@ -51,8 +52,18 @@ public class PropertyDiscoveryService {
 
     public PropertyPage discover(UUID viewer, SearchCriteria criteria, String cursor,
             int size) {
+        return discover(viewer, criteria, cursor, size, BrowseOptions.defaults());
+    }
+
+    public PropertyPage discover(UUID viewer, SearchCriteria criteria, String cursor,
+            int size, BrowseOptions options) {
         SearchCriteria c = criteria == null ? emptyCriteria() : criteria;
         validate(c);
+        validateOptions(options);
+        String sort = options.sort() == null ? "NEWEST" : options.sort();
+        boolean priceSort = !"NEWEST".equals(sort);
+        String direction = "PRICE_ASC".equals(sort) ? "ASC" : "DESC";
+        String column = priceSort ? "p.price_amount" : "COALESCE(p.published_at,p.created_at)";
         int limit = clamp(size);
         var args = new ArrayList<Object>();
         args.add(viewer);
@@ -66,24 +77,37 @@ public class PropertyDiscoveryService {
             args.add(c.countryId());
         }
         addFilters(where, args, c);
+        addOptions(where, args, options);
+        Long total = jdbc.queryForObject("SELECT count(*)" + PropertyRepository.LIST_FROM
+                + where, Long.class, args.subList(1, args.size()).toArray());
         if (cursor != null) {
-            var decoded = PropertyCursors.decode(cursor);
-            where.append(" AND (p.created_at,p.id)<(?,?)");
-            args.add(Timestamp.from(decoded.time()));
+            var decoded = PropertyCursors.decodeBrowse(cursor, sort);
+            where.append(" AND (").append(column).append(",p.id)")
+                    .append("ASC".equals(direction) ? ">(?,?)" : "<(?,?)");
+            args.add(priceSort ? new BigDecimal(decoded.value())
+                    : Timestamp.from(java.time.Instant.parse(decoded.value())));
             args.add(decoded.id());
         }
         args.add(limit + 1);
         List<Listed> rows = jdbc.query("SELECT " + PropertyRepository.LIST_COLS
                         + ",EXISTS(SELECT 1 FROM property_listing_saves s"
                         + " WHERE s.property_listing_id=p.id AND s.user_id=?) AS saved,"
-                        + "p.created_at AS cursor_time" + PropertyRepository.LIST_FROM
-                        + where + " ORDER BY p.created_at DESC,p.id DESC LIMIT ?",
+                        + "COALESCE(p.published_at,p.created_at) AS cursor_time" + PropertyRepository.LIST_FROM
+                        + where + " ORDER BY " + column + " " + direction + ",p.id " + direction + " LIMIT ?",
                 repository::listed, args.toArray());
-        return page(viewer, rows, limit);
+        String next = null;
+        if (rows.size() > limit) {
+            rows = new ArrayList<>(rows.subList(0, limit));
+            Listed last = rows.get(rows.size() - 1);
+            next = PropertyCursors.encodeBrowse(sort, priceSort
+                    ? last.property().priceAmount().toPlainString() : last.cursorTime().toString(),
+                    last.property().id());
+        }
+        return new PropertyPage(rows.stream().map(row -> repository.item(viewer, row)).toList(), next, total);
     }
 
     public PropertyPage mine(UUID viewer, String status, UUID businessAccountId,
-            String cursor, int size) {
+            UUID businessListingId, String cursor, int size) {
         if (status != null && !STATUSES.contains(status)) {
             throw bad("INVALID_PROPERTY_STATUS");
         }
@@ -106,6 +130,10 @@ public class PropertyDiscoveryService {
             authorization.requireBusinessManager(viewer, businessAccountId);
             where.append(" AND p.business_account_id=?");
             args.add(businessAccountId);
+        }
+        if (businessListingId != null) {
+            where.append(" AND p.business_listing_id=?");
+            args.add(businessListingId);
         }
         if (status != null) {
             where.append(" AND p.status=?");
@@ -157,38 +185,45 @@ public class PropertyDiscoveryService {
 
     private Audience audience(UUID viewer, UUID communityId) {
         var args = new ArrayList<Object>();
+        UUID country = identity.profileSummary(viewer).map(ProfileSummary::currentCountryId)
+                .orElse(null);
+        if (country == null) return new Audience("FALSE", args);
+        args.add(country);
         if (communityId != null) {
             if (!community.canAccess(viewer, communityId)) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "NOT_A_MEMBER");
             }
             args.add(communityId);
             args.add(communityId);
-            return new Audience("(p.community_id=? OR EXISTS(SELECT 1"
+            return new Audience("p.country_id=? AND (p.visibility_scope='COUNTRY'"
+                    + " OR (p.visibility_scope='COMMUNITY' AND p.community_id=?)"
+                    + " OR (p.visibility_scope='SELECTED_COMMUNITIES' AND EXISTS(SELECT 1"
                     + " FROM property_listing_communities pc"
-                    + " WHERE pc.property_listing_id=p.id AND pc.community_id=?))", args);
+                    + " WHERE pc.property_listing_id=p.id AND pc.community_id=?)))", args);
         }
         List<UUID> memberships = community.membershipsOf(viewer).stream()
-                .map(CommunityApi.MembershipView::communityId).toList();
-        UUID country = identity.profileSummary(viewer).map(ProfileSummary::currentCountryId)
-                .orElse(null);
+                .map(CommunityApi.MembershipView::communityId)
+                .filter(id -> community.canAccess(viewer, id)).toList();
         List<String> clauses = new ArrayList<>();
-        if (country != null) {
-            clauses.add("(p.visibility_scope='COUNTRY' AND p.country_id=?)");
-            args.add(country);
-        }
+        clauses.add("p.visibility_scope='COUNTRY'");
         if (!memberships.isEmpty()) {
             String placeholders = placeholders(memberships.size());
-            clauses.add("(p.community_id IN (" + placeholders + ") OR EXISTS(SELECT 1"
+            clauses.add("((p.visibility_scope='COMMUNITY' AND p.community_id IN (" + placeholders
+                    + ")) OR (p.visibility_scope='SELECTED_COMMUNITIES' AND EXISTS(SELECT 1"
                     + " FROM property_listing_communities pc"
                     + " WHERE pc.property_listing_id=p.id AND pc.community_id IN ("
-                    + placeholders + ")))");
+                    + placeholders + "))))");
             args.addAll(memberships);
             args.addAll(memberships);
         }
-        return new Audience(clauses.isEmpty() ? "FALSE" : String.join(" OR ", clauses), args);
+        return new Audience("p.country_id=? AND (" + String.join(" OR ", clauses) + ")", args);
     }
 
     private static void addFilters(StringBuilder where, List<Object> args, SearchCriteria c) {
+        if (c.businessListingId() != null) {
+            where.append(" AND p.business_listing_id=?");
+            args.add(c.businessListingId());
+        }
         if (c.propertyTypeId() != null) {
             where.append(" AND p.property_type_id=?");
             args.add(c.propertyTypeId());
@@ -222,12 +257,15 @@ public class PropertyDiscoveryService {
             args.add(c.furnishedStatus());
         }
         if (c.city() != null && !c.city().isBlank()) {
-            where.append(" AND a.city ILIKE ?");
-            args.add(c.city().trim());
+            where.append(" AND (a.city ILIKE ? OR a.region ILIKE ?)");
+            args.add("%" + c.city().trim() + "%");
+            args.add("%" + c.city().trim() + "%");
         }
         if (c.search() != null && !c.search().isBlank()) {
-            where.append(" AND (p.title ILIKE ? OR p.description ILIKE ?)");
+            where.append(" AND (p.title ILIKE ? OR p.description ILIKE ? OR a.city ILIKE ? OR a.region ILIKE ?)");
             String query = "%" + c.search().trim() + "%";
+            args.add(query);
+            args.add(query);
             args.add(query);
             args.add(query);
         }
@@ -240,17 +278,58 @@ public class PropertyDiscoveryService {
         }
     }
 
+    private static void addOptions(StringBuilder where, List<Object> args, BrowseOptions o) {
+        option(where, args, "p.currency_code=?", o.currencyCode());
+        option(where, args, "p.price_period=?", o.pricePeriod());
+        option(where, args, "p.floor_area>=?", o.minFloorArea());
+        option(where, args, "p.floor_area<=?", o.maxFloorArea());
+        option(where, args, "p.floor_area_unit=?", o.floorAreaUnit());
+        option(where, args, "p.availability_date<=?", o.availableBy());
+        option(where, args, "p.rental_deposit<=?", o.maxDeposit());
+        option(where, args, "p.bills_included=?", o.billsIncluded());
+        option(where, args, "p.minimum_tenancy_months<=?", o.maxTenancyMonths());
+        option(where, args, "lower(p.tenure)=lower(?)", o.tenure());
+        option(where, args, "p.condition_key=?", o.conditionKey());
+        option(where, args, "p.bathrooms<=?", o.maxBathrooms());
+    }
+
+    private static void option(StringBuilder where, List<Object> args, String sql, Object value) {
+        if (value != null) { where.append(" AND ").append(sql); args.add(value); }
+    }
+
+    private static void validateOptions(BrowseOptions o) {
+        if (o.sort() != null && !Set.of("NEWEST", "PRICE_ASC", "PRICE_DESC").contains(o.sort()))
+            throw bad("INVALID_PROPERTY_SORT");
+        if (o.currencyCode() != null && !o.currencyCode().matches("[A-Z]{3}"))
+            throw bad("INVALID_CURRENCY");
+        if (o.pricePeriod() != null && !Set.of("WEEK", "MONTH", "YEAR", "TOTAL").contains(o.pricePeriod()))
+            throw bad("INVALID_PRICE_PERIOD");
+        if (o.floorAreaUnit() != null && !Set.of("SQM", "SQFT").contains(o.floorAreaUnit()))
+            throw bad("INVALID_AREA_UNIT");
+        if (negative(o.minFloorArea()) || negative(o.maxFloorArea()) || negative(o.maxDeposit())
+                || negative(o.maxTenancyMonths()) || negative(o.maxBathrooms())
+                || (o.minFloorArea() != null && o.maxFloorArea() != null
+                && o.minFloorArea().compareTo(o.maxFloorArea()) > 0))
+            throw bad("INVALID_PROPERTY_FILTER");
+        if ((o.minFloorArea() != null || o.maxFloorArea() != null) && o.floorAreaUnit() == null)
+            throw bad("AREA_UNIT_REQUIRED");
+        if (o.conditionKey() != null && !Set.of("NEW", "EXCELLENT", "GOOD", "FAIR",
+                "NEEDS_RENOVATION", "UNSPECIFIED").contains(o.conditionKey()))
+            throw bad("INVALID_PROPERTY_CONDITION");
+    }
+
     private static void validate(SearchCriteria c) {
         if (c.listingPurpose() != null && !Set.of("SALE", "RENT").contains(c.listingPurpose())) {
             throw bad("INVALID_LISTING_PURPOSE");
         }
         if ((c.latitude() == null) != (c.longitude() == null)
-                || (c.latitude() != null && (c.latitude() < -90 || c.latitude() > 90
+                || (c.latitude() != null && (!Double.isFinite(c.latitude())
+                || !Double.isFinite(c.longitude()) || c.latitude() < -90 || c.latitude() > 90
                 || c.longitude() < -180 || c.longitude() > 180))) {
             throw bad("INVALID_COORDINATES");
         }
-        if (c.latitude() != null && (c.radiusKm() == null || c.radiusKm() <= 0
-                || c.radiusKm() > 100)) {
+        if (c.latitude() != null && (c.radiusKm() == null || !Double.isFinite(c.radiusKm())
+                || c.radiusKm() <= 0 || c.radiusKm() > 100)) {
             throw bad("INVALID_RADIUS");
         }
         if (negative(c.minPrice()) || negative(c.maxPrice())
@@ -278,7 +357,7 @@ public class PropertyDiscoveryService {
 
     private static SearchCriteria emptyCriteria() {
         return new SearchCriteria(null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
     }
 
     private static String placeholders(int size) {

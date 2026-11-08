@@ -72,6 +72,10 @@ public class SettingsService {
 
     @Transactional
     public SettingsResponse updateSettings(UUID profileId, UpdateSettingsRequest req) {
+        if (req.activeCommunityId() != null || req.defaultCommunityId() != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "COMMUNITY_CONTEXT_MANAGED_BY_COMMUNITY_API");
+        }
         if (req.preferredLanguageCode() != null) {
             jdbc.update("UPDATE user_settings SET preferred_language_code=?,"
                     + " updated_at=now() WHERE user_id=?",
@@ -80,16 +84,6 @@ public class SettingsService {
         if (req.theme() != null) {
             jdbc.update("UPDATE user_settings SET theme=?, updated_at=now()"
                     + " WHERE user_id=?", req.theme(), profileId);
-        }
-        if (req.activeCommunityId() != null) {
-            requireCommunity(req.activeCommunityId());
-            jdbc.update("UPDATE user_settings SET active_community_id=?,"
-                    + " updated_at=now() WHERE user_id=?", req.activeCommunityId(), profileId);
-        }
-        if (req.defaultCommunityId() != null) {
-            requireCommunity(req.defaultCommunityId());
-            jdbc.update("UPDATE user_settings SET default_community_id=?,"
-                    + " updated_at=now() WHERE user_id=?", req.defaultCommunityId(), profileId);
         }
         return getSettings(profileId);
     }

@@ -61,8 +61,12 @@ export function PropertiesEmpty({
 }
 
 export function PropertyListError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const theme = useTheme();
   return (
     <View style={styles.empty}>
+      <View style={[styles.icon, { backgroundColor: theme.errorSurface }]}>
+        <Ionicons name="cloud-offline-outline" size={30} color={theme.error} />
+      </View>
       <ThemedText themeColor="textSecondary" style={styles.emptyBody}>{message}</ThemedText>
       <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Retry">
         <ThemedText style={styles.retry}>Retry</ThemedText>

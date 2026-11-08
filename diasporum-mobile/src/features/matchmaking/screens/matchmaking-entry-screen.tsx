@@ -1,64 +1,56 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useEffect } from 'react';
+import { StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
 import { ErrorState } from '@/shared/components/error-state';
 import { LoadingScreen } from '@/shared/components/loading-screen';
-import { useTheme } from '@/hooks/use-theme';
-import { Spacing } from '@/shared/theme/spacing';
 import { ScreenHeader } from '../components/matchmaking-ui';
-import { useMatchmakingApi } from '../hooks/use-matchmaking-api';
-import { isMissingResource, matchmakingError } from '../services/matchmaking-errors';
-import type { MatchmakingStatus } from '../types/matchmaking-types';
+import { useMatchmakingEligibility } from '../hooks/use-matchmaking-eligibility';
+import DatingDobScreen from './dob-screen';
+import DatingIntroScreen from './dating-intro-screen';
+import DatingStatusScreen from './dating-status-screen';
 import DiscoveryScreen from './discovery-screen';
 
+/**
+ * Dating entry router — the backend `/eligibility` read decides which experience
+ * applies: intro (no profile), setup redirect (incomplete), a restricted-status
+ * screen, or discovery (eligible). Discovery itself is enforced server-side, so
+ * navigation and deep links cannot bypass these checks.
+ */
 export default function MatchmakingEntryScreen() {
-  const theme = useTheme();
-  const api = useMatchmakingApi();
-  const [status, setStatus] = useState<MatchmakingStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const profile = await api.profile();
-      setStatus(profile.status);
-    } catch (loadError) {
-      if (isMissingResource(loadError)) {
-        setStatus('DRAFT');
-      } else {
-        setError(matchmakingError(loadError, 'Matchmaking status could not be loaded.'));
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [api]);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void load(); }, [load]);
+  const { eligibility, loading, error, refresh } = useMatchmakingEligibility();
 
   useEffect(() => {
-    if (loading || error || status === 'ACTIVE') return;
-    if (status === 'DRAFT') router.replace('/(app)/matchmaking/setup' as never);
-    else if (status) router.replace('/(app)/matchmaking/profile' as never);
-  }, [error, loading, status]);
+    if (eligibility?.reason === 'PROFILE_INCOMPLETE') {
+      router.replace('/(app)/matchmaking/setup' as never);
+    }
+  }, [eligibility?.reason]);
 
-  if (status === 'ACTIVE' && !loading && !error) return <DiscoveryScreen />;
-  if (loading) return <LoadingScreen />;
-  return (
-    <ThemedView style={styles.root}>
-      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-        <ScreenHeader title="Matchmaking" />
-        {error ? <ErrorState message={error} onRetry={() => void load()} /> :
-          <ActivityIndicator style={styles.loader} color={theme.primary} />}
-      </SafeAreaView>
-    </ThemedView>
-  );
+  if (loading || (!eligibility && !error)) return <LoadingScreen message="Opening Dating" />;
+  if (error || !eligibility) {
+    return (
+      <ThemedView style={styles.root}>
+        <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+          <ScreenHeader title="Dating" />
+          <ErrorState message={error ?? 'Dating status could not be loaded.'}
+            onRetry={() => void refresh()} />
+        </SafeAreaView>
+      </ThemedView>
+    );
+  }
+  if (eligibility.eligible) return <DiscoveryScreen />;
+  // No stored DOB → collect it before anything else; saving refreshes
+  // eligibility and the backend resolves the next step (18+ vs under-18).
+  if (eligibility.reason === 'DOB_REQUIRED') {
+    return <DatingDobScreen onSaved={() => void refresh()} />;
+  }
+  if (eligibility.reason === 'NO_PROFILE') return <DatingIntroScreen />;
+  // PROFILE_INCOMPLETE redirects to setup in the effect above.
+  if (eligibility.reason === 'PROFILE_INCOMPLETE') return <LoadingScreen />;
+  return <DatingStatusScreen eligibility={eligibility} onChanged={() => void refresh()} />;
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  loader: { marginTop: Spacing.six },
 });

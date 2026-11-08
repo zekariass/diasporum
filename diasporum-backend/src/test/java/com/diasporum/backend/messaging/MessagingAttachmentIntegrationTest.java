@@ -64,6 +64,11 @@ class MessagingAttachmentIntegrationTest {
                 public java.util.Optional<StorageClient.ObjectMeta> head(String key) {
                     return java.util.Optional.of(new StorageClient.ObjectMeta(1024, "image/png"));
                 }
+                public java.util.Optional<byte[]> get(String key) {
+                    return java.util.Optional.empty();
+                }
+                public void put(String key, byte[] data, String contentType) {
+                }
                 public void delete(String key) {
                 }
             };

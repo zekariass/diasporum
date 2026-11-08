@@ -36,10 +36,19 @@ public interface MediaApi {
     /** Batch variant for parent-authorized list and detail enrichment. */
     Map<UUID, String> authorizedDownloadUrls(Collection<UUID> assetIds);
 
+    /**
+     * Server-side blurred derivative of a READY image asset, stored under the
+     * given purpose and owned by the source asset's owner. Idempotent — the
+     * same source always resolves to the same derivative asset. Empty when the
+     * source is not a READY image or derivation is unavailable.
+     */
+    Optional<UUID> blurredImageDerivative(UUID sourceAssetId, String purpose);
+
     /** Delete after the consuming module has detached its reference. */
     void deleteAsset(UUID requesterId, UUID assetId);
 
     record AssetView(UUID id, UUID ownerId, String purpose, String status,
-            String mimeType, Long sizeBytes, String detectedMimeType) {
+            String mimeType, Long sizeBytes, String detectedMimeType,
+            Long durationMs) {
     }
 }

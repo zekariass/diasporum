@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
+import * as Crypto from "expo-crypto";
 import { useRouter } from "expo-router";
 
 import { ThemedText } from "@/components/themed-text";
@@ -35,6 +36,9 @@ export default function CreateBusinessScreen() {
   const [accountName, setAccountName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // One key per screen session: retries after ambiguous failures replay the
+  // original creation instead of duplicating the workspace.
+  const idempotencyKey = React.useRef<string>(Crypto.randomUUID()).current;
 
   async function submit() {
     const normalized = accountName.trim();
@@ -45,7 +49,10 @@ export default function CreateBusinessScreen() {
     setSubmitting(true);
     setError(null);
     try {
-      const account = await businessApi.createAccount(normalized);
+      const account = await businessApi.createAccount(
+        normalized,
+        idempotencyKey,
+      );
       router.replace(`/(app)/business/workspace/${account.id}` as never);
     } catch (cause) {
       setError(

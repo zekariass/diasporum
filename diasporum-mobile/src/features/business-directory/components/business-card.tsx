@@ -57,6 +57,13 @@ export function BusinessCard({
           {business.category?.name ?? "Business"}
           {business.status === "DRAFT" ? " · Draft" : ""}
         </ThemedText>
+        {business.listingCount > 0 || business.locationCount > 0 ? (
+          <ThemedText style={styles.meta} themeColor="textSecondary">
+            {business.listingCount} listing{business.listingCount === 1 ? "" : "s"}
+            {" · "}
+            {business.locationCount} location{business.locationCount === 1 ? "" : "s"}
+          </ThemedText>
+        ) : null}
         <ThemedText style={styles.description} numberOfLines={2}>
           {business.description}
         </ThemedText>

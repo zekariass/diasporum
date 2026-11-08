@@ -11,17 +11,20 @@ import { MediaImage } from "./media-image";
 interface Props {
   name?: string | null;
   mediaId?: string | null;
+  /** Pass the profile owner to resolve via the block-checked avatar
+   * endpoint — required for other users' photos (owner URLs 403). */
+  userId?: string | null;
   size?: number;
 }
 
-export function Avatar({ name, mediaId, size = 40 }: Props) {
+export function Avatar({ name, mediaId, userId, size = 40 }: Props) {
   const theme = useTheme();
   const shape = { width: size, height: size, borderRadius: size / 2 };
 
   if (mediaId) {
     return (
       <View style={[shape, styles.clip]}>
-        <MediaImage mediaId={mediaId} style={{ ...shape, aspectRatio: 1 }} />
+        <MediaImage mediaId={mediaId} userId={userId ?? undefined} style={{ ...shape, aspectRatio: 1 }} />
       </View>
     );
   }

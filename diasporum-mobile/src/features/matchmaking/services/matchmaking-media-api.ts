@@ -1,17 +1,18 @@
 import * as ImagePicker from 'expo-image-picker';
 import type { ApiClient } from '@/core/api/api-client';
 
-export type MatchmakingPhotoPurpose = 'MATCHMAKING_PROFILE_PHOTO' | 'MATCHMAKING_PROFILE_BLURRED';
-
 export interface UploadedMatchmakingPhoto {
   assetId: string;
   localUri: string;
 }
 
-/** Uses the existing media upload/finalization flow; no parallel media store. */
+/**
+ * Uses the existing media upload/finalization flow; no parallel media store.
+ * Users only ever upload the original — the blurred rendition for
+ * BLURRED photo visibility is generated server-side by Diasporum.
+ */
 export async function pickAndUploadMatchmakingPhoto(
   client: ApiClient,
-  purpose: MatchmakingPhotoPurpose,
 ): Promise<UploadedMatchmakingPhoto | null> {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) throw new Error('Photo library access is required to choose a profile photo.');
@@ -27,7 +28,7 @@ export async function pickAndUploadMatchmakingPhoto(
 
   const init = await client.post<{ assetId: string; uploadUrl: string }>(
     '/api/v1/media/uploads',
-    { purpose, mimeType, ...(asset.fileSize ? { declaredSizeBytes: asset.fileSize } : {}) },
+    { purpose: 'MATCHMAKING_PROFILE_PHOTO', mimeType, ...(asset.fileSize ? { declaredSizeBytes: asset.fileSize } : {}) },
     { authenticated: true },
   );
   try {

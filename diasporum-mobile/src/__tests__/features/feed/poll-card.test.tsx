@@ -1,11 +1,18 @@
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react-native";
 
 import { ApiError } from "@/core/api/api-error";
 import { PollCard } from "@/features/feed/components/poll-card";
 import type { Poll } from "@/features/feed/types/feed-types";
 
 jest.mock("@/global.css", () => ({}));
+jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
 
 function makePoll(overrides: Partial<Poll> = {}): Poll {
   return {
@@ -25,9 +32,27 @@ function makePoll(overrides: Partial<Poll> = {}): Poll {
     totalVotes: 2,
     myVotes: [],
     options: [
-      { id: "option-1", text: "Hall", sortOrder: 0, voteCount: 1, percentage: 50 },
-      { id: "option-2", text: "Park", sortOrder: 1, voteCount: 1, percentage: 50 },
-      { id: "option-3", text: "Library", sortOrder: 2, voteCount: 0, percentage: 0 },
+      {
+        id: "option-1",
+        text: "Hall",
+        sortOrder: 0,
+        voteCount: 1,
+        percentage: 50,
+      },
+      {
+        id: "option-2",
+        text: "Park",
+        sortOrder: 1,
+        voteCount: 1,
+        percentage: 50,
+      },
+      {
+        id: "option-3",
+        text: "Library",
+        sortOrder: 2,
+        voteCount: 0,
+        percentage: 0,
+      },
     ],
     ...overrides,
   };
@@ -45,10 +70,16 @@ function deferred<T>() {
 
 describe("PollCard single-choice voting", () => {
   it("submits a new selection and publishes the authoritative Poll", async () => {
-    const updated = makePoll({ myVotes: ["option-2"], totalVoters: 3, totalVotes: 3 });
+    const updated = makePoll({
+      myVotes: ["option-2"],
+      totalVoters: 3,
+      totalVotes: 3,
+    });
     const onVote = jest.fn().mockResolvedValue(updated);
     const onChange = jest.fn();
-    await render(<PollCard poll={makePoll()} onVote={onVote} onChange={onChange} />);
+    await render(
+      <PollCard poll={makePoll()} onVote={onVote} onChange={onChange} />,
+    );
 
     expect(screen.getByLabelText("Submit vote")).not.toBeEnabled();
     await fireEvent.press(screen.getByLabelText("Park"));
@@ -71,12 +102,16 @@ describe("PollCard single-choice voting", () => {
     expect(screen.getByLabelText("Submit vote — loading")).toBeTruthy();
 
     await act(async () => request.resolve(makePoll({ myVotes: ["option-1"] })));
-    await waitFor(() => expect(screen.queryByLabelText("Submit vote — loading")).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Submit vote — loading")).toBeNull(),
+    );
   });
 
   it("changes a single-choice vote atomically without requiring withdrawal", async () => {
     const poll = makePoll({ myVotes: ["option-1"], allowVoteChange: true });
-    const onVote = jest.fn().mockResolvedValue(makePoll({ myVotes: ["option-2"] }));
+    const onVote = jest
+      .fn()
+      .mockResolvedValue(makePoll({ myVotes: ["option-2"] }));
     await render(<PollCard poll={poll} onVote={onVote} />);
 
     expect(screen.getByLabelText("Hall")).not.toBeEnabled();
@@ -89,7 +124,9 @@ describe("PollCard single-choice voting", () => {
 
   it("blocks changing an existing vote when vote changes are disabled", async () => {
     const onVote = jest.fn();
-    await render(<PollCard poll={makePoll({ myVotes: ["option-1"] })} onVote={onVote} />);
+    await render(
+      <PollCard poll={makePoll({ myVotes: ["option-1"] })} onVote={onVote} />,
+    );
 
     expect(screen.getByLabelText("Hall")).not.toBeEnabled();
     expect(screen.getByLabelText("Park")).not.toBeEnabled();
@@ -99,10 +136,12 @@ describe("PollCard single-choice voting", () => {
 
   it("withdraws only the current single-choice selection", async () => {
     const onVote = jest.fn().mockResolvedValue(makePoll({ myVotes: [] }));
-    await render(<PollCard
-      poll={makePoll({ myVotes: ["option-1"], allowVoteWithdraw: true })}
-      onVote={onVote}
-    />);
+    await render(
+      <PollCard
+        poll={makePoll({ myVotes: ["option-1"], allowVoteWithdraw: true })}
+        onVote={onVote}
+      />,
+    );
 
     await fireEvent.press(screen.getByLabelText("Hall"));
     await fireEvent.press(screen.getByLabelText("Update vote"));
@@ -121,10 +160,19 @@ describe("PollCard multiple-choice voting", () => {
     });
     const responses = [
       makePoll({ allowMultiple: true, allowVoteWithdraw: true, myVotes: [] }),
-      makePoll({ allowMultiple: true, allowVoteWithdraw: true, myVotes: ["option-2"] }),
-      makePoll({ allowMultiple: true, allowVoteWithdraw: true, myVotes: ["option-2", "option-3"] }),
+      makePoll({
+        allowMultiple: true,
+        allowVoteWithdraw: true,
+        myVotes: ["option-2"],
+      }),
+      makePoll({
+        allowMultiple: true,
+        allowVoteWithdraw: true,
+        myVotes: ["option-2", "option-3"],
+      }),
     ];
-    const onVote = jest.fn()
+    const onVote = jest
+      .fn()
       .mockResolvedValueOnce(responses[0])
       .mockResolvedValueOnce(responses[1])
       .mockResolvedValueOnce(responses[2]);
@@ -148,13 +196,16 @@ describe("PollCard multiple-choice voting", () => {
   it("keeps successful earlier mutations and reports a later failure", async () => {
     const poll = makePoll({ allowMultiple: true, myVotes: [] });
     const first = makePoll({ allowMultiple: true, myVotes: ["option-1"] });
-    const onVote = jest.fn()
+    const onVote = jest
+      .fn()
       .mockResolvedValueOnce(first)
-      .mockRejectedValueOnce(new ApiError({
-        code: "VALIDATION_ERROR",
-        httpStatus: 409,
-        userMessage: "Voting has closed.",
-      }));
+      .mockRejectedValueOnce(
+        new ApiError({
+          code: "VALIDATION_ERROR",
+          httpStatus: 409,
+          userMessage: "Voting has closed.",
+        }),
+      );
     const onChange = jest.fn();
     await render(<PollCard poll={poll} onVote={onVote} onChange={onChange} />);
 
@@ -170,59 +221,94 @@ describe("PollCard multiple-choice voting", () => {
 
 describe("PollCard results and lifecycle", () => {
   it("shows exact totals, percentages and the zero-vote state", async () => {
-    const { rerender } = await render(<PollCard poll={makePoll({
-      totalVoters: 0,
-      totalVotes: 0,
-      options: makePoll().options.map((option) => ({ ...option, voteCount: 0, percentage: 0 })),
-    })} />);
+    const { rerender } = await render(
+      <PollCard
+        poll={makePoll({
+          totalVoters: 0,
+          totalVotes: 0,
+          options: makePoll().options.map((option) => ({
+            ...option,
+            voteCount: 0,
+            percentage: 0,
+          })),
+        })}
+      />,
+    );
 
     expect(screen.getByText("0 voters · 0 votes")).toBeTruthy();
     expect(screen.getByText("No votes yet.")).toBeTruthy();
     expect(screen.getAllByText("0 · 0.0%")).toHaveLength(3);
 
-    await rerender(<PollCard poll={makePoll({ totalVoters: 2, totalVotes: 4 })} />);
+    await rerender(
+      <PollCard poll={makePoll({ totalVoters: 2, totalVotes: 4 })} />,
+    );
     expect(screen.getByText("2 voters · 4 votes")).toBeTruthy();
     expect(screen.getAllByText("1 · 50.0%")).toHaveLength(2);
     expect(screen.getAllByLabelText("50.0 percent")).toHaveLength(2);
   });
 
   it("hides aggregates but retains the viewer's own selections", async () => {
-    await render(<PollCard poll={makePoll({
-      resultsVisibility: "AFTER_VOTING",
-      resultsVisible: false,
-      totalVoters: null,
-      totalVotes: null,
-      myVotes: ["option-1"],
-      options: makePoll().options.map((option) => ({ ...option, voteCount: null, percentage: null })),
-    })} />);
+    await render(
+      <PollCard
+        poll={makePoll({
+          resultsVisibility: "AFTER_VOTING",
+          resultsVisible: false,
+          totalVoters: null,
+          totalVotes: null,
+          myVotes: ["option-1"],
+          options: makePoll().options.map((option) => ({
+            ...option,
+            voteCount: null,
+            percentage: null,
+          })),
+        })}
+      />,
+    );
 
-    expect(screen.getByText("Results are visible after you vote.")).toBeTruthy();
+    expect(
+      screen.getByText("Results are visible after you vote."),
+    ).toBeTruthy();
     expect(screen.queryByText(/voters ·/)).toBeNull();
     expect(screen.queryByText(/50\.0%/)).toBeNull();
-    expect(screen.getByLabelText("Hall").props.accessibilityState.checked).toBe(true);
+    expect(screen.getByLabelText("Hall").props.accessibilityState.checked).toBe(
+      true,
+    );
   });
 
   it("explains results hidden until closure", async () => {
-    await render(<PollCard poll={makePoll({
-      status: "CLOSED",
-      resultsVisibility: "AFTER_CLOSE",
-      resultsVisible: false,
-      totalVoters: null,
-      totalVotes: null,
-    })} />);
-    expect(screen.getByText("Results are visible after the poll closes.")).toBeTruthy();
+    await render(
+      <PollCard
+        poll={makePoll({
+          status: "CLOSED",
+          resultsVisibility: "AFTER_CLOSE",
+          resultsVisible: false,
+          totalVoters: null,
+          totalVotes: null,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText("Results are visible after the poll closes."),
+    ).toBeTruthy();
   });
 
-  it.each(["CLOSED", "EXPIRED"] as const)("disables voting for %s Polls", async (status) => {
-    const onVote = jest.fn();
-    await render(<PollCard poll={makePoll({ status })} onVote={onVote} />);
+  it.each(["CLOSED", "EXPIRED"] as const)(
+    "disables voting for %s Polls",
+    async (status) => {
+      const onVote = jest.fn();
+      await render(<PollCard poll={makePoll({ status })} onVote={onVote} />);
 
-    expect(screen.queryByLabelText("Submit vote")).toBeNull();
-    expect(screen.getByLabelText("Hall")).not.toBeEnabled();
-    expect(screen.getByText(status === "EXPIRED"
-      ? "This poll has expired. Voting is closed."
-      : "This poll is closed. Voting is closed.")).toBeTruthy();
-  });
+      expect(screen.queryByLabelText("Submit vote")).toBeNull();
+      expect(screen.getByLabelText("Hall")).not.toBeEnabled();
+      expect(
+        screen.getByText(
+          status === "EXPIRED"
+            ? "This poll has expired. Voting is closed."
+            : "This poll is closed. Voting is closed.",
+        ),
+      ).toBeTruthy();
+    },
+  );
 
   it("shows a safe generic error for non-API failures", async () => {
     const onVote = jest.fn().mockRejectedValue(new Error("socket details"));
@@ -231,7 +317,9 @@ describe("PollCard results and lifecycle", () => {
     await fireEvent.press(screen.getByLabelText("Hall"));
     await fireEvent.press(screen.getByLabelText("Submit vote"));
 
-    expect(await screen.findByText("Failed to update your vote. Please try again.")).toBeTruthy();
+    expect(
+      await screen.findByText("Failed to update your vote. Please try again."),
+    ).toBeTruthy();
     expect(screen.queryByText(/socket details/)).toBeNull();
   });
 });

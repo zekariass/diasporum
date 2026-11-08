@@ -11,13 +11,18 @@ import org.springframework.transaction.annotation.Transactional;
 public class ReferenceDataService {
 
     private final MatchmakingRepository repository;
+    private final MatchmakingAccess access;
 
-    public ReferenceDataService(MatchmakingRepository repository) {
+    public ReferenceDataService(MatchmakingRepository repository, MatchmakingAccess access) {
         this.repository = repository;
+        this.access = access;
     }
 
     @Transactional(readOnly = true)
     public ReferenceDataView referenceData(UUID actor) {
-        return repository.referenceData(actor);
+        access.requireAdult(actor);
+        var data = repository.referenceData(actor);
+        return new ReferenceDataView(data.genders(), data.religions(), data.countries(),
+                data.languages(), data.addresses(), MatchmakingProfileService.profileOptions());
     }
 }

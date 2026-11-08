@@ -59,7 +59,7 @@ export default function EditPostScreen() {
 
   const load = useCallback(async () => {
     try {
-      const p = await feedApi.getPost(id);
+      const p = (await feedApi.getPost(id)).post;
       const canManagePoll = p.postType === 'POLL' && memberships?.some(
         membership => membership.communityId === p.communityId
           && (membership.role === 'MODERATOR' || membership.role === 'COMMUNITY_ADMIN'),

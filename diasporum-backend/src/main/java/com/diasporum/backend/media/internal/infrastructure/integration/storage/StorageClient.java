@@ -13,6 +13,12 @@ public interface StorageClient {
     /** Actual stored object metadata, or empty if missing. */
     java.util.Optional<ObjectMeta> head(String key);
 
+    /** Stored object bytes for server-side processing, or empty if missing. */
+    java.util.Optional<byte[]> get(String key);
+
+    /** Server-side write of a generated object (derivatives, transformations). */
+    void put(String key, byte[] data, String contentType);
+
     void delete(String key);
 
     record ObjectMeta(long sizeBytes, String contentType) {

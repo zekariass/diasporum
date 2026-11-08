@@ -6,7 +6,7 @@
  */
 
 import React, { useCallback, useState } from "react";
-import { Alert, Pressable, StyleSheet, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -119,6 +119,8 @@ export default function EditEventScreen() {
         patch.startsAt = startsAt.toISOString();
       const endIso = form.hasEnd && endsAt ? endsAt.toISOString() : null;
       if (endIso !== null && endIso !== e.endsAt) patch.endsAt = endIso;
+      // Unchecking "Add an end time" clears a previously-set endsAt.
+      if (!form.hasEnd && e.endsAt !== null) patch.clearEndsAt = true;
       if (form.timezone.trim() !== e.timezone)
         patch.timezone = form.timezone.trim();
       if (
@@ -240,6 +242,10 @@ export default function EditEventScreen() {
           </View>
         )}
 
+        <KeyboardAvoidingView
+          style={s.flex}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
         <View style={s.formWrap}>
           <EventForm state={form} onChange={onChange} />
         </View>
@@ -273,6 +279,7 @@ export default function EditEventScreen() {
             </ThemedText>
           </Pressable>
         </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </ThemedView>
   );
@@ -281,6 +288,7 @@ export default function EditEventScreen() {
 const s = StyleSheet.create({
   root: { flex: 1 },
   safeArea: { flex: 1 },
+  flex: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",

@@ -387,10 +387,16 @@ public class MessagingService {
                 && businesses.isActiveMember(actor, c.participantBBizId())) {
             self = c.endpointB();
         }
-        if (self == null || !serviceConversationAccessible(actor, c)) {
+        if (self == null || !serviceConversationAccessible(actor, c) || !matchConversationAccessible(c)) {
             throw notFound("CONVERSATION_NOT_FOUND");
         }
         return self;
+    }
+
+    private boolean matchConversationAccessible(ConversationRow c) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT matchmaking_chat_is_accessible(matchmaking_match_id)"
+                        + " FROM direct_conversations WHERE id=?", Boolean.class, c.id()));
     }
 
     private boolean serviceConversationAccessible(UUID actor, ConversationRow c) {
@@ -568,6 +574,7 @@ public class MessagingService {
 
         var existing = findConversation(a, b, contextType, cmd.contextId());
         if (existing.isPresent()) {
+            requireSide(existing.get(), actor);
             return reuseConversation(existing.get(), actor, self, cmd);
         }
 
@@ -883,6 +890,7 @@ public class MessagingService {
                 + " LEFT JOIN direct_conversation_participants p"
                 + "  ON p.conversation_id=dc.id AND p.user_id=?"
                 + " WHERE dc.status IN ('REQUESTED','ACCEPTED')"
+                + " AND matchmaking_chat_is_accessible(dc.matchmaking_match_id)"
                 + " AND " + mySidesSql("dc", actor, bizIds);
         var args = new ArrayList<Object>();
         args.add(actor);                                   // unread: own sends
@@ -998,9 +1006,26 @@ public class MessagingService {
         var ids = new ArrayList<UUID>();
         ids.add(c.participantAId());
         ids.add(c.participantBId());
-        return identity.profileSummaries(ids).stream()
+        var profiles = identity.profileSummaries(ids).stream()
                 .collect(java.util.stream.Collectors.toMap(
                         IdentityApi.ProfileSummary::id, p -> p));
+        var aliases = jdbc.query("SELECT mp.user_id,CASE WHEN mp.name_visibility='VISIBLE'"
+                        + " THEN p.display_name ELSE mp.anonymous_alias END AS display_name"
+                        + " FROM direct_conversations dc JOIN matchmaking_profiles mp"
+                        + " ON mp.user_id IN (dc.participant_a_id,dc.participant_b_id)"
+                        + " JOIN profiles p ON p.id=mp.user_id"
+                        + " WHERE dc.id=? AND dc.matchmaking_match_id IS NOT NULL",
+                (rs, i) -> new Object[]{rs.getObject(1, UUID.class), rs.getString(2)}, c.id());
+        for (Object[] alias : aliases) {
+            UUID id = (UUID) alias[0];
+            var original = profiles.get(id);
+            if (original != null) {
+                profiles.put(id, new IdentityApi.ProfileSummary(original.id(), null,
+                        (String) alias[1], original.accountStatus(), original.profileCompleted(),
+                        original.originCountryId(), original.currentCountryId(), null));
+            }
+        }
+        return profiles;
     }
 
     private ConversationView toView(ConversationRow c, UUID actor, Endpoint known) {
@@ -1349,6 +1374,7 @@ public class MessagingService {
                         + "participant_b_id,participant_b_business_account_id"
                         + " FROM direct_conversations"
                         + " WHERE status='ACCEPTED'"
+                        + " AND matchmaking_chat_is_accessible(matchmaking_match_id)"
                         + " AND (participant_a_id=? OR participant_b_id=?"
                         + " OR participant_a_business_account_id IN (" + bizPh + ")"
                         + " OR participant_b_business_account_id IN (" + bizPh + "))",
@@ -1570,7 +1596,8 @@ public class MessagingService {
                         + " FROM direct_conversations dc"
                         + " LEFT JOIN direct_conversation_participants p"
                         + "  ON p.conversation_id=dc.id AND p.user_id=?"
-                        + " WHERE dc.status='ACCEPTED' AND "
+                        + " WHERE dc.status='ACCEPTED'"
+                        + " AND matchmaking_chat_is_accessible(dc.matchmaking_match_id) AND "
                         + mySidesSql("dc", actor, bizIds) + ") cnt",
                 Long.class, actor, actor);
         Long pending = jdbc.queryForObject(

@@ -8,6 +8,7 @@ import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.Airport;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.Category;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.ContactInput;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.ContactView;
+import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.DiscoveryCounts;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.DiscoveryFilters;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.ListingInput;
 import com.diasporum.backend.sparebag.internal.domain.SpareBagTypes.ListingView;
@@ -110,10 +111,18 @@ public class SpareBagController {
         }
     }
 
-    public record OwnerResponse(UUID id, String username, String displayName) {
+    public record OwnerResponse(UUID id, String username, String displayName,
+            UUID avatarMediaId) {
         OwnerResponse(Owner owner) {
             this(owner == null ? null : owner.id(), owner == null ? null : owner.username(),
-                    owner == null ? null : owner.displayName());
+                    owner == null ? null : owner.displayName(),
+                    owner == null ? null : owner.avatarMediaId());
+        }
+    }
+
+    public record CountsResponse(long passengerOffers, long senderRequests) {
+        CountsResponse(DiscoveryCounts counts) {
+            this(counts.passengerOffers(), counts.senderRequests());
         }
     }
 
@@ -220,12 +229,38 @@ public class SpareBagController {
             @RequestParam(required = false) BigDecimal minimumCapacityKg,
             @RequestParam(required = false) String priceCurrency,
             @RequestParam(required = false) String categoryKey,
+            @RequestParam(required = false) BigDecimal maxWeightKg,
+            @RequestParam(required = false) String sort,
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int size) {
         var filters = new DiscoveryFilters(listingType, communityId, originCountryId,
                 destinationCountryId, originAirportId, destinationAirportId, dateFrom,
-                dateTo, maxPrice, minimumCapacityKg, priceCurrency, categoryKey);
+                dateTo, maxPrice, minimumCapacityKg, priceCurrency, categoryKey,
+                maxWeightKg, sort);
         return mapPage(listings.discover(p.userId(), filters, cursor, size));
+    }
+
+    /** Per-type totals under the same discovery predicates — feeds the
+     * dashboard's tab badges and results summary. */
+    @GetMapping("/spare-bag/listings/counts")
+    public CountsResponse counts(@AuthenticationPrincipal DiasporumUserPrincipal p,
+            @RequestParam(required = false) UUID communityId,
+            @RequestParam(required = false) UUID originCountryId,
+            @RequestParam(required = false) UUID destinationCountryId,
+            @RequestParam(required = false) UUID originAirportId,
+            @RequestParam(required = false) UUID destinationAirportId,
+            @RequestParam(required = false) LocalDate dateFrom,
+            @RequestParam(required = false) LocalDate dateTo,
+            @RequestParam(required = false) BigDecimal maxPrice,
+            @RequestParam(required = false) BigDecimal minimumCapacityKg,
+            @RequestParam(required = false) String priceCurrency,
+            @RequestParam(required = false) String categoryKey,
+            @RequestParam(required = false) BigDecimal maxWeightKg) {
+        var filters = new DiscoveryFilters(null, communityId, originCountryId,
+                destinationCountryId, originAirportId, destinationAirportId, dateFrom,
+                dateTo, maxPrice, minimumCapacityKg, priceCurrency, categoryKey,
+                maxWeightKg, null);
+        return new CountsResponse(listings.countDiscover(p.userId(), filters));
     }
 
     @GetMapping("/spare-bag/listings/{listingId}")

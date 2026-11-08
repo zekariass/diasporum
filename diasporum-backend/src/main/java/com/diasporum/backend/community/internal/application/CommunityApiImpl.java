@@ -1,5 +1,6 @@
 package com.diasporum.backend.community.internal.application;
 
+import com.diasporum.backend.billing.BillingApi.ActionEligibility;
 import com.diasporum.backend.community.CommunityApi;
 import java.util.List;
 import java.util.Optional;
@@ -11,11 +12,14 @@ import org.springframework.stereotype.Service;
 public class CommunityApiImpl implements CommunityApi {
 
     private final CommunityService service;
+    private final CommunityAccessPolicyService accessPolicy;
     private final com.diasporum.backend.taxonomy.TaxonomyApi taxonomy;
 
     public CommunityApiImpl(CommunityService service,
+            CommunityAccessPolicyService accessPolicy,
             com.diasporum.backend.taxonomy.TaxonomyApi taxonomy) {
         this.service = service;
+        this.accessPolicy = accessPolicy;
         this.taxonomy = taxonomy;
     }
 
@@ -68,5 +72,36 @@ public class CommunityApiImpl implements CommunityApi {
     @Override
     public boolean isCommunityAdmin(UUID userId, UUID communityId) {
         return service.hasRole(userId, communityId, "COMMUNITY_ADMIN");
+    }
+
+    @Override
+    public CommunityContext context(UUID userId, UUID communityId) {
+        return accessPolicy.context(userId, communityId);
+    }
+
+    @Override
+    public CommunityContext activeContext(UUID userId) {
+        return accessPolicy.activeContext(userId);
+    }
+
+    @Override
+    public CommunityContext requireModule(UUID userId, UUID communityId, String moduleKey) {
+        return accessPolicy.requireModule(userId, communityId, moduleKey);
+    }
+
+    @Override
+    public CommunityContext requireActiveModule(UUID userId, String moduleKey) {
+        return accessPolicy.requireActiveModule(userId, moduleKey);
+    }
+
+    @Override
+    public ActionEligibility actionEligibility(UUID userId, String actionKey) {
+        return accessPolicy.actionEligibility(userId, actionKey);
+    }
+
+    @Override
+    public void consumeExtendedAction(UUID userId, UUID communityId, String actionKey,
+            String idempotencyKey) {
+        accessPolicy.consumeExtendedAction(userId, communityId, actionKey, idempotencyKey);
     }
 }

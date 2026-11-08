@@ -2,6 +2,7 @@ package com.diasporum.backend.matchmaking.internal.api.rest;
 
 import com.diasporum.backend.matchmaking.internal.application.CancelLikeService;
 import com.diasporum.backend.matchmaking.internal.application.DiscoveryService;
+import com.diasporum.backend.matchmaking.internal.application.EligibilityService;
 import com.diasporum.backend.matchmaking.internal.application.MatchService;
 import com.diasporum.backend.matchmaking.internal.application.MatchmakingProfileService;
 import com.diasporum.backend.matchmaking.internal.application.PreferenceService;
@@ -9,6 +10,7 @@ import com.diasporum.backend.matchmaking.internal.application.RecordSwipeService
 import com.diasporum.backend.matchmaking.internal.application.ReferenceDataService;
 import com.diasporum.backend.matchmaking.internal.application.RewindSwipeService;
 import com.diasporum.backend.matchmaking.internal.application.UnmatchService;
+import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.EligibilityView;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.MatchView;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.Page;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PreferenceCommand;
@@ -47,6 +49,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class MatchmakingController {
 
     private final MatchmakingProfileService profiles;
+    private final EligibilityService eligibility;
     private final PreferenceService preferences;
     private final DiscoveryService discovery;
     private final RecordSwipeService swipes;
@@ -57,11 +60,12 @@ public class MatchmakingController {
     private final ReferenceDataService referenceData;
 
     public MatchmakingController(MatchmakingProfileService profiles,
-            PreferenceService preferences, DiscoveryService discovery,
+            EligibilityService eligibility, PreferenceService preferences, DiscoveryService discovery,
             RecordSwipeService swipes, CancelLikeService cancelLikes,
             RewindSwipeService rewinds, MatchService matches, UnmatchService unmatches,
             ReferenceDataService referenceData) {
         this.profiles = profiles;
+        this.eligibility = eligibility;
         this.preferences = preferences;
         this.discovery = discovery;
         this.swipes = swipes;
@@ -106,9 +110,20 @@ public class MatchmakingController {
         return referenceData.referenceData(principal.userId());
     }
 
+    /** Server-side entry decision: profile existence, lifecycle and eligibility in one read. */
+    @GetMapping("/eligibility")
+    public EligibilityView entryState(@AuthenticationPrincipal DiasporumUserPrincipal principal) {
+        return eligibility.eligibility(principal.userId());
+    }
+
     @GetMapping("/profile")
     public ProfileView profile(@AuthenticationPrincipal DiasporumUserPrincipal principal) {
         return profiles.profile(principal.userId());
+    }
+
+    @GetMapping("/profile/preview")
+    public PublicProfileView preview(@AuthenticationPrincipal DiasporumUserPrincipal principal) {
+        return discovery.preview(principal.userId());
     }
 
     @PutMapping("/profile")
@@ -121,7 +136,7 @@ public class MatchmakingController {
                 request.smoking(), request.drinking(), request.activityLevel(), request.heightCm(),
                 request.marriageTimeline(), request.longDistanceRelationship(),
                 request.religionImportance(), request.willingToRelocate(), request.photoMediaId(),
-                request.blurredPhotoMediaId(), request.nameVisibility(), request.photoVisibility(),
+                null, request.nameVisibility(), request.photoVisibility(),
                 request.anonymousAlias(), request.status()));
     }
 
@@ -159,6 +174,14 @@ public class MatchmakingController {
         return discovery.profile(principal.userId(), targetUserId);
     }
 
+    @PostMapping("/profiles/{targetUserId}/report")
+    public ResponseEntity<Map<String, UUID>> reportProfile(
+            @AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID targetUserId, @Valid @RequestBody ReportRequest request) {
+        UUID id = matches.reportProfile(principal.userId(), targetUserId, request.reason(), request.details());
+        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("id", id));
+    }
+
     @PostMapping("/swipes")
     public SwipeResult swipe(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @Valid @RequestBody SwipeRequest request) {
@@ -182,6 +205,13 @@ public class MatchmakingController {
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int limit) {
         return discovery.receivedLikes(principal.userId(), cursor, limit);
+    }
+
+    @GetMapping("/likes/sent")
+    public Page<PublicProfileView> sentLikes(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int limit) {
+        return discovery.sentLikes(principal.userId(), cursor, limit);
     }
 
     @GetMapping("/matches")

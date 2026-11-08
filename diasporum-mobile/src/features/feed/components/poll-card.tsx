@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 import { ThemedText } from "@/components/themed-text";
 import { ApiError } from "@/core/api/api-error";
@@ -131,7 +132,8 @@ export function PollCard({ poll, onVote, onChange }: PollCardProps) {
         </View>
         {poll.closesAt ? (
           <ThemedText style={styles.meta} themeColor="textSecondary">
-            {active ? "Closes" : "Closed"} {new Date(poll.closesAt).toLocaleString()}
+            {active ? "Closes" : "Closed"}{" "}
+            {new Date(poll.closesAt).toLocaleString()}
           </ThemedText>
         ) : null}
         {poll.closedAt && !poll.closesAt ? (
@@ -140,7 +142,9 @@ export function PollCard({ poll, onVote, onChange }: PollCardProps) {
           </ThemedText>
         ) : null}
         <ThemedText style={styles.meta} themeColor="textSecondary">
-          {poll.allowMultiple ? "Select one or more options" : "Select one option"}
+          {poll.allowMultiple
+            ? "Select one or more options"
+            : "Select one option"}
         </ThemedText>
       </View>
 
@@ -160,25 +164,52 @@ export function PollCard({ poll, onVote, onChange }: PollCardProps) {
                 style={[
                   styles.option,
                   {
-                    borderColor: checked ? BrandColors.primary : theme.border,
+                    borderColor: checked ? theme.primary : theme.border,
                     backgroundColor: checked
-                      ? BrandColors.primarySurface
-                      : "transparent",
+                      ? theme.primarySurface
+                      : theme.background,
                   },
                   disabled && styles.optionDisabled,
                 ]}
               >
                 <View style={styles.optionTextRow}>
-                  <ThemedText style={styles.optionText}>{option.text}</ThemedText>
+                  <View
+                    style={[
+                      styles.selectionIndicator,
+                      !poll.allowMultiple && styles.radioIndicator,
+                      {
+                        borderColor: checked ? theme.primary : theme.textMuted,
+                        backgroundColor: checked
+                          ? theme.primary
+                          : "transparent",
+                      },
+                    ]}
+                  >
+                    {checked ? (
+                      <Ionicons
+                        name="checkmark"
+                        size={13}
+                        color={BrandColors.white}
+                      />
+                    ) : null}
+                  </View>
+                  <ThemedText style={styles.optionText}>
+                    {option.text}
+                  </ThemedText>
                   {poll.resultsVisible ? (
-                    <ThemedText style={styles.resultText}>
+                    <ThemedText
+                      style={[styles.resultText, { color: theme.primary }]}
+                    >
                       {option.voteCount ?? 0} · {percentage.toFixed(1)}%
                     </ThemedText>
                   ) : null}
                 </View>
                 {poll.resultsVisible ? (
                   <View
-                    style={[styles.progressTrack, { backgroundColor: theme.border }]}
+                    style={[
+                      styles.progressTrack,
+                      { backgroundColor: theme.backgroundSelected },
+                    ]}
                     accessibilityLabel={`${percentage.toFixed(1)} percent`}
                   >
                     <View
@@ -186,7 +217,7 @@ export function PollCard({ poll, onVote, onChange }: PollCardProps) {
                         styles.progressFill,
                         {
                           width: `${Math.max(0, Math.min(100, percentage))}%`,
-                          backgroundColor: BrandColors.primary,
+                          backgroundColor: theme.primary,
                         },
                       ]}
                     />
@@ -241,9 +272,13 @@ export function PollCard({ poll, onVote, onChange }: PollCardProps) {
 }
 
 const styles = StyleSheet.create({
-  container: { gap: Spacing.three, paddingVertical: Spacing.two },
-  heading: { gap: 3 },
-  question: { fontSize: 16, fontWeight: "700", lineHeight: 22 },
+  container: {
+    gap: Spacing.three,
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.one,
+  },
+  heading: { gap: 4 },
+  question: { fontSize: 18, fontWeight: "700", lineHeight: 26 },
   metaRow: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
   status: { fontSize: 12, fontWeight: "700", textTransform: "uppercase" },
   meta: { fontSize: 12, lineHeight: 17 },
@@ -251,24 +286,40 @@ const styles = StyleSheet.create({
   optionContainer: { minWidth: 0 },
   option: {
     borderWidth: 1,
-    borderRadius: BorderRadius.md,
+    borderRadius: BorderRadius.lg,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two + 2,
-    gap: Spacing.two,
+    paddingVertical: Spacing.three - 2,
+    gap: Spacing.two + 2,
     overflow: "hidden",
   },
-  optionDisabled: { opacity: 0.72 },
+  optionDisabled: { opacity: 0.88 },
   optionTextRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: Spacing.two,
   },
-  optionText: { flex: 1, fontSize: 14, lineHeight: 20 },
-  resultText: { fontSize: 12, fontWeight: "600" },
-  progressTrack: { height: 4, borderRadius: 2 },
-  progressFill: { height: 4, borderRadius: 2 },
+  selectionIndicator: {
+    width: 20,
+    height: 20,
+    borderWidth: 1.5,
+    borderRadius: BorderRadius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  radioIndicator: { borderRadius: BorderRadius.full },
+  optionText: { flex: 1, fontSize: 14, fontWeight: "500", lineHeight: 20 },
+  resultText: { fontSize: 12, fontWeight: "700" },
+  progressTrack: { height: 5, borderRadius: 3, overflow: "hidden" },
+  progressFill: { height: 5, borderRadius: 3 },
   totals: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
   error: { color: BrandColors.error, fontSize: 13 },
-  submit: { alignSelf: "stretch", minHeight: 44, paddingVertical: Spacing.two },
+  submit: {
+    alignSelf: "stretch",
+    minHeight: 44,
+    marginTop: Spacing.half,
+    paddingVertical: Spacing.two,
+    borderRadius: BorderRadius.full,
+  },
 });

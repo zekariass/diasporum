@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -12,249 +12,750 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { Accuracy, getCurrentPositionAsync, requestForegroundPermissionsAsync } from "expo-location";
 import { ThemedText } from "@/components/themed-text";
-import { ThemedView } from "@/components/themed-view";
 import { useSession } from "@/core/session/session-provider";
-import { ApiError } from "@/core/api/api-error";
 import { useTheme } from "@/hooks/use-theme";
-import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
+import { Sheet } from "@/shared/components/sheet";
+import { ChoiceChip } from "@/shared/components/form-controls";
 import { createPropertyApi } from "../services/property-api";
 import type {
-  FurnishedStatus,
   ListingPurpose,
   PropertyDiscoveryFilters,
-  PropertyItem,
+  PropertySort,
   PropertyType,
 } from "../types/property-types";
 import { PropertyCard } from "../components/property-card";
-import { PropertiesEmpty, PropertiesSkeleton, PropertyListError } from "../components/property-states";
-import { Chip, Field } from "../components/property-controls";
+import {
+  PropertiesEmpty,
+  PropertiesSkeleton,
+  PropertyListError,
+} from "../components/property-states";
+import {
+  PropertyFiltersSheet,
+  type FilterSection,
+} from "../components/property-filters-sheet";
+import { usePropertyPage } from "../hooks/use-property-page";
+import {
+  activeFilterCount,
+  discoveryFilters,
+  emptyFilters,
+  normalizeFilters,
+} from "../utils/property-filters";
 
-const PAGE_SIZE = 20;
+const SORTS: { value: PropertySort; label: string }[] = [
+  { value: "NEWEST", label: "Newest first" },
+  { value: "PRICE_ASC", label: "Price: low to high" },
+  { value: "PRICE_DESC", label: "Price: high to low" },
+];
+
+const MENU: {
+  label: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  route: string;
+}[] = [
+  {
+    label: "My properties",
+    icon: "person-outline",
+    route: "/(app)/properties/my",
+  },
+  {
+    label: "Create property",
+    icon: "add-circle-outline",
+    route: "/(app)/properties/create",
+  },
+  {
+    label: "Saved properties",
+    icon: "bookmark-outline",
+    route: "/(app)/properties/saved",
+  },
+];
 
 export default function PropertiesScreen() {
-  const theme = useTheme();
-  const router = useRouter();
-  const { apiClient, session } = useSession();
-  const api = React.useMemo(() => createPropertyApi(apiClient), [apiClient]);
-  const countryId = session?.profile?.currentCountryId ?? undefined;
-  const [purpose, setPurpose] = useState<ListingPurpose | undefined>();
-  const [propertyTypeId, setPropertyTypeId] = useState<string | undefined>();
-  const [furnishedStatus, setFurnishedStatus] = useState<FurnishedStatus | undefined>();
-  const [types, setTypes] = useState<PropertyType[]>([]);
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [city, setCity] = useState("");
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
-  const [minBedrooms, setMinBedrooms] = useState("");
-  const [bathrooms, setBathrooms] = useState("");
-  const [nearby, setNearby] = useState<{ latitude: number; longitude: number; radiusKm: number } | null>(null);
-  const [locating, setLocating] = useState(false);
-  const [locationError, setLocationError] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
-  const [items, setItems] = useState<PropertyItem[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const loadingRef = useRef(false);
-
-  useEffect(() => {
-    if (!countryId) return;
-    api.types(countryId).then((result) => setTypes(result.items)).catch(() => setTypes([]));
-  }, [api, countryId]);
-
-  useEffect(() => {
-    const timeout = setTimeout(() => setDebouncedSearch(search.trim()), 400);
-    return () => clearTimeout(timeout);
-  }, [search]);
-
-  const filters: PropertyDiscoveryFilters = {
-    countryId,
-    listingPurpose: purpose,
-    propertyTypeId,
-    furnishedStatus,
-    city: city.trim() || undefined,
-    search: debouncedSearch || undefined,
-    minPrice: minPrice.trim() ? Number(minPrice) : undefined,
-    maxPrice: maxPrice.trim() ? Number(maxPrice) : undefined,
-    minBedrooms: minBedrooms.trim() ? Number(minBedrooms) : undefined,
-    bathrooms: bathrooms.trim() ? Number(bathrooms) : undefined,
-    ...nearby,
-  };
-  const filterKey = JSON.stringify(filters);
-  const loadPage = useCallback((nextCursor?: string) => {
-    if (loadingRef.current) return Promise.resolve();
-    loadingRef.current = true;
-    const parsed = JSON.parse(filterKey) as PropertyDiscoveryFilters;
-    return api.discover(parsed, nextCursor, PAGE_SIZE)
-      .then((page) => {
-        setItems((previous) => {
-          if (!nextCursor) return page.items;
-          const seen = new Set(previous.map((entry) => entry.property.id));
-          return [...previous, ...page.items.filter((entry) => !seen.has(entry.property.id))];
-        });
-        setCursor(page.nextCursor);
-        setError(null);
-      })
-      .catch((cause: unknown) => {
-        setError(ApiError.isApiError(cause) ? cause.userMessage : "Failed to load properties.");
-      })
-      .finally(() => {
-        loadingRef.current = false;
-        setLoading(false);
-        setRefreshing(false);
-        setLoadingMore(false);
-      });
-  }, [api, filterKey]);
-
-  const [previousFilterKey, setPreviousFilterKey] = useState(filterKey);
-  if (previousFilterKey !== filterKey) {
-    setPreviousFilterKey(filterKey);
-    setLoading(true);
-  }
-
-  useEffect(() => {
-    void loadPage();
-  }, [loadPage]);
-
-  const clearFilters = useCallback(() => {
-    setPurpose(undefined);
-    setPropertyTypeId(undefined);
-    setFurnishedStatus(undefined);
-    setSearch("");
-    setCity("");
-    setMinPrice("");
-    setMaxPrice("");
-    setMinBedrooms("");
-    setBathrooms("");
-    setNearby(null);
-  }, []);
-
-  const findNearby = useCallback(async () => {
-    if (nearby) {
-      setNearby(null);
-      setLocationError(null);
-      return;
-    }
-    setLocating(true);
-    setLocationError(null);
-    try {
-      const permission = await requestForegroundPermissionsAsync();
-      if (!permission.granted) {
-        setLocationError("Location access was not granted. You can still search by city and other filters.");
-        return;
-      }
-      const position = await getCurrentPositionAsync({ accuracy: Accuracy.Balanced });
-      setNearby({ latitude: position.coords.latitude, longitude: position.coords.longitude, radiusKm: 25 });
-    } catch {
-      setLocationError("Could not determine your location. Try a city search instead.");
-    } finally {
-      setLocating(false);
-    }
-  }, [nearby]);
-
-  const hasFilters = Boolean(purpose || propertyTypeId || furnishedStatus || search || city || minPrice || maxPrice || minBedrooms || bathrooms || nearby);
-  const openDetail = useCallback((id: string) => router.push(`/(app)/properties/${id}` as never), [router]);
-
+  const { session } = useSession();
+  // Country/community changes reset the entire discovery state, including stale filters.
   return (
-    <ThemedView style={styles.root}>
-      <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
-        <View style={[styles.header, { borderBottomColor: theme.border }]}>
-          <ThemedText type="title">Property</ThemedText>
-          <View style={styles.headerActions}>
-            <HeaderButton label="Saved properties" icon="bookmark-outline" onPress={() => router.push("/(app)/properties/saved" as never)} />
-            <HeaderButton label="My properties" icon="person-outline" onPress={() => router.push("/(app)/properties/my" as never)} />
-            <HeaderButton label="Create property" icon="add" onPress={() => router.push("/(app)/properties/create" as never)} filled />
-          </View>
-        </View>
-        <FlatList
-          data={items}
-          keyExtractor={(item) => item.property.id}
-          renderItem={({ item }) => <PropertyCard item={item} onPress={openDetail} />}
-          onEndReached={() => { if (cursor && !loadingRef.current) { setLoadingMore(true); void loadPage(cursor); } }}
-          onEndReachedThreshold={0.4}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void loadPage(); }} tintColor={BrandColors.primary} />}
-          ListHeaderComponent={
-            <View>
-              <View style={[styles.search, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-                <Ionicons name="search-outline" size={17} color={theme.textSecondary} />
-                <TextInput
-                  value={search}
-                  onChangeText={setSearch}
-                  placeholder="Search homes and rentals…"
-                  placeholderTextColor={theme.textSecondary}
-                  accessibilityLabel="Search properties"
-                  style={[styles.searchInput, { color: theme.text }]}
-                />
-                {search ? <Pressable onPress={() => setSearch("")} accessibilityLabel="Clear search"><Ionicons name="close" size={17} color={theme.textSecondary} /></Pressable> : null}
-              </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-                <Chip label="All" active={!purpose} onPress={() => setPurpose(undefined)} accessibilityLabel="All listing purposes" />
-                <Chip label="For sale" active={purpose === "SALE"} onPress={() => setPurpose("SALE")} />
-                <Chip label="For rent" active={purpose === "RENT"} onPress={() => setPurpose("RENT")} />
-                <Chip label={showFilters ? "Hide filters" : "More filters"} active={showFilters} onPress={() => setShowFilters((value) => !value)} />
-                <Chip label={locating ? "Locating…" : nearby ? "Nearby: 25 km" : "Near me"} active={Boolean(nearby)} onPress={() => void findNearby()} accessibilityLabel="Search near my current location" />
-                {hasFilters ? <Chip label="Clear" active={false} onPress={clearFilters} accessibilityLabel="Clear property filters" /> : undefined}
-              </ScrollView>
-              {locationError ? <ThemedText style={styles.locationError}>{locationError}</ThemedText> : null}
-              {showFilters ? (
-                <View style={[styles.filterPanel, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
-                  <ThemedText style={styles.filterTitle}>Property type</ThemedText>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.typeChips}>
-                    <Chip label="Any type" active={!propertyTypeId} onPress={() => setPropertyTypeId(undefined)} />
-                    {types.map((type) => <Chip key={type.id} label={type.displayName} active={propertyTypeId === type.id} onPress={() => setPropertyTypeId(type.id)} />)}
-                  </ScrollView>
-                  <View style={styles.fieldGrid}>
-                    <Field label="City" value={city} onChangeText={setCity} placeholder="e.g. Frankfurt" />
-                    <Field label="Minimum price" value={minPrice} onChangeText={setMinPrice} keyboardType="numeric" />
-                    <Field label="Maximum price" value={maxPrice} onChangeText={setMaxPrice} keyboardType="numeric" />
-                    <Field label="Minimum bedrooms" value={minBedrooms} onChangeText={setMinBedrooms} keyboardType="number-pad" />
-                    <Field label="Bathrooms" value={bathrooms} onChangeText={setBathrooms} keyboardType="number-pad" />
-                  </View>
-                  <ThemedText style={styles.filterTitle}>Furnishing</ThemedText>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.typeChips}>
-                    <Chip label="Any" active={!furnishedStatus} onPress={() => setFurnishedStatus(undefined)} />
-                    {(["FURNISHED", "PART_FURNISHED", "UNFURNISHED"] as FurnishedStatus[]).map((status) => <Chip key={status} label={status.toLowerCase().replaceAll("_", " ")} active={furnishedStatus === status} onPress={() => setFurnishedStatus(status)} />)}
-                  </ScrollView>
-                </View>
-              ) : null}
-              {loading && !refreshing ? <PropertiesSkeleton /> : error ? <PropertyListError message={error} onRetry={() => void loadPage()} /> : undefined}
-            </View>
-          }
-          ListEmptyComponent={!loading && !error ? <PropertiesEmpty title={hasFilters ? "No properties match" : "No properties yet"} message={hasFilters ? "Clear or adjust your search filters." : "Property listings from your communities and country will appear here."} actionLabel={hasFilters ? "Clear property filters" : "Create property"} onAction={hasFilters ? clearFilters : () => router.push("/(app)/properties/create" as never)} /> : undefined}
-          ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} color={BrandColors.primary} accessibilityLabel="Loading more properties" /> : undefined}
-          contentContainerStyle={items.length === 0 ? styles.emptyContent : styles.listContent}
-          showsVerticalScrollIndicator={false}
-        />
-      </SafeAreaView>
-    </ThemedView>
+    <PropertyBrowser
+      key={`${session?.me.id}:${session?.profile?.currentCountryId}:${session?.activeCommunityId}`}
+    />
   );
 }
-
-function HeaderButton({ label, icon, onPress, filled }: { label: string; icon: React.ComponentProps<typeof Ionicons>["name"]; onPress: () => void; filled?: boolean }) {
+function PropertyBrowser() {
   const theme = useTheme();
-  return <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={[styles.iconButton, filled && { backgroundColor: theme.text }]}><Ionicons name={icon} size={20} color={filled ? theme.background : theme.text} /></Pressable>;
-}
+  const accent = theme.info;
+  const router = useRouter();
+  const { apiClient, session } = useSession();
+  const api = useMemo(() => createPropertyApi(apiClient), [apiClient]);
+  const countryId = session?.profile?.currentCountryId ?? undefined;
+  const communityId = session?.activeCommunityId ?? undefined;
+  const [types, setTypes] = useState<PropertyType[]>([]);
+  const [typesError, setTypesError] = useState(false);
+  const [typesRetry, setTypesRetry] = useState(0);
+  const [applied, setApplied] = useState(() => emptyFilters());
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [sort, setSort] = useState<PropertySort>("NEWEST");
+  const [section, setSection] = useState<FilterSection | null>(null);
+  const [sortOpen, setSortOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [nearby, setNearby] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
+  const [radiusKm, setRadiusKm] = useState(25);
 
+  useEffect(() => {
+    let active = true;
+    if (countryId)
+      api
+        .types(countryId)
+        .then((page) => {
+          if (active) {
+            setTypes(page.items);
+            setTypesError(false);
+          }
+        })
+        .catch(() => {
+          if (active) setTypesError(true);
+        });
+    return () => {
+      active = false;
+    };
+  }, [api, countryId, typesRetry]);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const context: PropertyDiscoveryFilters = {
+    countryId,
+    communityId,
+    search: debouncedSearch || undefined,
+  };
+  const queryKey = JSON.stringify({
+    ...context,
+    ...discoveryFilters(applied),
+    sort,
+    ...(nearby ? { ...nearby, radiusKm } : {}),
+  });
+  const fetchPage = useCallback(
+    (cursor?: string) =>
+      api.discover(
+        JSON.parse(queryKey) as PropertyDiscoveryFilters,
+        cursor,
+        20,
+      ),
+    [api, queryKey],
+  );
+  const results = usePropertyPage(fetchPage);
+  const active = activeFilterCount(applied) + (nearby ? 1 : 0);
+  const clear = () => {
+    setApplied(emptyFilters(applied.listingPurpose));
+    setSearch("");
+    setNearby(null);
+    setRadiusKm(25);
+  };
+  const openDetail = useCallback(
+    (id: string) =>
+      router.push(`/(app)/properties/${encodeURIComponent(id)}` as never),
+    [router],
+  );
+  const priceLabel = () => {
+    const { minPrice, maxPrice, currencyCode } = applied;
+    if (!minPrice && !maxPrice) return "Any price";
+    const money = (raw: string) => {
+      const amount = Number(raw);
+      return currencyCode
+        ? `${currencyCode} ${amount.toLocaleString()}`
+        : amount.toLocaleString();
+    };
+    if (minPrice && maxPrice) return `${money(minPrice)} – ${money(maxPrice)}`;
+    return minPrice ? `${money(minPrice)}+` : `Up to ${money(maxPrice)}`;
+  };
+  const count = results.page.totalCount;
+  return (
+    <View style={[styles.root, { backgroundColor: theme.background }]}>
+      <SafeAreaView
+        edges={["top"]}
+        style={{ backgroundColor: theme.backgroundElement }}
+      >
+        <View style={styles.header}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Menu"
+            onPress={() => setMenuOpen(true)}
+            style={styles.headerButton}
+          >
+            <Ionicons name="menu" size={24} color={theme.text} />
+          </Pressable>
+          <View
+            style={[styles.divider, { backgroundColor: theme.border }]}
+          />
+          <View style={styles.brand}>
+            <View style={[styles.brandMark, { borderColor: accent }]}>
+              <Ionicons name="home" size={15} color={accent} />
+            </View>
+            <ThemedText style={[styles.brandText, { color: accent }]}>
+              Diasporum
+            </ThemedText>
+          </View>
+          <View style={styles.spacer} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Saved properties"
+            onPress={() => router.push("/(app)/properties/saved" as never)}
+            style={styles.headerButton}
+          >
+            <ThemedText style={[styles.savedText, { color: accent }]}>
+              Saved
+            </ThemedText>
+          </Pressable>
+        </View>
+        <View style={[styles.accentLine, { backgroundColor: accent }]} />
+      </SafeAreaView>
+      <SafeAreaView edges={["left", "right", "bottom"]} style={styles.root}>
+        <FlatList
+          data={
+            results.loading && !results.refreshing ? [] : results.page.items
+          }
+          keyExtractor={(item) => item.property.id}
+          renderItem={({ item }) => (
+            <PropertyCard item={item} onPress={openDetail} origin={nearby} />
+          )}
+          onEndReached={results.more}
+          onEndReachedThreshold={0.4}
+          refreshControl={
+            <RefreshControl
+              refreshing={results.refreshing}
+              onRefresh={results.refresh}
+              tintColor={accent}
+            />
+          }
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.content}
+          ListHeaderComponent={
+            <>
+              <View style={styles.searchRow}>
+                <View
+                  style={[
+                    styles.search,
+                    {
+                      backgroundColor: theme.backgroundElement,
+                      borderColor: theme.border,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="search-outline"
+                    size={18}
+                    color={theme.textSecondary}
+                  />
+                  <TextInput
+                    value={search}
+                    onChangeText={setSearch}
+                    placeholder="Search city, area or property..."
+                    placeholderTextColor={theme.textSecondary}
+                    accessibilityLabel="Search properties"
+                    style={[styles.searchInput, { color: theme.text }]}
+                  />
+                  {search ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear search"
+                      onPress={() => setSearch("")}
+                      style={[styles.clearBox, { borderColor: theme.border }]}
+                    >
+                      <Ionicons name="close" size={13} color={theme.text} />
+                    </Pressable>
+                  ) : null}
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    active ? `Filters (${active})` : "Filters"
+                  }
+                  onPress={() => setSection("all")}
+                  style={[
+                    styles.filterButton,
+                    {
+                      borderColor: active ? accent : theme.border,
+                      backgroundColor: theme.backgroundElement,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="options-outline"
+                    size={19}
+                    color={active ? accent : theme.text}
+                  />
+                  {active ? (
+                    <View
+                      style={[styles.filterDot, { backgroundColor: accent }]}
+                    />
+                  ) : null}
+                </Pressable>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.toolbar}
+              >
+                <PurposeChips
+                  value={applied.listingPurpose}
+                  onChange={(listingPurpose) =>
+                    setApplied((previous) =>
+                      normalizeFilters({ ...previous, listingPurpose }, types),
+                    )
+                  }
+                />
+                <Shortcut
+                  label={priceLabel()}
+                  selected={Boolean(
+                    applied.minPrice ||
+                    applied.maxPrice ||
+                    applied.currencyCode,
+                  )}
+                  onPress={() => setSection("price")}
+                />
+                <Shortcut
+                  label={
+                    applied.bedrooms
+                      ? `${applied.bedrooms}${applied.bedrooms === "4" ? "+" : ""} ${applied.bedrooms === "1" ? "bed" : "beds"}`
+                      : "Any beds"
+                  }
+                  selected={Boolean(applied.bedrooms)}
+                  onPress={() => setSection("bedrooms")}
+                />
+                <Shortcut
+                  label={nearby ? `Within ${radiusKm} km` : "Any distance"}
+                  selected={Boolean(nearby)}
+                  onPress={() => setSection("location")}
+                />
+                <Shortcut
+                  label={
+                    types.find((type) => type.id === applied.propertyTypeId)
+                      ?.displayName ?? "Any type"
+                  }
+                  selected={Boolean(applied.propertyTypeId)}
+                  onPress={() => setSection("type")}
+                />
+                {active || search ? (
+                  <Shortcut
+                    label="Clear"
+                    icon="close"
+                    accessibilityLabel="Clear property filters"
+                    onPress={clear}
+                  />
+                ) : null}
+              </ScrollView>
+              <View style={styles.actions}>
+                <ActionButton
+                  label="My properties"
+                  icon="person-outline"
+                  onPress={() => router.push("/(app)/properties/my" as never)}
+                />
+                <ActionButton
+                  label="Create property"
+                  icon="add"
+                  onPress={() =>
+                    router.push("/(app)/properties/create" as never)
+                  }
+                />
+              </View>
+              <View style={styles.sortRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Sort properties"
+                  onPress={() => setSortOpen(true)}
+                  style={styles.sortButton}
+                >
+                  <ThemedText style={styles.sortText}>
+                    Sort by:{" "}
+                    <ThemedText style={styles.sortValue}>
+                      {SORTS.find((option) => option.value === sort)?.label}
+                    </ThemedText>
+                  </ThemedText>
+                  <Ionicons name="chevron-down" size={14} color={theme.text} />
+                </Pressable>
+                {!results.loading && !results.error ? (
+                  <ThemedText themeColor="textSecondary" style={styles.count}>
+                    {count == null
+                      ? `${results.page.items.length}${results.page.nextCursor ? "+" : ""} ${results.page.items.length === 1 && !results.page.nextCursor ? "property" : "properties"}`
+                      : `${count} ${count === 1 ? "property" : "properties"}`}
+                  </ThemedText>
+                ) : null}
+              </View>
+              {sort !== "NEWEST" &&
+              (!applied.currencyCode ||
+                (applied.listingPurpose === "RENT" && !applied.pricePeriod)) ? (
+                <ThemedText style={styles.sortHint} themeColor="textSecondary">
+                  Sorted by asking amount. Use Price filters to compare the same
+                  currency and rent period.
+                </ThemedText>
+              ) : null}
+              {results.loading && !results.refreshing ? (
+                <PropertiesSkeleton />
+              ) : null}
+              {results.error ? (
+                <PropertyListError
+                  message={results.error}
+                  onRetry={results.retry}
+                />
+              ) : null}
+            </>
+          }
+          ListEmptyComponent={
+            !results.loading && !results.error ? (
+              <PropertiesEmpty
+                title={
+                  active || search ? "No properties match" : "No properties yet"
+                }
+                message={
+                  active || search
+                    ? "Try a different location or adjust your filters."
+                    : "Properties for this purpose will appear here when advertised."
+                }
+                actionLabel={
+                  active || search
+                    ? "Clear property filters"
+                    : "Create property"
+                }
+                onAction={
+                  active || search
+                    ? clear
+                    : () => router.push("/(app)/properties/create" as never)
+                }
+              />
+            ) : undefined
+          }
+          ListFooterComponent={
+            results.loadingMore ? (
+              <ActivityIndicator
+                style={styles.inset}
+                color={accent}
+                accessibilityLabel="Loading more properties"
+              />
+            ) : undefined
+          }
+        />
+      </SafeAreaView>
+      {section ? (
+        <PropertyFiltersSheet
+          applied={applied}
+          types={types}
+          typesError={typesError}
+          onRetryTypes={() => setTypesRetry((value) => value + 1)}
+          section={section}
+          context={context}
+          api={api}
+          onApply={(value, point, radius) => {
+            setApplied(value);
+            setNearby(point);
+            setRadiusKm(radius);
+          }}
+          onClose={() => setSection(null)}
+          radiusKm={radiusKm}
+          nearby={nearby}
+        />
+      ) : null}
+      <Sheet
+        visible={sortOpen}
+        title="Sort properties"
+        onClose={() => setSortOpen(false)}
+      >
+        {SORTS.map((option) => (
+          <ChoiceChip
+            key={option.value}
+            label={option.label}
+            selected={sort === option.value}
+            onPress={() => {
+              setSort(option.value);
+              setSortOpen(false);
+            }}
+          />
+        ))}
+      </Sheet>
+      <Sheet
+        visible={menuOpen}
+        title="Menu"
+        onClose={() => setMenuOpen(false)}
+      >
+        {MENU.map((entry) => (
+          <Pressable
+            key={entry.route}
+            accessibilityRole="button"
+            accessibilityLabel={entry.label}
+            onPress={() => {
+              setMenuOpen(false);
+              router.push(entry.route as never);
+            }}
+            style={styles.menuItem}
+          >
+            <Ionicons name={entry.icon} size={21} color={theme.text} />
+            <ThemedText style={styles.menuText}>{entry.label}</ThemedText>
+          </Pressable>
+        ))}
+      </Sheet>
+    </View>
+  );
+}
+function PurposeChips({
+  value,
+  onChange,
+}: {
+  value: ListingPurpose;
+  onChange: (purpose: ListingPurpose) => void;
+}) {
+  const theme = useTheme();
+  const accent = theme.info;
+  return (
+    <View style={[styles.purpose, { borderColor: theme.border }]}>
+      {(["SALE", "RENT"] as const).map((purpose, index) => (
+        <Pressable
+          key={purpose}
+          accessibilityRole="button"
+          accessibilityLabel={purpose === "SALE" ? "Buy" : "Rent"}
+          accessibilityState={{ selected: value === purpose }}
+          onPress={() => onChange(purpose)}
+          style={[
+            styles.purposeItem,
+            index > 0 && {
+              borderLeftWidth: StyleSheet.hairlineWidth,
+              borderLeftColor: theme.border,
+            },
+            value === purpose && { backgroundColor: theme.infoSurface },
+          ]}
+        >
+          <ThemedText
+            style={[
+              styles.shortcutText,
+              value === purpose && { color: accent },
+            ]}
+          >
+            {purpose === "SALE" ? "Buy" : "Rent"}
+          </ThemedText>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+function ActionButton({
+  label,
+  icon,
+  onPress,
+}: {
+  label: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={[
+        styles.actionButton,
+        {
+          backgroundColor: theme.backgroundElement,
+          borderColor: theme.border,
+        },
+      ]}
+    >
+      <Ionicons name={icon} size={17} color={theme.text} />
+      <ThemedText style={styles.actionText}>{label}</ThemedText>
+    </Pressable>
+  );
+}
+function Shortcut({
+  label,
+  selected = false,
+  icon = "chevron-down",
+  accessibilityLabel,
+  onPress,
+}: {
+  label: string;
+  selected?: boolean;
+  icon?: React.ComponentProps<typeof Ionicons>["name"];
+  accessibilityLabel?: string;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const accent = theme.info;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={[
+        styles.shortcut,
+        {
+          borderColor: selected ? accent : theme.border,
+          backgroundColor: selected
+            ? theme.infoSurface
+            : theme.backgroundElement,
+        },
+      ]}
+    >
+      <ThemedText
+        style={[styles.shortcutText, selected && { color: accent }]}
+      >
+        {label}
+      </ThemedText>
+      <Ionicons
+        name={icon}
+        size={13}
+        color={selected ? accent : theme.textSecondary}
+      />
+    </Pressable>
+  );
+}
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderBottomWidth: StyleSheet.hairlineWidth },
-  headerActions: { flexDirection: "row", gap: Spacing.two },
-  iconButton: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
-  search: { flexDirection: "row", alignItems: "center", gap: Spacing.two, margin: Spacing.three, marginBottom: Spacing.two, borderWidth: 1, borderRadius: BorderRadius.full, paddingHorizontal: Spacing.three },
-  searchInput: { flex: 1, minHeight: 42, fontSize: 14 },
-  chips: { gap: Spacing.two, paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
-  locationError: { color: BrandColors.error, fontSize: 13, lineHeight: 19, marginHorizontal: Spacing.three, marginBottom: Spacing.two },
-  filterPanel: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, padding: Spacing.three, borderWidth: 1, borderRadius: BorderRadius.lg, gap: Spacing.two },
-  filterTitle: { fontSize: 13, fontWeight: "700" },
-  typeChips: { gap: Spacing.two },
-  fieldGrid: { gap: Spacing.two },
-  footer: { padding: Spacing.three },
-  listContent: { paddingBottom: Spacing.four },
-  emptyContent: { flexGrow: 1 },
+  content: { paddingBottom: Spacing.four },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 56,
+    paddingHorizontal: Spacing.one,
+  },
+  headerButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  divider: { width: StyleSheet.hairlineWidth, height: 26 },
+  spacer: { flex: 1 },
+  brand: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.two,
+    paddingLeft: Spacing.three,
+  },
+  brandMark: {
+    width: 28,
+    height: 28,
+    borderRadius: BorderRadius.full,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  brandText: { fontSize: 19, fontWeight: "700" },
+  savedText: { fontSize: 15, fontWeight: "700" },
+  accentLine: { height: 2.5 },
+  inset: { marginHorizontal: Spacing.three, marginBottom: Spacing.three },
+  searchRow: {
+    flexDirection: "row",
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    marginTop: Spacing.three,
+    marginBottom: Spacing.two,
+  },
+  search: {
+    flex: 1,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    paddingLeft: Spacing.three,
+    paddingRight: Spacing.one,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.two,
+  },
+  searchInput: { flex: 1, minHeight: 46, fontSize: 14 },
+  clearBox: {
+    width: 30,
+    height: 30,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterButton: {
+    width: 48,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterDot: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  toolbar: {
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+  },
+  purpose: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderRadius: BorderRadius.full,
+    overflow: "hidden",
+  },
+  purposeItem: {
+    minHeight: 40,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  shortcut: {
+    minHeight: 40,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.one,
+    borderWidth: 1,
+    borderRadius: BorderRadius.full,
+  },
+  shortcutText: { fontSize: 13, fontWeight: "600" },
+  actions: {
+    flexDirection: "row",
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    marginTop: Spacing.two,
+  },
+  actionButton: {
+    flex: 1,
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.two,
+  },
+  actionText: { fontSize: 15, fontWeight: "600" },
+  sortRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    marginTop: Spacing.two,
+  },
+  sortButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.one,
+    minHeight: 44,
+    flexShrink: 1,
+  },
+  sortText: { fontSize: 12 },
+  sortValue: { fontSize: 12, fontWeight: "700" },
+  count: { fontSize: 11 },
+  sortHint: { fontSize: 11, lineHeight: 17, marginHorizontal: Spacing.three },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.three,
+    minHeight: 48,
+  },
+  menuText: { fontSize: 15, fontWeight: "600" },
 });

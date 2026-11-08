@@ -1,6 +1,11 @@
 import React from "react";
 import { Alert } from "react-native";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ApiError } from "@/core/api/api-error";
@@ -32,7 +37,14 @@ const mockFeedApi = {
   closePoll: jest.fn(),
   reportPost: jest.fn(),
   comments: jest.fn(),
+  comment: jest.fn(),
+  deleteComment: jest.fn(),
   authorSummaries: jest.fn(),
+  react: jest.fn(),
+  unreact: jest.fn(),
+  save: jest.fn(),
+  unsave: jest.fn(),
+  sharePost: jest.fn(),
 };
 
 const mockFeedState = {
@@ -53,7 +65,9 @@ const mockFeedState = {
 };
 
 jest.mock("@/global.css", () => ({}));
-jest.mock("@/core/navigation/safe-back", () => ({ safeBack: () => mockSafeBack() }));
+jest.mock("@/core/navigation/safe-back", () => ({
+  safeBack: () => mockSafeBack(),
+}));
 jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
 jest.mock("expo-image", () => ({ Image: () => null }));
 jest.mock("expo-document-picker", () => ({ getDocumentAsync: jest.fn() }));
@@ -67,9 +81,12 @@ jest.mock("@react-native-community/datetimepicker", () => ({
   default: () => null,
 }));
 jest.mock("expo-router", () => ({
-  get router() { return mockRouter; },
+  get router() {
+    return mockRouter;
+  },
   useRouter: () => mockRouter,
   useLocalSearchParams: () => mockParams,
+  useFocusEffect: jest.fn(),
 }));
 jest.mock("@/core/session/session-provider", () => ({
   useSession: () => ({ apiClient: {}, session: mockSession }),
@@ -77,21 +94,24 @@ jest.mock("@/core/session/session-provider", () => ({
 jest.mock("@/features/feed/services/feed-api", () => ({
   createFeedApi: () => mockFeedApi,
 }));
-jest.mock("@/features/feed/hooks/use-feed", () => ({ useFeed: () => mockFeedState }));
-jest.mock("@/features/feed/components/feed-header", () => ({ FeedHeader: () => null }));
-jest.mock("@/features/feed/components/community-drawer", () => ({ CommunityDrawer: () => null }));
-jest.mock("@/features/feed/components/composer-bar", () => ({ ComposerBar: () => null }));
-jest.mock("@/features/feed/components/feed-controls", () => ({ CategoryFilter: () => null }));
-jest.mock("@/features/feed/components/feature-panels", () => ({
-  MatchmakingPanel: () => null,
-  PropertyPanel: () => null,
-  VehiclesPanel: () => null,
-  EventsPanel: () => null,
-  JobsPanel: () => null,
-  SpareBagPanel: () => null,
-  BusinessPanel: () => null,
+jest.mock("@/features/feed/hooks/use-feed", () => ({
+  useFeed: () => mockFeedState,
 }));
-jest.mock("@/features/feed/components/media-image", () => ({ MediaImage: () => null }));
+jest.mock("@/features/feed/components/feed-header", () => ({
+  FeedHeader: () => null,
+}));
+jest.mock("@/features/feed/components/community-drawer", () => ({
+  CommunityDrawer: () => null,
+}));
+jest.mock("@/features/feed/components/composer-bar", () => ({
+  ComposerBar: () => null,
+}));
+jest.mock("@/features/feed/components/feed-controls", () => ({
+  CategoryFilter: () => null,
+}));
+jest.mock("@/features/feed/components/media-image", () => ({
+  MediaImage: () => null,
+}));
 
 function defaultSession() {
   return {
@@ -120,8 +140,20 @@ function makePoll(overrides: Partial<Poll> = {}): Poll {
     totalVotes: 0,
     myVotes: [],
     options: [
-      { id: "option-1", text: "Hall", sortOrder: 0, voteCount: 0, percentage: 0 },
-      { id: "option-2", text: "Park", sortOrder: 1, voteCount: 0, percentage: 0 },
+      {
+        id: "option-1",
+        text: "Hall",
+        sortOrder: 0,
+        voteCount: 0,
+        percentage: 0,
+      },
+      {
+        id: "option-2",
+        text: "Park",
+        sortOrder: 1,
+        voteCount: 0,
+        percentage: 0,
+      },
     ],
     ...overrides,
   };
@@ -143,6 +175,7 @@ function makePost(overrides: Partial<PostRow> = {}): PostRow {
     commentsEnabled: true,
     commentCount: 0,
     reactionCount: 0,
+    shareCount: 0,
     publishedAt: "2026-11-03T10:00:00Z",
     createdAt: "2026-11-03T10:00:00Z",
     ...overrides,
@@ -170,20 +203,29 @@ function makeFeedItem(overrides: Partial<FeedItem> = {}): FeedItem {
     mediaIds: [],
     commentCount: 0,
     reactionCount: 0,
+    shareCount: 0,
     viewerReaction: null,
     viewed: false,
     saved: false,
-    payload: { categoryId: "category-1", categoryName: "Social", poll: makePoll() },
+    payload: {
+      categoryId: "category-1",
+      categoryName: "Social",
+      poll: makePoll(),
+    },
+    media: [],
+    tags: [],
     ...overrides,
   };
 }
 
 function mount(component: React.ReactElement) {
   return render(
-    <SafeAreaProvider initialMetrics={{
-      frame: { x: 0, y: 0, width: 390, height: 844 },
-      insets: { top: 0, left: 0, right: 0, bottom: 0 },
-    }}>
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { x: 0, y: 0, width: 390, height: 844 },
+        insets: { top: 0, left: 0, right: 0, bottom: 0 },
+      }}
+    >
       {component}
     </SafeAreaProvider>,
   );
@@ -194,18 +236,52 @@ beforeEach(() => {
   mockParams = {};
   mockSession = defaultSession();
   mockFeedState.items = [makeFeedItem()];
-  mockFeedApi.communityDetail.mockResolvedValue({ destinationCountryId: "country-1" });
-  mockFeedApi.feedCategories.mockResolvedValue({ items: [
-    { id: "category-1", countryId: "country-1", name: "Social", slug: "social", active: true },
-    { id: "category-2", countryId: "country-1", name: "Archived", slug: "archived", active: false },
-  ] });
+  mockFeedApi.communityDetail.mockResolvedValue({
+    destinationCountryId: "country-1",
+  });
+  mockFeedApi.feedCategories.mockResolvedValue({
+    items: [
+      {
+        id: "category-1",
+        countryId: "country-1",
+        name: "Social",
+        slug: "social",
+        active: true,
+      },
+      {
+        id: "category-2",
+        countryId: "country-1",
+        name: "Archived",
+        slug: "archived",
+        active: false,
+      },
+    ],
+  });
   mockFeedApi.createPoll.mockResolvedValue(makePoll());
-  mockFeedApi.getPost.mockResolvedValue(makePost());
+  mockFeedApi.getPost.mockResolvedValue({
+    post: makePost(),
+    media: [],
+    tags: [],
+    viewerReaction: null,
+    saved: false,
+  });
+  mockFeedApi.react.mockResolvedValue(undefined);
+  mockFeedApi.unreact.mockResolvedValue(undefined);
+  mockFeedApi.save.mockResolvedValue(undefined);
+  mockFeedApi.unsave.mockResolvedValue(undefined);
+  mockFeedApi.sharePost.mockResolvedValue({ shareCount: 1 });
+  mockFeedApi.deleteComment.mockResolvedValue(undefined);
   mockFeedApi.getPoll.mockResolvedValue(makePoll());
-  mockFeedApi.updatePoll.mockResolvedValue(makePoll({ question: "Updated question?" }));
+  mockFeedApi.updatePoll.mockResolvedValue(
+    makePoll({ question: "Updated question?" }),
+  );
   mockFeedApi.updatePost.mockResolvedValue(makePost());
-  mockFeedApi.vote.mockResolvedValue(makePoll({ myVotes: ["option-1"], totalVoters: 1, totalVotes: 1 }));
-  mockFeedApi.closePoll.mockResolvedValue(makePoll({ status: "CLOSED", closedAt: "2026-11-03T12:00:00Z" }));
+  mockFeedApi.vote.mockResolvedValue(
+    makePoll({ myVotes: ["option-1"], totalVoters: 1, totalVotes: 1 }),
+  );
+  mockFeedApi.closePoll.mockResolvedValue(
+    makePoll({ status: "CLOSED", closedAt: "2026-11-03T12:00:00Z" }),
+  );
   mockFeedApi.reportPost.mockResolvedValue({ reportId: "report-1" });
   mockFeedApi.comments.mockResolvedValue({ items: [], nextCursor: null });
   mockFeedApi.authorSummaries.mockResolvedValue([]);
@@ -221,26 +297,47 @@ describe("Poll creation and deep link", () => {
     expect(await screen.findByLabelText("Category Social")).toBeTruthy();
     expect(screen.queryByLabelText("Category Archived")).toBeNull();
     await fireEvent.press(screen.getByLabelText("Category Social"));
-    await fireEvent.changeText(screen.getByLabelText("Question (required)"), "  Which venue?  ");
-    await fireEvent.changeText(screen.getByLabelText("Option 1 (required)"), " Hall ");
-    await fireEvent.changeText(screen.getByLabelText("Option 2 (required)"), " Park ");
-    await fireEvent(screen.getByLabelText("Allow multiple selections"), "valueChange", true);
-    await fireEvent(screen.getByLabelText("Allow vote changes"), "valueChange", true);
-    await fireEvent.press(screen.getByLabelText("Results immediate"));
-    await fireEvent.press(screen.getByLabelText("Publish post"));
+    await fireEvent.changeText(
+      screen.getByLabelText("Question (required)"),
+      "  Which venue?  ",
+    );
+    await fireEvent.changeText(
+      screen.getByLabelText("Option 1 (required)"),
+      " Hall ",
+    );
+    await fireEvent.changeText(
+      screen.getByLabelText("Option 2 (required)"),
+      " Park ",
+    );
+    await fireEvent(
+      screen.getByLabelText("Allow multiple selections"),
+      "valueChange",
+      true,
+    );
+    await fireEvent(
+      screen.getByLabelText("Allow vote changes"),
+      "valueChange",
+      true,
+    );
+    await fireEvent.press(screen.getByLabelText("Results immediately"));
+    await fireEvent.press(screen.getByLabelText("Publish poll"));
 
-    await waitFor(() => expect(mockFeedApi.createPoll).toHaveBeenCalledWith(expect.objectContaining({
-      communityId: "community-1",
-      categoryId: "category-1",
-      question: "Which venue?",
-      options: ["Hall", "Park"],
-      maxOptions: 10,
-      allowMultiple: true,
-      allowVoteChange: true,
-      allowVoteWithdraw: false,
-      anonymousVoting: false,
-      resultsVisibility: "IMMEDIATE",
-    })));
+    await waitFor(() =>
+      expect(mockFeedApi.createPoll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          communityId: "community-1",
+          categoryId: "category-1",
+          question: "Which venue?",
+          options: ["Hall", "Park"],
+          maxOptions: 20,
+          allowMultiple: true,
+          allowVoteChange: true,
+          allowVoteWithdraw: false,
+          anonymousVoting: false,
+          resultsVisibility: "IMMEDIATE",
+        }),
+      ),
+    );
     await waitFor(() => expect(mockSafeBack).toHaveBeenCalled());
   });
 
@@ -249,10 +346,19 @@ describe("Poll creation and deep link", () => {
     await mount(<CreatePostScreen />);
 
     await screen.findByLabelText("Category Social");
-    await fireEvent.changeText(screen.getByLabelText("Question (required)"), "Which venue?");
-    await fireEvent.changeText(screen.getByLabelText("Option 1 (required)"), "Hall");
-    await fireEvent.changeText(screen.getByLabelText("Option 2 (required)"), "Park");
-    await fireEvent.press(screen.getByLabelText("Publish post"));
+    await fireEvent.changeText(
+      screen.getByLabelText("Question (required)"),
+      "Which venue?",
+    );
+    await fireEvent.changeText(
+      screen.getByLabelText("Option 1 (required)"),
+      "Hall",
+    );
+    await fireEvent.changeText(
+      screen.getByLabelText("Option 2 (required)"),
+      "Park",
+    );
+    await fireEvent.press(screen.getByLabelText("Publish poll"));
 
     expect(await screen.findByText("Choose a FEED category.")).toBeTruthy();
     expect(mockFeedApi.createPoll).not.toHaveBeenCalled();
@@ -265,68 +371,112 @@ describe("Poll creation and deep link", () => {
 
     await screen.findByLabelText("Category Social");
     await fireEvent.press(screen.getByLabelText("Category Social"));
-    await fireEvent.changeText(screen.getByLabelText("Question (required)"), "Keep this question");
-    await fireEvent.changeText(screen.getByLabelText("Option 1 (required)"), "Hall");
-    await fireEvent.changeText(screen.getByLabelText("Option 2 (required)"), "Park");
-    await fireEvent.press(screen.getByLabelText("Publish post"));
+    await fireEvent.changeText(
+      screen.getByLabelText("Question (required)"),
+      "Keep this question",
+    );
+    await fireEvent.changeText(
+      screen.getByLabelText("Option 1 (required)"),
+      "Hall",
+    );
+    await fireEvent.changeText(
+      screen.getByLabelText("Option 2 (required)"),
+      "Park",
+    );
+    await fireEvent.press(screen.getByLabelText("Publish poll"));
 
     expect(await screen.findByText("Failed to post.")).toBeTruthy();
-    expect(screen.getByLabelText("Question (required)").props.value).toBe("Keep this question");
-    expect(screen.getByLabelText("Option 1 (required)").props.value).toBe("Hall");
+    expect(screen.getByLabelText("Question (required)").props.value).toBe(
+      "Keep this question",
+    );
+    expect(screen.getByLabelText("Option 1 (required)").props.value).toBe(
+      "Hall",
+    );
     expect(mockSafeBack).not.toHaveBeenCalled();
   });
 });
 
 describe("Poll editing", () => {
-  beforeEach(() => { mockParams = { id: "post-1" }; });
+  beforeEach(() => {
+    mockParams = { id: "post-1" };
+  });
 
   it("loads Poll detail and saves question and configuration before votes", async () => {
     await mount(<EditPostScreen />);
 
     expect(await screen.findByText("Edit poll")).toBeTruthy();
-    await fireEvent.changeText(screen.getByLabelText("Question (required)"), "Updated question?");
+    await fireEvent.changeText(
+      screen.getByLabelText("Question (required)"),
+      "Updated question?",
+    );
     await fireEvent.press(screen.getByLabelText("Save changes"));
 
-    await waitFor(() => expect(mockFeedApi.updatePoll).toHaveBeenCalledWith("post-1",
-      expect.objectContaining({ question: "Updated question?", options: ["Hall", "Park"], maxOptions: 10 })));
+    await waitFor(() =>
+      expect(mockFeedApi.updatePoll).toHaveBeenCalledWith(
+        "post-1",
+        expect.objectContaining({
+          question: "Updated question?",
+          options: ["Hall", "Park"],
+          maxOptions: 10,
+        }),
+      ),
+    );
     expect(mockFeedApi.getPoll).toHaveBeenCalledWith("post-1");
     expect(await screen.findByText("Saved ✓")).toBeTruthy();
-    await waitFor(() => expect(mockSafeBack).toHaveBeenCalled(), { timeout: 2000 });
+    await waitFor(() => expect(mockSafeBack).toHaveBeenCalled(), {
+      timeout: 2000,
+    });
   });
 
   it("omits locked options and policies after the first vote", async () => {
-    mockFeedApi.getPoll.mockResolvedValue(makePoll({ totalVoters: 1, totalVotes: 1 }));
+    mockFeedApi.getPoll.mockResolvedValue(
+      makePoll({ totalVoters: 1, totalVotes: 1 }),
+    );
     await mount(<EditPostScreen />);
 
     expect(await screen.findByText(/locked after the first vote/)).toBeTruthy();
-    await fireEvent.changeText(screen.getByLabelText("Question (required)"), "Question only");
+    await fireEvent.changeText(
+      screen.getByLabelText("Question (required)"),
+      "Question only",
+    );
     await fireEvent.press(screen.getByLabelText("Save changes"));
 
     await waitFor(() => expect(mockFeedApi.updatePoll).toHaveBeenCalled());
-    const request = mockFeedApi.updatePoll.mock.calls[0][1] as Record<string, unknown>;
+    const request = mockFeedApi.updatePoll.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
     expect(request.question).toBe("Question only");
     expect(request).not.toHaveProperty("options");
     expect(request).not.toHaveProperty("allowMultiple");
-    await waitFor(() => expect(mockSafeBack).toHaveBeenCalled(), { timeout: 2000 });
+    await waitFor(() => expect(mockSafeBack).toHaveBeenCalled(), {
+      timeout: 2000,
+    });
   });
 
   it("locks configuration after an authoritative conflict when results hid prior votes", async () => {
-    mockFeedApi.getPoll.mockResolvedValue(makePoll({
-      resultsVisible: false,
-      totalVoters: null,
-      totalVotes: null,
-    }));
-    mockFeedApi.updatePoll.mockRejectedValue(new ApiError({
-      code: "VALIDATION_ERROR",
-      httpStatus: 409,
-      userMessage: "Options are locked after voting starts.",
-    }));
+    mockFeedApi.getPoll.mockResolvedValue(
+      makePoll({
+        resultsVisible: false,
+        totalVoters: null,
+        totalVotes: null,
+      }),
+    );
+    mockFeedApi.updatePoll.mockRejectedValue(
+      new ApiError({
+        code: "VALIDATION_ERROR",
+        httpStatus: 409,
+        userMessage: "Options are locked after voting starts.",
+      }),
+    );
     await mount(<EditPostScreen />);
 
     await screen.findByText("Edit poll");
     await fireEvent.press(screen.getByLabelText("Save changes"));
 
-    expect(await screen.findByText("Options are locked after voting starts.")).toBeTruthy();
+    expect(
+      await screen.findByText("Options are locked after voting starts."),
+    ).toBeTruthy();
     expect(screen.getByText(/locked after the first vote/)).toBeTruthy();
     expect(screen.getByLabelText("Option 1 (required)")).not.toBeEnabled();
   });
@@ -335,7 +485,9 @@ describe("Poll editing", () => {
     mockFeedApi.getPoll.mockResolvedValue(makePoll({ status: "CLOSED" }));
     await mount(<EditPostScreen />);
 
-    expect(await screen.findByText("Closed or expired polls are read-only.")).toBeTruthy();
+    expect(
+      await screen.findByText("Closed or expired polls are read-only."),
+    ).toBeTruthy();
     expect(screen.queryByLabelText("Save changes")).toBeNull();
     expect(mockFeedApi.updatePoll).not.toHaveBeenCalled();
   });
@@ -345,7 +497,11 @@ describe("Poll editing", () => {
       ...defaultSession(),
       memberships: [{ communityId: "community-1", role: "COMMUNITY_ADMIN" }],
     };
-    mockFeedApi.getPost.mockResolvedValue(makePost({ authorId: "author-2" }));
+    mockFeedApi.getPost.mockResolvedValue({
+      post: makePost({ authorId: "author-2" }),
+      media: [],
+      tags: [],
+    });
     await mount(<EditPostScreen />);
 
     expect(await screen.findByText("Edit poll")).toBeTruthy();
@@ -354,6 +510,33 @@ describe("Poll editing", () => {
 });
 
 describe("Feed Poll workflows", () => {
+  it("uses a distinct Poll card without like or reply actions", async () => {
+    await mount(<HomeFeedScreen />);
+
+    expect(screen.getByTestId("poll-post-card")).toBeTruthy();
+    expect(screen.getByText("Community poll")).toBeTruthy();
+    expect(screen.queryByLabelText("Like")).toBeNull();
+    expect(screen.queryByLabelText("0 replies")).toBeNull();
+    expect(screen.getByLabelText("Share post")).toBeTruthy();
+    expect(screen.getByLabelText("Save post")).toBeTruthy();
+    expect(mockFeedState.react).not.toHaveBeenCalled();
+  });
+
+  it("keeps like and reply actions on ordinary posts", async () => {
+    mockFeedState.items = [
+      makeFeedItem({
+        contentType: "GENERAL",
+        body: "A regular community update",
+        payload: { categoryName: "Social" },
+      }),
+    ];
+    await mount(<HomeFeedScreen />);
+
+    expect(screen.getByTestId("post-card")).toBeTruthy();
+    expect(screen.getByLabelText("Like")).toBeTruthy();
+    expect(screen.getByLabelText("0 replies")).toBeTruthy();
+  });
+
   it("renders a Poll once and applies vote responses in place", async () => {
     await mount(<HomeFeedScreen />);
 
@@ -361,9 +544,13 @@ describe("Feed Poll workflows", () => {
     await fireEvent.press(screen.getByLabelText("Hall"));
     await fireEvent.press(screen.getByLabelText("Submit vote"));
 
-    await waitFor(() => expect(mockFeedApi.vote).toHaveBeenCalledWith("option-1", false));
+    await waitFor(() =>
+      expect(mockFeedApi.vote).toHaveBeenCalledWith("option-1", false),
+    );
     expect(mockFeedState.updatePost).toHaveBeenCalledWith("post-1", {
-      payload: expect.objectContaining({ poll: expect.objectContaining({ myVotes: ["option-1"] }) }),
+      payload: expect.objectContaining({
+        poll: expect.objectContaining({ myVotes: ["option-1"] }),
+      }),
     });
     expect(mockFeedState.refresh).not.toHaveBeenCalled();
   });
@@ -371,7 +558,9 @@ describe("Feed Poll workflows", () => {
   it("routes the Poll feature to the Poll composer deep link", async () => {
     await mount(<HomeFeedScreen />);
     await fireEvent.press(screen.getByLabelText("Polls"));
-    expect(mockRouter.push).toHaveBeenCalledWith("/(app)/posts/create?mode=poll");
+    expect(mockRouter.push).toHaveBeenCalledWith(
+      "/(app)/posts/create?mode=poll",
+    );
   });
 
   it("requires confirmation before closing and updates the existing Feed item", async () => {
@@ -379,13 +568,19 @@ describe("Feed Poll workflows", () => {
 
     await fireEvent.press(screen.getByLabelText("Post options"));
     await fireEvent.press(screen.getByLabelText("Close poll"));
-    expect(screen.getByText("Close this poll? This cannot be undone.")).toBeTruthy();
+    expect(
+      screen.getByText("Close this poll? This cannot be undone."),
+    ).toBeTruthy();
     expect(mockFeedApi.closePoll).not.toHaveBeenCalled();
     await fireEvent.press(screen.getByLabelText("Confirm close poll"));
 
-    await waitFor(() => expect(mockFeedApi.closePoll).toHaveBeenCalledWith("post-1"));
+    await waitFor(() =>
+      expect(mockFeedApi.closePoll).toHaveBeenCalledWith("post-1"),
+    );
     expect(mockFeedState.updatePost).toHaveBeenCalledWith("post-1", {
-      payload: expect.objectContaining({ poll: expect.objectContaining({ status: "CLOSED" }) }),
+      payload: expect.objectContaining({
+        poll: expect.objectContaining({ status: "CLOSED" }),
+      }),
     });
   });
 
@@ -402,22 +597,33 @@ describe("Feed Poll workflows", () => {
 
   it("offers reporting to non-owners through shared moderation reasons", async () => {
     const item = makeFeedItem();
-    mockFeedState.items = [{ ...item, author: item.author && { ...item.author, id: "author-2" } }];
-    jest.spyOn(Alert, "alert").mockImplementation((title, _message, buttons) => {
-      if (title === "Report poll") buttons?.find((button) => button.text === "scam")?.onPress?.();
-    });
+    mockFeedState.items = [
+      { ...item, author: item.author && { ...item.author, id: "author-2" } },
+    ];
+    jest
+      .spyOn(Alert, "alert")
+      .mockImplementation((title, _message, buttons) => {
+        if (title === "Report poll")
+          buttons?.find((button) => button.text === "scam")?.onPress?.();
+      });
     await mount(<HomeFeedScreen />);
 
     await fireEvent.press(screen.getByLabelText("Post options"));
     expect(screen.queryByLabelText("Close poll")).toBeNull();
     await fireEvent.press(screen.getByLabelText("Report poll"));
 
-    await waitFor(() => expect(mockFeedApi.reportPost).toHaveBeenCalledWith("post-1", { reason: "SCAM" }));
+    await waitFor(() =>
+      expect(mockFeedApi.reportPost).toHaveBeenCalledWith("post-1", {
+        reason: "SCAM",
+      }),
+    );
   });
 });
 
 describe("Poll detail workflows", () => {
-  beforeEach(() => { mockParams = { id: "post-1" }; });
+  beforeEach(() => {
+    mockParams = { id: "post-1" };
+  });
 
   it("loads Poll detail, preserves comments and submits votes", async () => {
     await mount(<PostDetailScreen />);
@@ -428,15 +634,139 @@ describe("Poll detail workflows", () => {
     await fireEvent.press(screen.getByLabelText("Hall"));
     await fireEvent.press(screen.getByLabelText("Submit vote"));
 
-    await waitFor(() => expect(mockFeedApi.vote).toHaveBeenCalledWith("option-1", false));
+    await waitFor(() =>
+      expect(mockFeedApi.vote).toHaveBeenCalledWith("option-1", false),
+    );
   });
 
   it("does not request Poll detail for an ordinary post", async () => {
-    mockFeedApi.getPost.mockResolvedValue(makePost({ postType: "GENERAL", body: "Ordinary body" }));
+    mockFeedApi.getPost.mockResolvedValue({
+      post: makePost({ postType: "GENERAL", body: "Ordinary body" }),
+      media: [],
+      tags: [],
+      viewerReaction: null,
+      saved: false,
+    });
     await mount(<PostDetailScreen />);
 
     expect(await screen.findByText("Ordinary body")).toBeTruthy();
     expect(mockFeedApi.getPoll).not.toHaveBeenCalled();
     expect(screen.queryByTestId("poll-card")).toBeNull();
+  });
+});
+
+describe("Post detail engagement", () => {
+  beforeEach(() => {
+    mockParams = { id: "post-1" };
+  });
+
+  const makeDetail = (post: PostRow) => ({
+    post,
+    media: [],
+    tags: [],
+    viewerReaction: null as "LIKE" | null,
+    saved: false,
+  });
+
+  it("toggles like and updates the reaction count optimistically", async () => {
+    mockFeedApi.getPost.mockResolvedValue(
+      makeDetail(makePost({ postType: "GENERAL", reactionCount: 3 })),
+    );
+    await mount(<PostDetailScreen />);
+    expect(await screen.findByText("3")).toBeTruthy();
+
+    await fireEvent.press(screen.getByLabelText("Like"));
+    await waitFor(() =>
+      expect(mockFeedApi.react).toHaveBeenCalledWith("post-1", "LIKE"),
+    );
+    expect(await screen.findByText("4")).toBeTruthy();
+
+    await fireEvent.press(screen.getByLabelText("Unlike"));
+    await waitFor(() =>
+      expect(mockFeedApi.unreact).toHaveBeenCalledWith("post-1"),
+    );
+    expect(await screen.findByText("3")).toBeTruthy();
+  });
+
+  it("rolls back the reaction when the API call fails", async () => {
+    mockFeedApi.getPost.mockResolvedValue(
+      makeDetail(makePost({ postType: "GENERAL", reactionCount: 2 })),
+    );
+    mockFeedApi.react.mockRejectedValue(new Error("network"));
+    await mount(<PostDetailScreen />);
+    expect(await screen.findByText("2")).toBeTruthy();
+
+    await fireEvent.press(screen.getByLabelText("Like"));
+    await waitFor(() => expect(mockFeedApi.react).toHaveBeenCalled());
+    expect(await screen.findByText("2")).toBeTruthy();
+  });
+
+  it("toggles save state", async () => {
+    mockFeedApi.getPost.mockResolvedValue(
+      makeDetail(makePost({ postType: "GENERAL" })),
+    );
+    await mount(<PostDetailScreen />);
+
+    await fireEvent.press(await screen.findByLabelText("Save post"));
+    await waitFor(() =>
+      expect(mockFeedApi.save).toHaveBeenCalledWith("post-1"),
+    );
+
+    await fireEvent.press(await screen.findByLabelText("Unsave post"));
+    await waitFor(() =>
+      expect(mockFeedApi.unsave).toHaveBeenCalledWith("post-1"),
+    );
+  });
+
+  it("resolves the post author name and username from summaries", async () => {
+    mockFeedApi.getPost.mockResolvedValue(
+      makeDetail(makePost({ postType: "GENERAL", authorId: "author-9" })),
+    );
+    mockFeedApi.authorSummaries.mockResolvedValue([
+      {
+        id: "author-9",
+        username: "amsel",
+        displayName: "Amsel K.",
+        accountStatus: "ACTIVE",
+        profileCompleted: true,
+        avatarMediaId: null,
+      },
+    ]);
+    await mount(<PostDetailScreen />);
+
+    expect(await screen.findByText("Amsel K.")).toBeTruthy();
+    expect(await screen.findByText(/@amsel/)).toBeTruthy();
+  });
+
+  it("posts a comment and bumps the comment count", async () => {
+    mockFeedApi.getPost.mockResolvedValue(
+      makeDetail(
+        makePost({ postType: "GENERAL", commentCount: 2, body: "Hello" }),
+      ),
+    );
+    mockFeedApi.comment.mockResolvedValue({
+      id: "c-9",
+      postId: "post-1",
+      authorId: "user-1",
+      parentCommentId: null,
+      body: "Nice post",
+      createdAt: "2026-11-03T11:00:00Z",
+    });
+    await mount(<PostDetailScreen />);
+    expect(await screen.findByText("2")).toBeTruthy();
+
+    await fireEvent.changeText(
+      screen.getByPlaceholderText("Add a comment…"),
+      "Nice post",
+    );
+    await fireEvent.press(screen.getByLabelText("Send comment"));
+    await waitFor(() =>
+      expect(mockFeedApi.comment).toHaveBeenCalledWith(
+        "post-1",
+        "Nice post",
+        undefined,
+      ),
+    );
+    expect(await screen.findByText("3")).toBeTruthy();
   });
 });

@@ -11,6 +11,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import com.diasporum.backend.security.DiasporumUserPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+import java.util.UUID;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -85,6 +92,46 @@ public class ProfileController {
                             + violations.iterator().next().getPropertyPath());
         }
         return toResponse(profileService.updateProfile(profileId(principal), req));
+    }
+
+    public record CompatibilityRequest(@NotNull @Size(max = 30) List<@NotNull UUID> interestIds,
+            @NotNull @Size(max = 30) List<@NotNull UUID> languageIds) {}
+    public record DiscoveryLocationRequest(@NotNull Double latitude, @NotNull Double longitude,
+            @NotNull Boolean consent) {}
+    public record AgeConfirmationRequest(@NotNull Boolean confirmed) {}
+
+    @GetMapping("/me/profile/compatibility")
+    public ProfileService.CompatibilityView compatibility(@AuthenticationPrincipal DiasporumUserPrincipal principal) {
+        return profileService.compatibility(principal.userId());
+    }
+
+    @PutMapping("/me/profile/compatibility")
+    public ProfileService.CompatibilityView compatibility(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @Valid @RequestBody CompatibilityRequest request) {
+        return profileService.replaceCompatibility(principal.userId(), request.interestIds(), request.languageIds());
+    }
+
+    @PutMapping("/me/profile/discovery-location")
+    public Map<String, Boolean> discoveryLocation(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @Valid @RequestBody DiscoveryLocationRequest request) {
+        profileService.saveDiscoveryLocation(principal.userId(), request.latitude(), request.longitude(), request.consent());
+        return Map.of("hasDiscoveryLocation", true);
+    }
+
+    @DeleteMapping("/me/profile/discovery-location")
+    public Map<String, Boolean> removeDiscoveryLocation(@AuthenticationPrincipal DiasporumUserPrincipal principal) {
+        profileService.removeDiscoveryLocation(principal.userId());
+        return Map.of("hasDiscoveryLocation", false);
+    }
+
+    @PostMapping("/me/profile/age-confirmation")
+    public Map<String, Boolean> confirmAge(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @Valid @RequestBody AgeConfirmationRequest request) {
+        if (!Boolean.TRUE.equals(request.confirmed())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "AGE_CONFIRMATION_REQUIRED");
+        }
+        profileService.confirmAgeEligibility(principal.userId());
+        return Map.of("confirmed", true);
     }
 
     @GetMapping("/me/profile/completion")

@@ -1,5 +1,6 @@
 package com.diasporum.backend.feed.internal.api.rest;
 
+import com.diasporum.backend.feed.internal.application.FeedPublicationService;
 import com.diasporum.backend.feed.internal.application.FeedService;
 import com.diasporum.backend.feed.internal.application.FeedService.CommentPage;
 import com.diasporum.backend.feed.internal.application.FeedService.CommentRow;
@@ -32,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.core.type.TypeReference;
 
 /** Feed endpoints — actor always resolved from the JWT. */
 @RestController
@@ -40,10 +42,13 @@ public class FeedController {
 
     private final IdentityApi identity;
     private final FeedService service;
+    private final FeedPublicationService publications;
 
-    public FeedController(IdentityApi identity, FeedService service) {
+    public FeedController(IdentityApi identity, FeedService service,
+            FeedPublicationService publications) {
         this.identity = identity;
         this.service = service;
+        this.publications = publications;
     }
 
     private UUID me(DiasporumUserPrincipal principal) {
@@ -67,29 +72,40 @@ public class FeedController {
                 ? null : UUID.fromString(raw.toString());
     }
 
+    /** Optional string list — null when absent (distinguishes "not sent" from []). */
+    private static List<String> strings(Map<String, Object> body, String key) {
+        var raw = body.get(key);
+        return raw instanceof List<?> l
+                ? l.stream().map(String::valueOf).toList()
+                : null;
+    }
+
     // ---- posts ----
 
     @PostMapping("/posts")
     public PostRow create(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @RequestBody Map<String, Object> b) {
-        return service.createPost(principal.userId(), UUID.fromString((String) b.get("communityId")),
-                (String) b.get("postType"), (String) b.get("title"),
-                (String) b.get("body"), (String) b.get("linkUrl"),
-                (String) b.getOrDefault("visibilityScope", "COMMUNITY"),
-                uuid(b, "categoryId"),
-                uuids(b, "mediaIds"));
+        return publications.execute(principal.userId(), "feed-post-create", b,
+                new TypeReference<PostRow>() { }, () -> service.createPost(
+                        principal.userId(), UUID.fromString((String) b.get("communityId")),
+                        (String) b.get("postType"), (String) b.get("title"),
+                        (String) b.get("body"), (String) b.get("linkUrl"),
+                        (String) b.getOrDefault("visibilityScope", "COMMUNITY"),
+                        uuid(b, "categoryId"), uuids(b, "mediaIds"), strings(b, "tags")));
     }
 
     @GetMapping("/posts/{postId}")
-    public PostRow post(@AuthenticationPrincipal DiasporumUserPrincipal principal, @PathVariable UUID postId) {
-        return service.getPost(principal.userId(), postId);          // viewable-enforced
+    public FeedService.PostDetail post(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID postId) {
+        return service.postDetail(principal.userId(), postId);      // viewable-enforced
     }
 
     @PatchMapping("/posts/{postId}")
     public PostRow update(@AuthenticationPrincipal DiasporumUserPrincipal principal, @PathVariable UUID postId,
             @RequestBody Map<String, Object> b) {
         return service.updatePost(principal.userId(), postId, (String) b.get("title"),
-                (String) b.get("body"), (String) b.get("linkUrl"));
+                (String) b.get("body"), (String) b.get("linkUrl"),
+                uuid(b, "categoryId"), strings(b, "tags"));
     }
 
     @DeleteMapping("/posts/{postId}")
@@ -112,10 +128,43 @@ public class FeedController {
             @RequestParam UUID communityId,
             @RequestParam(defaultValue = "FOR_YOU") String mode,
             @RequestParam(required = false) UUID categoryId,
+            @RequestParam(required = false) String tag,
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int size) {
         return service.communityFeed(principal.userId(), communityId, mode,
-                categoryId, cursor, size);
+                categoryId, tag, cursor, size);
+    }
+
+    // ---- hashtags ----
+
+    /** Prefix suggestions for composer autocomplete. */
+    @GetMapping("/tags/suggest")
+    public List<FeedService.TagView> suggestTags(
+            @AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @RequestParam String q,
+            @RequestParam(defaultValue = "10") int size) {
+        principal.userId();                          // authenticated
+        return service.suggestTags(q, size);
+    }
+
+    /** Community-scoped hashtag feed — same rules as the community feed. */
+    @GetMapping("/tags/{tagKey}/posts")
+    public FeedPage tagFeed(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable String tagKey,
+            @RequestParam UUID communityId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int size) {
+        return service.tagFeed(principal.userId(), communityId, tagKey, cursor,
+                size);
+    }
+
+    /** Parent-authorized short-lived URL for media attached to a feed post. */
+    @PostMapping("/media/{mediaId}/download-url")
+    public Map<String, String> feedMediaDownloadUrl(
+            @AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID mediaId) {
+        return Map.of("downloadUrl",
+                service.mediaDownloadUrl(principal.userId(), mediaId));
     }
 
     @GetMapping("/following")
@@ -123,6 +172,17 @@ public class FeedController {
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int size) {
         return service.followingFeed(principal.userId(), cursor, size);
+    }
+
+    /** Own posts — profile Posts/Polls/Media tabs + post count. */
+    @GetMapping("/mine")
+    public FeedService.MinePage mine(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @RequestParam(required = false) String postType,
+            @RequestParam(defaultValue = "false") boolean hasMedia,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int size) {
+        return service.myPosts(principal.userId(), postType, hasMedia,
+                cursor, size);
     }
 
     @GetMapping("/reels/community")
@@ -154,6 +214,16 @@ public class FeedController {
     @DeleteMapping("/posts/{postId}/save")
     public void unsave(@AuthenticationPrincipal DiasporumUserPrincipal principal, @PathVariable UUID postId) {
         service.unsave(principal.userId(), postId);
+    }
+
+    /** Record a share event (post_shares row); returns the updated share_count. */
+    @PostMapping("/posts/{postId}/share")
+    public Map<String, Object> share(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID postId,
+            @RequestBody(required = false) Map<String, Object> b) {
+        return Map.of("shareCount",
+                service.share(principal.userId(), postId,
+                        b == null ? null : (String) b.get("target")));
     }
 
     @PostMapping("/views")
@@ -199,13 +269,14 @@ public class FeedController {
     @PostMapping("/community-help")
     public Map<String, Object> createHelp(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @RequestBody Map<String, Object> b) {
-        return service.createHelpPost(principal.userId(),
-                UUID.fromString((String) b.get("communityId")),
-                uuid(b, "categoryId"),
-                (String) b.get("helpKind"), (String) b.get("title"),
-                (String) b.get("body"),
-                b.get("expiresAt") == null ? null
-                        : Instant.parse(b.get("expiresAt").toString()));
+        return publications.execute(principal.userId(), "feed-help-create", b,
+                new TypeReference<Map<String, Object>>() { }, () -> service.createHelpPost(
+                        principal.userId(), UUID.fromString((String) b.get("communityId")),
+                        uuid(b, "categoryId"), (String) b.get("helpKind"),
+                        (String) b.get("title"), (String) b.get("body"),
+                        b.get("expiresAt") == null ? null
+                                : Instant.parse(b.get("expiresAt").toString()),
+                        uuids(b, "mediaIds"), strings(b, "tags")));
     }
 
     @PatchMapping("/community-help/{postId}/status")

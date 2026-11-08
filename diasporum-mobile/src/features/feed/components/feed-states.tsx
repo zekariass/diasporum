@@ -16,7 +16,10 @@ export function FeedSkeleton() {
       {[0, 1, 2].map((i) => (
         <View
           key={i}
-          style={[styles.skRow, { borderBottomColor: theme.border }]}
+          style={[
+            styles.skRow,
+            { backgroundColor: theme.background, borderColor: theme.border },
+          ]}
         >
           <View style={[styles.skAvatar, bg]} />
           <View style={styles.skBody}>
@@ -47,15 +50,16 @@ export function FeedEmpty({
 }) {
   const theme = useTheme();
   return (
-    <View style={styles.empty}>
+    <View
+      style={[
+        styles.empty,
+        { backgroundColor: theme.background, borderColor: theme.border },
+      ]}
+    >
       <View
-        style={[styles.emptyIcon, { backgroundColor: theme.backgroundElement }]}
+        style={[styles.emptyIcon, { backgroundColor: theme.primarySurface }]}
       >
-        <Ionicons
-          name="chatbubbles-outline"
-          size={28}
-          color={theme.textSecondary}
-        />
+        <Ionicons name="chatbubbles-outline" size={28} color={theme.primary} />
       </View>
       <ThemedText style={styles.emptyTitle}>
         {filtered ? "Nothing in this category yet" : "No posts yet"}
@@ -67,10 +71,10 @@ export function FeedEmpty({
       </ThemedText>
       <Pressable
         onPress={filtered ? onClear : onCreate}
-        style={[styles.emptyBtn, { backgroundColor: theme.text }]}
+        style={[styles.emptyBtn, { backgroundColor: theme.primary }]}
         accessibilityRole="button"
       >
-        <ThemedText style={[styles.emptyBtnText, { color: theme.background }]}>
+        <ThemedText style={[styles.emptyBtnText, { color: "#FFFFFF" }]}>
           {filtered ? "Show all posts" : "Create a post"}
         </ThemedText>
       </Pressable>
@@ -82,9 +86,14 @@ const styles = StyleSheet.create({
   skRow: {
     flexDirection: "row",
     gap: 12,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Spacing.two,
+    width: "97%",
+    maxWidth: 720,
+    alignSelf: "center",
+    marginTop: 12,
+    paddingVertical: Spacing.three,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: BorderRadius.xl,
   },
   skAvatar: { width: 40, height: 40, borderRadius: 20 },
   skBody: { flex: 1, gap: 10, paddingTop: 4 },
@@ -94,9 +103,15 @@ const styles = StyleSheet.create({
   skIcon: { width: 22, height: 22, borderRadius: 11 },
   empty: {
     alignItems: "center",
-    paddingTop: Spacing.six,
+    width: "97%",
+    maxWidth: 720,
+    alignSelf: "center",
+    marginTop: Spacing.three,
+    paddingVertical: Spacing.six,
     gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: Spacing.three - Spacing.one,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: BorderRadius.xl,
   },
   emptyIcon: {
     width: 64,

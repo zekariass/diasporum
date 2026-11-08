@@ -94,7 +94,7 @@ class AuthFlowIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.userId").exists())
                 .andReturn();
-        return UUID.fromString(JSON.readTree(r.getResponse().getContentAsString()).get("userId").asText());
+        return UUID.fromString(JSON.readTree(r.getResponse().getContentAsString()).get("userId").asString());
     }
 
     private void verify(String email) throws Exception {
@@ -138,17 +138,17 @@ class AuthFlowIntegrationTest {
         assertEquals("ACTIVE", accountStatus(userId));
 
         JsonNode tokens = login(e, PASSWORD);
-        assertEquals(userId.toString(), tokens.get("userId").asText());
-        assertNotNull(tokens.get("sessionId").asText());
+        assertEquals(userId.toString(), tokens.get("userId").asString());
+        assertNotNull(tokens.get("sessionId").asString());
 
         // access token carries sub=userId, sid=sessionId
-        var claims = jwtService.verify(tokens.get("accessToken").asText());
+        var claims = jwtService.verify(tokens.get("accessToken").asString());
         assertNotNull(claims);
         assertEquals(userId.toString(), claims.getSubject());
-        assertEquals(tokens.get("sessionId").asText(), claims.getStringClaim("sid"));
+        assertEquals(tokens.get("sessionId").asString(), claims.getStringClaim("sid"));
 
         // authenticated /auth/me returns account data incl. verification timestamp
-        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(tokens.get("accessToken").asText())))
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(tokens.get("accessToken").asString())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.email").value(e))
                 .andExpect(jsonPath("$.accountStatus").value("ACTIVE"));
@@ -243,8 +243,8 @@ class AuthFlowIntegrationTest {
         String e = email("jwtexp");
         register(e); verify(e);
         JsonNode tokens = login(e, PASSWORD);
-        UUID userId = UUID.fromString(tokens.get("userId").asText());
-        UUID sessionId = UUID.fromString(tokens.get("sessionId").asText());
+        UUID userId = UUID.fromString(tokens.get("userId").asString());
+        UUID sessionId = UUID.fromString(tokens.get("sessionId").asString());
 
         // token issued by a different issuer/key → 401
         var foreign = new JwtService("https://evil.example", "diasporum-api",
@@ -254,7 +254,7 @@ class AuthFlowIntegrationTest {
                 .andExpect(status().isUnauthorized());
 
         // tampered signature on an otherwise valid token → 401
-        String at = tokens.get("accessToken").asText();
+        String at = tokens.get("accessToken").asString();
         mvc.perform(get("/api/v1/auth/me")
                         .header("Authorization", bearer(at.substring(0, at.length() - 4) + "AAAA")))
                 .andExpect(status().isUnauthorized());
@@ -273,20 +273,20 @@ class AuthFlowIntegrationTest {
 
         // rotate → new pair
         MvcResult r = mvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + t1.get("refreshToken").asText() + "\"}"))
+                        .content("{\"refreshToken\":\"" + t1.get("refreshToken").asString() + "\"}"))
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode t2 = JSON.readTree(r.getResponse().getContentAsString());
-        assertNotEquals(t1.get("refreshToken").asText(), t2.get("refreshToken").asText());
+        assertNotEquals(t1.get("refreshToken").asString(), t2.get("refreshToken").asString());
         // same session retained
-        assertEquals(t1.get("sessionId").asText(), t2.get("sessionId").asText());
+        assertEquals(t1.get("sessionId").asString(), t2.get("sessionId").asString());
 
         // replay of the consumed token → 401 AND family revocation kills t2 as well
         mvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + t1.get("refreshToken").asText() + "\"}"))
+                        .content("{\"refreshToken\":\"" + t1.get("refreshToken").asString() + "\"}"))
                 .andExpect(status().isUnauthorized());
         mvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + t2.get("refreshToken").asText() + "\"}"))
+                        .content("{\"refreshToken\":\"" + t2.get("refreshToken").asString() + "\"}"))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -295,7 +295,7 @@ class AuthFlowIntegrationTest {
         String e = email("race");
         register(e); verify(e);
         JsonNode t = login(e, PASSWORD);
-        String body = "{\"refreshToken\":\"" + t.get("refreshToken").asText() + "\"}";
+        String body = "{\"refreshToken\":\"" + t.get("refreshToken").asString() + "\"}";
 
         int threads = 4;
         var latch = new CountDownLatch(1);
@@ -339,8 +339,8 @@ class AuthFlowIntegrationTest {
         String e = email("logout");
         register(e); verify(e);
         JsonNode t = login(e, PASSWORD);
-        String at = t.get("accessToken").asText();
-        String sid = t.get("sessionId").asText();
+        String at = t.get("accessToken").asString();
+        String sid = t.get("sessionId").asString();
 
         mvc.perform(get("/api/v1/auth/sessions").header("Authorization", bearer(at)))
                 .andExpect(status().isOk())
@@ -354,7 +354,7 @@ class AuthFlowIntegrationTest {
                 .andExpect(status().isUnauthorized());
         // refresh token revoked with the session
         mvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + t.get("refreshToken").asText() + "\"}"))
+                        .content("{\"refreshToken\":\"" + t.get("refreshToken").asString() + "\"}"))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -364,20 +364,20 @@ class AuthFlowIntegrationTest {
         register(e); verify(e);
         JsonNode s1 = login(e, PASSWORD);
         JsonNode s2 = login(e, PASSWORD);
-        assertNotEquals(s1.get("sessionId").asText(), s2.get("sessionId").asText());
+        assertNotEquals(s1.get("sessionId").asString(), s2.get("sessionId").asString());
 
-        mvc.perform(get("/api/v1/auth/sessions").header("Authorization", bearer(s1.get("accessToken").asText())))
+        mvc.perform(get("/api/v1/auth/sessions").header("Authorization", bearer(s1.get("accessToken").asString())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2));
 
-        mvc.perform(post("/api/v1/auth/logout-all").header("Authorization", bearer(s1.get("accessToken").asText())))
+        mvc.perform(post("/api/v1/auth/logout-all").header("Authorization", bearer(s1.get("accessToken").asString())))
                 .andExpect(status().isNoContent());
 
         for (JsonNode s : List.of(s1, s2)) {
-            mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(s.get("accessToken").asText())))
+            mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(s.get("accessToken").asString())))
                     .andExpect(status().isUnauthorized());
             mvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"refreshToken\":\"" + s.get("refreshToken").asText() + "\"}"))
+                            .content("{\"refreshToken\":\"" + s.get("refreshToken").asString() + "\"}"))
                     .andExpect(status().isUnauthorized());
         }
     }
@@ -389,23 +389,23 @@ class AuthFlowIntegrationTest {
         JsonNode s1 = login(e, PASSWORD);
         JsonNode s2 = login(e, PASSWORD);
 
-        mvc.perform(delete("/api/v1/auth/sessions/" + s1.get("sessionId").asText())
-                        .header("Authorization", bearer(s2.get("accessToken").asText())))
+        mvc.perform(delete("/api/v1/auth/sessions/" + s1.get("sessionId").asString())
+                        .header("Authorization", bearer(s2.get("accessToken").asString())))
                 .andExpect(status().isNoContent());
 
-        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(s1.get("accessToken").asText())))
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(s1.get("accessToken").asString())))
                 .andExpect(status().isUnauthorized());
-        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(s2.get("accessToken").asText())))
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(s2.get("accessToken").asString())))
                 .andExpect(status().isOk());
 
         // cannot revoke another user's session — create second user and try
         String other = email("revokeother");
         register(other); verify(other);
         JsonNode o = login(other, PASSWORD);
-        mvc.perform(delete("/api/v1/auth/sessions/" + o.get("sessionId").asText())
-                        .header("Authorization", bearer(s2.get("accessToken").asText())))
+        mvc.perform(delete("/api/v1/auth/sessions/" + o.get("sessionId").asString())
+                        .header("Authorization", bearer(s2.get("accessToken").asString())))
                 .andExpect(status().isNoContent()); // silent no-op
-        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(o.get("accessToken").asText())))
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(o.get("accessToken").asString())))
                 .andExpect(status().isOk()); // still alive
     }
 
@@ -433,7 +433,7 @@ class AuthFlowIntegrationTest {
                 .andExpect(status().isNoContent());
 
         // all prior sessions revoked
-        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(t.get("accessToken").asText())))
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(t.get("accessToken").asString())))
                 .andExpect(status().isUnauthorized());
         // old password dead, new password works
         mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
@@ -451,7 +451,7 @@ class AuthFlowIntegrationTest {
         String e = email("changepw");
         register(e); verify(e);
         JsonNode t = login(e, PASSWORD);
-        String at = t.get("accessToken").asText();
+        String at = t.get("accessToken").asString();
 
         // wrong current password → 401
         mvc.perform(post("/api/v1/auth/change-password").header("Authorization", bearer(at))
@@ -477,7 +477,7 @@ class AuthFlowIntegrationTest {
         String e = email("noprofile");
         register(e); verify(e);
         JsonNode t = login(e, PASSWORD);
-        String at = t.get("accessToken").asText();
+        String at = t.get("accessToken").asString();
 
         // account endpoints work without a profile
         mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(at)))
@@ -495,7 +495,7 @@ class AuthFlowIntegrationTest {
         String e = email("suspend");
         UUID userId = register(e); verify(e);
         JsonNode t = login(e, PASSWORD);
-        String at = t.get("accessToken").asText();
+        String at = t.get("accessToken").asString();
 
         mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(at)))
                 .andExpect(status().isOk());
@@ -506,7 +506,7 @@ class AuthFlowIntegrationTest {
         mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(at)))
                 .andExpect(status().isUnauthorized());
         mvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + t.get("refreshToken").asText() + "\"}"))
+                        .content("{\"refreshToken\":\"" + t.get("refreshToken").asString() + "\"}"))
                 .andExpect(status().isUnauthorized());
         // password login also rejected
         mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)

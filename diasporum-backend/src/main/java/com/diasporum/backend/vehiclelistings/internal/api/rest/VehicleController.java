@@ -5,6 +5,7 @@ import com.diasporum.backend.vehiclelistings.internal.application.VehicleCatalog
 import com.diasporum.backend.vehiclelistings.internal.application.VehicleService;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleInput;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehiclePage;
+import com.diasporum.backend.vehiclelistings.internal.domain.VehicleSavedSearch;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleSearch;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleView;
 import jakarta.validation.Valid;
@@ -47,7 +48,8 @@ public class VehicleController {
         this.catalogue = catalogue;
     }
 
-    public record VehicleRequest(UUID businessAccountId, String visibilityScope, UUID communityId,
+    public record VehicleRequest(UUID businessAccountId, UUID businessListingId,
+            String visibilityScope, UUID communityId,
             @Size(max = 20) List<UUID> selectedCommunityIds, String listingPurpose, UUID categoryId,
             UUID makeId, UUID modelId, UUID variantId, @Size(max = 220) String title,
             @Size(max = 20000) String description, @Min(1886) Integer modelYear,
@@ -60,17 +62,30 @@ public class VehicleController {
             String pricePeriod, @DecimalMin("0.0") BigDecimal rentalDeposit,
             @Min(0) Integer mileageAllowance, @Size(max = 10000) String rentalConditions,
             LocationRequest location, List<UUID> featureIds, Instant expiresAt,
-            boolean clearLocation, boolean clearExpiry, Set<String> clearFields) {
+            boolean clearLocation, boolean clearExpiry, Set<String> clearFields,
+            VehicleContactRequest contact, boolean clearContact) {
 
         VehicleInput toInput() {
-            return new VehicleInput(businessAccountId, visibilityScope, communityId,
+            return new VehicleInput(businessAccountId, businessListingId, visibilityScope,
+                    communityId,
                     selectedCommunityIds, listingPurpose, categoryId, makeId, modelId, variantId,
                     title, description, modelYear, mileage, mileageUnit, fuelType, transmission,
                     driveType, bodyType, engineSizeCc, colour, doors, seats, condition,
                     registrationYear, previousOwners, additionalAttributes, motExpiry, serviceHistory,
                     priceAmount, currencyCode, pricePeriod, rentalDeposit, mileageAllowance,
                     rentalConditions, location == null ? null : location.toInput(), featureIds,
-                    expiresAt, clearLocation, clearExpiry, clearFields);
+                    expiresAt, clearLocation, clearExpiry, clearFields,
+                    contact == null ? null : contact.toInput(), clearContact);
+        }
+    }
+
+    public record VehicleContactRequest(@Size(max = 40) String phone,
+            @Size(max = 40) String whatsapp, @Size(max = 320) String email,
+            String preferredMethod, Boolean showPhone, Boolean showWhatsapp,
+            Boolean showEmail) {
+        VehicleInput.ContactInput toInput() {
+            return new VehicleInput.ContactInput(phone, whatsapp, email, preferredMethod,
+                    showPhone, showWhatsapp, showEmail);
         }
     }
 
@@ -140,6 +155,9 @@ public class VehicleController {
             @RequestParam(required = false) Integer yearMin, @RequestParam(required = false) Integer yearMax,
             @RequestParam(required = false) Integer mileageMin,
             @RequestParam(required = false) Integer mileageMax,
+            @RequestParam(defaultValue = "KM") String mileageUnit,
+            @RequestParam(required = false) String colour,
+            @RequestParam(required = false) String pricePeriod,
             @RequestParam(required = false) BigDecimal priceMin,
             @RequestParam(required = false) BigDecimal priceMax,
             @RequestParam(required = false) String currency, @RequestParam(required = false) String fuelType,
@@ -154,12 +172,20 @@ public class VehicleController {
             @RequestParam(required = false) Double radiusMeters,
             @RequestParam(required = false) List<String> attribute,
             @RequestParam(required = false) String sort, @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) String driveType,
+            @RequestParam(required = false) Integer seats,
+            @RequestParam(required = false) Integer doors,
+            @RequestParam(required = false) Integer registrationYearMin,
+            @RequestParam(required = false) Integer registrationYearMax,
+            @RequestParam(required = false) UUID businessListingId,
             @RequestParam(defaultValue = "20") int size) {
         return vehicles.discover(principal.userId(), new VehicleSearch(keyword, purpose, categoryId,
                 makeId, modelId, variantId, yearMin, yearMax, mileageMin, mileageMax, priceMin,
                 priceMax, currency, fuelType, transmission, bodyType, condition, engineSizeMin,
                 engineSizeMax, countryId, communityId, city, region, originLatitude, originLongitude,
-                radiusMeters, attributes(attribute), sort), cursor, size);
+                radiusMeters, attributes(attribute), sort, driveType, seats, doors,
+                registrationYearMin, registrationYearMax, businessListingId,
+                mileageUnit, colour, pricePeriod), cursor, size);
     }
 
     @GetMapping("/vehicles/{vehicleId}")
@@ -221,9 +247,11 @@ public class VehicleController {
     @GetMapping("/me/vehicles")
     public VehiclePage owned(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @RequestParam(required = false) UUID businessAccountId,
+            @RequestParam(required = false) UUID businessListingId,
             @RequestParam(required = false) String status, @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int size) {
-        return vehicles.owned(principal.userId(), businessAccountId, status, cursor, size);
+        return vehicles.owned(principal.userId(), businessAccountId, businessListingId, status,
+                cursor, size);
     }
 
     @PutMapping("/vehicles/{vehicleId}/save")
@@ -244,6 +272,37 @@ public class VehicleController {
     public VehiclePage saved(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @RequestParam(required = false) String cursor, @RequestParam(defaultValue = "20") int size) {
         return vehicles.saved(principal.userId(), cursor, size);
+    }
+
+    public record SavedSearchRequest(@Size(max = 160) String name, VehicleSearch filters) {
+    }
+
+    public record SavedSearchView(UUID id, String name, VehicleSearch filters, Instant createdAt) {
+    }
+
+    @GetMapping("/me/vehicle-searches")
+    public Map<String, Object> savedSearches(@AuthenticationPrincipal DiasporumUserPrincipal principal) {
+        return Map.of("items", vehicles.savedSearches(principal.userId()).stream()
+                .map(VehicleController::savedSearchView).toList());
+    }
+
+    @PostMapping("/me/vehicle-searches")
+    public ResponseEntity<SavedSearchView> saveSearch(
+            @AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @Valid @RequestBody SavedSearchRequest request) {
+        var saved = vehicles.saveSearch(principal.userId(), request.name(), request.filters());
+        return ResponseEntity.status(HttpStatus.CREATED).body(savedSearchView(saved));
+    }
+
+    @DeleteMapping("/me/vehicle-searches/{searchId}")
+    public ResponseEntity<Void> deleteSavedSearch(
+            @AuthenticationPrincipal DiasporumUserPrincipal principal, @PathVariable UUID searchId) {
+        vehicles.deleteSavedSearch(principal.userId(), searchId);
+        return ResponseEntity.noContent().build();
+    }
+
+    private static SavedSearchView savedSearchView(VehicleSavedSearch saved) {
+        return new SavedSearchView(saved.id(), saved.name(), saved.filters(), saved.createdAt());
     }
 
     @PostMapping("/vehicles/{vehicleId}/contact")

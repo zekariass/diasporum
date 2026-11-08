@@ -1,8 +1,8 @@
 /**
- * HomeFeedScreen — home screen with an inline feature switcher.
- * The FeatureNav strip stays fixed below the header; selecting a feature
- * cross-fades to that feature's content panel without any screen navigation
- * (no white flash). Unimplemented features show a "coming soon" alert.
+ * HomeFeedScreen — the "Posts" destination: the community timeline plus the
+ * FeatureNav strip that switches between the four content experiences
+ * (Feed, Vids, Help, Polls). Feature navigation lives in the left drawer;
+ * community switching in the right drawer — both mounted at the (app) layout.
  */
 
 import React, { useCallback, useRef, useState } from "react";
@@ -17,44 +17,35 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { PostItem } from "../components/post-item";
 import { FeedHeader } from "../components/feed-header";
-import { CommunityDrawer } from "../components/community-drawer";
 import { FeatureNav } from "../components/feature-nav";
 import { ComposerBar } from "../components/composer-bar";
 import { CategoryFilter } from "../components/feed-controls";
 import { FeedSkeleton, FeedEmpty } from "../components/feed-states";
-import {
-  MatchmakingPanel,
-  PropertyPanel,
-  VehiclesPanel,
-  EventsPanel,
-  JobsPanel,
-  SpareBagPanel,
-  BusinessPanel,
-  ServicesPanel,
-} from "../components/feature-panels";
 import { useFeed } from "../hooks/use-feed";
 import { createFeedApi } from "../services/feed-api";
+import { openPostDetail } from "../utils/post-detail-seed";
 import { useSession } from "@/core/session/session-provider";
 import { Spacing } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
 import type { FeedItem, Poll, ReportReason } from "../types/feed-types";
 import { ApiError } from "@/core/api/api-error";
+import {
+  FEATURE_MODULE_KEYS,
+  isCommunityModuleEnabled,
+} from "@/core/session/community-capabilities";
 
-/** Features that navigate to a separate route rather than swapping inline */
+/** Content experiences that live on their own route rather than inline */
 const ROUTE_FEATURES: Record<string, string> = {
-  people: "/(app)/(tabs)/explore",
-  reels: "/(app)/(tabs)/reels",
+  reels: "/(app)/reels",
+  help: "/(app)/posts/create?mode=help",
   poll: "/(app)/posts/create?mode=poll",
 };
-
-/** Unimplemented features — show an alert */
-const COMING_SOON = new Set(["help"]);
 
 const REPORT_REASONS: ReportReason[] = [
   "SPAM",
@@ -74,10 +65,15 @@ export default function HomeFeedScreen() {
   const { session, apiClient } = useSession();
   const feed = useFeed();
   const feedApi = React.useMemo(() => createFeedApi(apiClient), [apiClient]);
-  const [drawerOpen, setDrawerOpen] = React.useState(false);
 
-  // Active feature key — 'feed' is the default
-  const [activeFeature, setActiveFeature] = useState("feed");
+  // Active feature key — 'feed' is the default and the safe capability fallback
+  const [selectedFeature, setSelectedFeature] = useState("feed");
+  const selectedModuleKey = FEATURE_MODULE_KEYS[selectedFeature];
+  const activeFeature =
+    selectedModuleKey &&
+    !isCommunityModuleEnabled(session?.access, selectedModuleKey)
+      ? "feed"
+      : selectedFeature;
 
   // Smooth cross-fade — useState initializer avoids the react-hooks/refs lint error
   const [fadeAnim] = useState(() => new Animated.Value(1));
@@ -85,18 +81,13 @@ export default function HomeFeedScreen() {
   const handleFeatureSelect = useCallback(
     (key: string) => {
       if (key === activeFeature) return;
+      const moduleKey = FEATURE_MODULE_KEYS[key];
+      if (moduleKey && !isCommunityModuleEnabled(session?.access, moduleKey))
+        return;
 
       // Route-based features → navigate immediately (no panel swap)
       if (ROUTE_FEATURES[key]) {
         router.push(ROUTE_FEATURES[key] as never);
-        return;
-      }
-
-      // Unimplemented → alert, no state change
-      if (COMING_SOON.has(key)) {
-        const label =
-          key === "help" ? "Community Help & Offers" : "Service Marketplace";
-        Alert.alert("Coming soon", `${label} isn't available yet.`);
         return;
       }
 
@@ -106,7 +97,7 @@ export default function HomeFeedScreen() {
         duration: 90,
         useNativeDriver: true,
       }).start(() => {
-        setActiveFeature(key);
+        setSelectedFeature(key);
         Animated.timing(fadeAnim, {
           toValue: 1,
           duration: 140,
@@ -114,60 +105,113 @@ export default function HomeFeedScreen() {
         }).start();
       });
     },
-    [activeFeature, fadeAnim, router],
+    [activeFeature, fadeAnim, router, session?.access],
   );
 
-  const updatePoll = useCallback((item: FeedItem, poll: Poll) => {
-    feed.updatePost(item.sourceId, {
-      payload: { ...item.payload, poll },
-    });
-  }, [feed]);
+  const updatePoll = useCallback(
+    (item: FeedItem, poll: Poll) => {
+      feed.updatePost(item.sourceId, {
+        payload: { ...item.payload, poll },
+      });
+    },
+    [feed],
+  );
 
-  const closePoll = useCallback(async (item: FeedItem) => {
-    try {
-      const updated = await feedApi.closePoll(item.sourceId);
-      updatePoll(item, updated);
-    } catch (cause) {
-      Alert.alert(
-        "Could not close poll",
-        ApiError.isApiError(cause) ? cause.userMessage : "Please try again.",
-      );
-    }
-  }, [feedApi, updatePoll]);
+  const closePoll = useCallback(
+    async (item: FeedItem) => {
+      try {
+        const updated = await feedApi.closePoll(item.sourceId);
+        updatePoll(item, updated);
+      } catch (cause) {
+        Alert.alert(
+          "Could not close poll",
+          ApiError.isApiError(cause) ? cause.userMessage : "Please try again.",
+        );
+      }
+    },
+    [feedApi, updatePoll],
+  );
 
-  const reportPoll = useCallback((item: FeedItem) => {
-    Alert.alert("Report poll", "Why are you reporting this poll?", [
-      ...REPORT_REASONS.map((reason) => ({
-        text: reason.toLowerCase().replaceAll("_", " "),
-        onPress: () => {
-          void feedApi.reportPost(item.sourceId, { reason })
-            .then(() => Alert.alert("Report submitted", "Our moderation team will review it."))
-            .catch((cause) => Alert.alert(
-              "Could not report poll",
-              ApiError.isApiError(cause) ? cause.userMessage : "Please try again.",
-            ));
-        },
-      })),
-      { text: "Cancel", style: "cancel" as const },
-    ]);
-  }, [feedApi]);
+  const reportPoll = useCallback(
+    (item: FeedItem) => {
+      Alert.alert("Report poll", "Why are you reporting this poll?", [
+        ...REPORT_REASONS.map((reason) => ({
+          text: reason.toLowerCase().replaceAll("_", " "),
+          onPress: () => {
+            void feedApi
+              .reportPost(item.sourceId, { reason })
+              .then(() =>
+                Alert.alert(
+                  "Report submitted",
+                  "Our moderation team will review it.",
+                ),
+              )
+              .catch((cause) =>
+                Alert.alert(
+                  "Could not report poll",
+                  ApiError.isApiError(cause)
+                    ? cause.userMessage
+                    : "Please try again.",
+                ),
+              );
+          },
+        })),
+        { text: "Cancel", style: "cancel" as const },
+      ]);
+    },
+    [feedApi],
+  );
 
   // ── Feed content ──────────────────────────────────────────────────────────
+
+  // Refetch the last opened post on return — picks up comments/likes/saves
+  // made on the detail screen so counts stay current without a full refresh.
+  const openedPostRef = useRef<string | null>(null);
+  const { updatePost } = feed;
+  useFocusEffect(
+    useCallback(() => {
+      const postId = openedPostRef.current;
+      if (!postId) return;
+      openedPostRef.current = null;
+      void feedApi
+        .getPost(postId)
+        .then((detail) =>
+          updatePost(postId, {
+            commentCount: detail.post.commentCount,
+            reactionCount: detail.post.reactionCount,
+            shareCount: detail.post.shareCount,
+          }),
+        )
+        .catch(() => {});
+    }, [feedApi, updatePost]),
+  );
+
+  const openPost = useCallback(
+    (item: FeedItem) => {
+      openedPostRef.current = item.sourceId;
+      openPostDetail(router, item);
+    },
+    [router],
+  );
 
   const renderFeedItem = useCallback(
     ({ item }: { item: FeedItem }) => {
       const isOwner = item.author?.id === session?.me.id;
-      const canManage = isOwner || session?.memberships.some(
-        membership => membership.communityId === item.communityId
-          && (membership.role === "MODERATOR" || membership.role === "COMMUNITY_ADMIN"),
-      );
+      const canManage =
+        isOwner ||
+        session?.memberships.some(
+          (membership) =>
+            membership.communityId === item.communityId &&
+            (membership.role === "MODERATOR" ||
+              membership.role === "COMMUNITY_ADMIN"),
+        );
       return (
         <PostItem
           item={item}
           isOwner={isOwner}
           canManage={canManage}
-          onPress={() => router.push(`/(app)/posts/${item.sourceId}` as never)}
-          onComment={() => router.push(`/(app)/posts/${item.sourceId}` as never)}
+          onPress={() => openPost(item)}
+          onComment={() => openPost(item)}
           onReact={(r) => void feed.react(item.sourceId, r)}
           onSave={() => void feed.toggleSave(item.sourceId)}
           onEdit={() =>
@@ -181,7 +225,17 @@ export default function HomeFeedScreen() {
         />
       );
     },
-    [closePoll, feed, feedApi, reportPoll, router, session?.me.id, session?.memberships, updatePoll],
+    [
+      closePoll,
+      feed,
+      feedApi,
+      openPost,
+      reportPoll,
+      router,
+      session?.me.id,
+      session?.memberships,
+      updatePoll,
+    ],
   );
 
   const keyExtractor = useCallback((i: FeedItem) => i.itemId, []);
@@ -222,22 +276,23 @@ export default function HomeFeedScreen() {
     <ThemedView style={styles.root}>
       <StatusBar style="auto" />
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
-        <FeedHeader onMenu={() => setDrawerOpen(true)} />
-        <CommunityDrawer
-          visible={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-        />
+        <FeedHeader />
 
-        {/* FeatureNav stays fixed — always visible regardless of active panel */}
+        {/* FeatureNav stays fixed — the Posts experiences (Feed/Vids/Help/Polls) */}
         <FeatureNav activeKey={activeFeature} onSelect={handleFeatureSelect} />
 
-        {/* Animated container cross-fades between feed and feature panels */}
+        {/* Animated container cross-fades between content experiences */}
         <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
           {activeFeature === "feed" ? (
             <FlatList
               data={feed.items}
               renderItem={renderFeedItem}
               keyExtractor={keyExtractor}
+              style={[
+                styles.feedList,
+                { backgroundColor: theme.backgroundElement },
+              ]}
+              contentContainerStyle={styles.feedContent}
               ListHeaderComponent={feedListHeader}
               onEndReached={feed.loadMore}
               onEndReachedThreshold={0.4}
@@ -257,9 +312,7 @@ export default function HomeFeedScreen() {
                 ) : (
                   <FeedEmpty
                     filtered={feed.categoryId != null}
-                    onCreate={() =>
-                      router.push("/(app)/posts/create" as never)
-                    }
+                    onCreate={() => router.push("/(app)/posts/create" as never)}
                     onClear={() => feed.setCategory(null)}
                   />
                 )
@@ -272,10 +325,7 @@ export default function HomeFeedScreen() {
                   />
                 ) : feed.error ? (
                   <ThemedText
-                    style={[
-                      styles.footerText,
-                      { color: theme.textSecondary },
-                    ]}
+                    style={[styles.footerText, { color: theme.textSecondary }]}
                   >
                     {feed.error} Pull to retry.
                   </ThemedText>
@@ -284,23 +334,8 @@ export default function HomeFeedScreen() {
                 )
               }
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             />
-          ) : activeFeature === "dating" ? (
-            <MatchmakingPanel />
-          ) : activeFeature === "property" ? (
-            <PropertyPanel />
-          ) : activeFeature === "vehicle" ? (
-            <VehiclesPanel />
-          ) : activeFeature === "event" ? (
-            <EventsPanel />
-          ) : activeFeature === "jobs" ? (
-            <JobsPanel />
-          ) : activeFeature === "spare-bag" ? (
-            <SpareBagPanel />
-          ) : activeFeature === "business" ? (
-            <BusinessPanel />
-          ) : activeFeature === "services" ? (
-            <ServicesPanel />
           ) : null}
         </Animated.View>
       </SafeAreaView>
@@ -312,6 +347,8 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   safeArea: { flex: 1 },
   content: { flex: 1 },
+  feedList: { flex: 1 },
+  feedContent: { paddingBottom: Spacing.six, flexGrow: 1 },
   footer: { paddingVertical: Spacing.four },
   footerText: {
     textAlign: "center",

@@ -41,20 +41,30 @@ public class IdentityApiImpl implements IdentityApi {
         String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
         return jdbc.query("SELECT p.id, p.username, p.display_name, u.account_status::text,"
                         + " p.profile_completed_at IS NOT NULL AS done,"
-                        + " p.origin_country_id, p.current_country_id"
+                        + " p.origin_country_id, p.current_country_id,"
+                        + " (SELECT media_id FROM profile_media WHERE user_id=p.id"
+                        + " AND variant='AVATAR') AS avatar_media_id"
                         + " FROM profiles p JOIN users u ON u.id=p.id"
                         + " WHERE p.id IN (" + placeholders + ")",
                 (rs, i) -> new ProfileSummary(rs.getObject("id", UUID.class),
                         rs.getString("username"), rs.getString("display_name"),
                         rs.getString("account_status"), rs.getBoolean("done"),
                         rs.getObject("origin_country_id", UUID.class),
-                        rs.getObject("current_country_id", UUID.class)),
+                        rs.getObject("current_country_id", UUID.class),
+                        rs.getObject("avatar_media_id", UUID.class)),
                 ids.toArray());
     }
 
     @Override
     public Optional<UUID> activeCommunityId(UUID profileId) {
         return jdbc.query("SELECT active_community_id FROM user_settings WHERE user_id=?",
+                        (rs, i) -> rs.getObject(1, UUID.class), profileId)
+                .stream().filter(java.util.Objects::nonNull).findFirst();
+    }
+
+    @Override
+    public Optional<UUID> defaultCommunityId(UUID profileId) {
+        return jdbc.query("SELECT default_community_id FROM user_settings WHERE user_id=?",
                         (rs, i) -> rs.getObject(1, UUID.class), profileId)
                 .stream().filter(java.util.Objects::nonNull).findFirst();
     }
@@ -74,12 +84,34 @@ public class IdentityApiImpl implements IdentityApi {
     }
 
     @Override
+    public Optional<ProfileSummary> findByUsername(String username) {
+        if (username == null || username.trim().isEmpty()) {
+            return Optional.empty();
+        }
+        return jdbc.query("SELECT p.id, p.username, p.display_name, u.account_status::text,"
+                        + " p.profile_completed_at IS NOT NULL AS done,"
+                        + " p.origin_country_id, p.current_country_id,"
+                        + " (SELECT media_id FROM profile_media WHERE user_id=p.id"
+                        + " AND variant='AVATAR') AS avatar_media_id"
+                        + " FROM profiles p JOIN users u ON u.id=p.id"
+                        + " WHERE p.username IS NOT NULL AND lower(p.username)=lower(?)",
+                (rs, i) -> new ProfileSummary(rs.getObject("id", UUID.class),
+                        rs.getString("username"), rs.getString("display_name"),
+                        rs.getString("account_status"), rs.getBoolean("done"),
+                        rs.getObject("origin_country_id", UUID.class),
+                        rs.getObject("current_country_id", UUID.class),
+                        rs.getObject("avatar_media_id", UUID.class)),
+                username.trim())
+                .stream().findFirst();
+    }
+
+    @Override
     public Optional<ProfileSummary> profileSummary(UUID profileId) {
         try {
             var p = profiles.getProfile(profileId);
             return Optional.of(new ProfileSummary(p.id(), p.username(),
                     p.displayName(), p.accountStatus(), p.profileCompleted(),
-                    p.originCountryId(), p.currentCountryId()));
+                    p.originCountryId(), p.currentCountryId(), p.avatarMediaId()));
         } catch (org.springframework.web.server.ResponseStatusException e) {
             if (e.getStatusCode().value() == 404) {
                 return Optional.empty();

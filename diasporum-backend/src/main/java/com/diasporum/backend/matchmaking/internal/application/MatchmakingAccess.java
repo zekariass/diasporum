@@ -17,7 +17,14 @@ public class MatchmakingAccess {
         this.social = social;
     }
 
+    public void requireAdult(UUID userId) {
+        if (!repository.adult(userId)) {
+            throw MatchmakingSupport.forbidden("MATCHMAKING_NOT_ELIGIBLE");
+        }
+    }
+
     public void requireEligible(UUID userId) {
+        requireAdult(userId);
         if (!repository.eligible(userId)) {
             throw MatchmakingSupport.forbidden("MATCHMAKING_NOT_ELIGIBLE");
         }
@@ -30,7 +37,7 @@ public class MatchmakingAccess {
     }
 
     public void requireUnblocked(UUID actor, UUID target) {
-        if (!social.canInteract(actor, target)) {
+        if (!repository.adult(target) || !social.canInteract(actor, target)) {
             throw MatchmakingSupport.notFound("MATCHMAKING_PROFILE_NOT_FOUND");
         }
     }

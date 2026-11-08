@@ -1,6 +1,9 @@
 package com.diasporum.backend.community.internal.api.rest;
 
+import com.diasporum.backend.billing.BillingApi.ActionEligibility;
 import com.diasporum.backend.community.CommunityApi.MembershipView;
+import com.diasporum.backend.community.internal.application.CommunityAccessPolicyService;
+import com.diasporum.backend.community.internal.application.CommunityAccessPolicyService.MyAccessView;
 import com.diasporum.backend.community.internal.application.CommunityService;
 import com.diasporum.backend.identity.IdentityApi;
 import java.util.List;
@@ -34,10 +37,13 @@ public class CommunityController {
 
     private final IdentityApi identity;
     private final CommunityService service;
+    private final CommunityAccessPolicyService accessPolicy;
 
-    public CommunityController(IdentityApi identity, CommunityService service) {
+    public CommunityController(IdentityApi identity, CommunityService service,
+            CommunityAccessPolicyService accessPolicy) {
         this.identity = identity;
         this.service = service;
+        this.accessPolicy = accessPolicy;
     }
 
     private UUID me(DiasporumUserPrincipal principal) {
@@ -86,6 +92,18 @@ public class CommunityController {
         UUID id = raw == null ? null : UUID.fromString(raw.toString());
         service.setActiveCommunity(principal.userId(), id);
         return Map.of("communityId", id == null ? "" : id.toString());
+    }
+
+    @GetMapping("/communities/my-access")
+    public MyAccessView myAccess(@AuthenticationPrincipal DiasporumUserPrincipal principal) {
+        return accessPolicy.myAccess(principal.userId());
+    }
+
+    @GetMapping("/me/community-actions/{actionKey}/eligibility")
+    public ActionEligibility actionEligibility(
+            @AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable String actionKey) {
+        return accessPolicy.actionEligibility(principal.userId(), actionKey);
     }
 
     // ---- onboarding: preview + complete ----

@@ -35,6 +35,23 @@ public interface BillingApi {
      */
     QuotaConsumption consume(ConsumptionCommand command);
 
+    /** Non-mutating, server-side decision for confirmation and insufficient-credit UX. */
+    ActionEligibility previewPersonalFeature(UUID userId, String featureKey,
+            String targetType, UUID targetId);
+
+    /** Marks successful usage reversed and restores any associated finite grant. */
+    void reverseUsage(UUID usageRecordId, UUID actorUserId, String reason);
+
+    record ActionEligibility(boolean allowed, boolean chargeRequired,
+            boolean consumptionRequired, long quantity, Long remainingFreeQuota,
+            Long availableCredits, String source, String reason) {
+
+        public static ActionEligibility denied(String reason) {
+            return new ActionEligibility(false, false, false, 1,
+                    null, null, "NONE", reason);
+        }
+    }
+
     record ConsumptionCommand(UUID userId, UUID businessAccountId,
             String featureKey, long quantity, String targetType, UUID targetId,
             String idempotencyKey) {

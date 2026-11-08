@@ -27,6 +27,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { ApiError } from "@/core/api/api-error";
 import type { EventItem } from "../types/event-types";
 import { EventCard } from "../components/event-card";
+import { EventsBottomNav } from "../components/events-bottom-nav";
 import { EventsEmpty, EventsSkeleton } from "../components/event-states";
 
 const PAGE_SIZE = 20;
@@ -106,6 +107,27 @@ export default function SavedEventsScreen() {
     [router],
   );
 
+  // Unsaving removes the row from the saved list — restoring re-marks it.
+  const toggleSave = useCallback(
+    async (eventId: string, saved: boolean) => {
+      const previous = items;
+      setItems((prev) =>
+        saved
+          ? prev.map((i) =>
+              i.event.id === eventId ? { ...i, saved: true } : i,
+            )
+          : prev.filter((i) => i.event.id !== eventId),
+      );
+      try {
+        if (saved) await eventApi.saveEvent(eventId);
+        else await eventApi.unsaveEvent(eventId);
+      } catch {
+        setItems(previous);
+      }
+    },
+    [eventApi, items],
+  );
+
   return (
     <ThemedView style={s.root}>
       <StatusBar style="auto" />
@@ -128,7 +150,11 @@ export default function SavedEventsScreen() {
         <FlatList
           data={items}
           renderItem={({ item }) => (
-            <EventCard item={item} onPress={openDetail} />
+            <EventCard
+              item={item}
+              onPress={openDetail}
+              onToggleSave={toggleSave}
+            />
           )}
           keyExtractor={(item) => item.event.id}
           onEndReached={loadMore}
@@ -186,6 +212,7 @@ export default function SavedEventsScreen() {
           }
         />
       </SafeAreaView>
+      <EventsBottomNav active="saved" />
     </ThemedView>
   );
 }

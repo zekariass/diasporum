@@ -131,6 +131,7 @@ export function ServiceRequestImage({ client, requestId, mediaId }: {
 
 export const serviceStyles = StyleSheet.create({
   root: { flex: 1 },
+  keyboard: { flex: 1 },
   content: { padding: Spacing.three, gap: Spacing.three, flexGrow: 1, paddingBottom: Spacing.six },
   input: { borderWidth: 1, borderRadius: BorderRadius.md, padding: Spacing.three, minHeight: 48 },
   multiline: { minHeight: 110, textAlignVertical: "top" },

@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from "react";
 import {
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -9,6 +10,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
+import * as SecureStore from "expo-secure-store";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { ThemedText } from "@/components/themed-text";
@@ -22,7 +24,12 @@ import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
 import { createBusinessApi } from "../services/business-api";
-import type { BusinessAccount } from "../types/business-types";
+import type {
+  BusinessAccount,
+  BusinessInvitation,
+} from "../types/business-types";
+
+const LAST_WORKSPACE_KEY = "diasporum.lastBusinessWorkspaceId";
 
 function roleLabel(role: string) {
   return role
@@ -41,17 +48,26 @@ export default function BusinessAccountsScreen() {
     [apiClient],
   );
   const [accounts, setAccounts] = useState<BusinessAccount[]>([]);
+  const [invitations, setInvitations] = useState<BusinessInvitation[]>([]);
+  const [lastWorkspaceId, setLastWorkspaceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [busyInviteId, setBusyInviteId] = useState<string | null>(null);
 
   const load = useCallback(
     async (initial = false) => {
       if (initial) setLoading(true);
       setError(null);
       try {
-        const response = await businessApi.accounts();
-        setAccounts(response.items);
+        const [accountList, inviteList, lastId] = await Promise.all([
+          businessApi.accounts(),
+          businessApi.invitations(),
+          SecureStore.getItemAsync(LAST_WORKSPACE_KEY).catch(() => null),
+        ]);
+        setAccounts(accountList.items);
+        setInvitations(inviteList.items);
+        setLastWorkspaceId(lastId);
       } catch (cause) {
         setError(
           ApiError.isApiError(cause)
@@ -73,7 +89,38 @@ export default function BusinessAccountsScreen() {
   );
 
   function openWorkspace(accountId: string) {
+    void SecureStore.setItemAsync(LAST_WORKSPACE_KEY, accountId).catch(
+      () => undefined,
+    );
     router.push(`/(app)/business/workspace/${accountId}` as never);
+  }
+
+  async function answerInvitation(
+    invitation: BusinessInvitation,
+    accept: boolean,
+  ) {
+    if (busyInviteId) return;
+    setBusyInviteId(invitation.accountId);
+    try {
+      if (accept) {
+        await businessApi.acceptInvitation(invitation.accountId);
+        await load();
+        openWorkspace(invitation.accountId);
+      } else {
+        await businessApi.declineInvitation(invitation.accountId);
+        await load();
+      }
+    } catch (cause) {
+      Alert.alert(
+        "Invitation",
+        ApiError.isApiError(cause)
+          ? cause.userMessage
+          : "The invitation could not be answered. Please try again.",
+      );
+      await load();
+    } finally {
+      setBusyInviteId(null);
+    }
   }
 
   if (loading) return <LoadingScreen />;
@@ -125,6 +172,95 @@ export default function BusinessAccountsScreen() {
             </View>
           )}
 
+          {invitations.length > 0 && (
+            <View style={styles.inviteSection}>
+              <ThemedText style={styles.inviteSectionTitle}>
+                Pending invitations
+              </ThemedText>
+              {invitations.map((invitation) => (
+                <View
+                  key={invitation.accountId}
+                  style={[
+                    styles.inviteCard,
+                    {
+                      backgroundColor: theme.backgroundElement,
+                      borderColor: theme.border,
+                    },
+                  ]}
+                >
+                  <View style={styles.inviteIcon}>
+                    <Ionicons
+                      name="mail-outline"
+                      size={22}
+                      color={BrandColors.primary}
+                    />
+                  </View>
+                  <View style={styles.inviteCopy}>
+                    <ThemedText style={styles.inviteTitle} numberOfLines={1}>
+                      {invitation.accountName}
+                    </ThemedText>
+                    <ThemedText
+                      style={styles.inviteMeta}
+                      themeColor="textSecondary"
+                    >
+                      {roleLabel(invitation.role)}
+                      {invitation.invitedByName
+                        ? ` · from ${invitation.invitedByName}`
+                        : ""}
+                      {invitation.expired
+                        ? " · expired"
+                        : invitation.expiresAt
+                          ? ` · expires ${new Date(invitation.expiresAt).toLocaleDateString("en", { month: "short", day: "numeric" })}`
+                          : ""}
+                    </ThemedText>
+                    <View style={styles.inviteActions}>
+                      <Pressable
+                        onPress={() => void answerInvitation(invitation, true)}
+                        disabled={
+                          busyInviteId === invitation.accountId ||
+                          invitation.expired
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel={`Accept invitation to ${invitation.accountName}`}
+                        style={[
+                          styles.inviteAccept,
+                          (busyInviteId === invitation.accountId ||
+                            invitation.expired) &&
+                            styles.inviteDisabled,
+                        ]}
+                      >
+                        <ThemedText style={styles.inviteAcceptText}>
+                          Accept
+                        </ThemedText>
+                      </Pressable>
+                      <Pressable
+                        onPress={() =>
+                          void answerInvitation(invitation, false)
+                        }
+                        disabled={busyInviteId === invitation.accountId}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Decline invitation to ${invitation.accountName}`}
+                        style={[
+                          styles.inviteDecline,
+                          { borderColor: theme.border },
+                          busyInviteId === invitation.accountId &&
+                            styles.inviteDisabled,
+                        ]}
+                      >
+                        <ThemedText
+                          style={styles.inviteDeclineText}
+                          themeColor="textSecondary"
+                        >
+                          Decline
+                        </ThemedText>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
           {!error && accounts.length === 0 ? (
             <View style={styles.empty}>
               <View style={styles.emptyIcon}>
@@ -145,12 +281,6 @@ export default function BusinessAccountsScreen() {
                 label="Create Business Account"
                 onPress={() => router.push("/(app)/business/create")}
               />
-              <ThemedText
-                style={styles.invitationNote}
-                themeColor="textSecondary"
-              >
-                Business invitation acceptance will be added with the team API.
-              </ThemedText>
             </View>
           ) : (
             <View style={styles.accountList}>
@@ -181,6 +311,9 @@ export default function BusinessAccountsScreen() {
                       <ThemedText style={styles.accountName} numberOfLines={1}>
                         {account.accountName}
                       </ThemedText>
+                      {account.id === lastWorkspaceId && (
+                        <ThemedText style={styles.lastUsed}>Last</ThemedText>
+                      )}
                       {account.status !== "ACTIVE" && (
                         <ThemedText style={styles.status}>
                           {account.status}
@@ -268,11 +401,59 @@ const styles = StyleSheet.create({
     marginTop: Spacing.two,
     marginBottom: Spacing.four,
   },
-  invitationNote: {
+  inviteSection: { marginBottom: Spacing.four, gap: Spacing.two },
+  inviteSectionTitle: {
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "800",
+    marginBottom: Spacing.one,
+  },
+  inviteCard: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.three,
+  },
+  inviteIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BrandColors.primarySurface,
+  },
+  inviteCopy: { flex: 1, marginLeft: Spacing.three },
+  inviteTitle: { fontSize: 15, fontWeight: "700" },
+  inviteMeta: { fontSize: 12, lineHeight: 17, marginTop: 2 },
+  inviteActions: {
+    flexDirection: "row",
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+  },
+  inviteAccept: {
+    borderRadius: BorderRadius.full,
+    backgroundColor: BrandColors.primary,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+  },
+  inviteAcceptText: {
+    color: BrandColors.white,
     fontSize: 12,
-    lineHeight: 18,
-    textAlign: "center",
-    marginTop: Spacing.four,
+    fontWeight: "800",
+  },
+  inviteDecline: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+  },
+  inviteDeclineText: { fontSize: 12, fontWeight: "700" },
+  inviteDisabled: { opacity: 0.5 },
+  lastUsed: {
+    color: BrandColors.primary,
+    fontSize: 9,
+    fontWeight: "800",
+    textTransform: "uppercase",
   },
   accountList: { gap: Spacing.three },
   accountCard: {

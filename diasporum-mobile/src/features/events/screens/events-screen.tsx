@@ -1,8 +1,9 @@
 /**
  * EventsScreen — event discovery hub.
  * Route: /(app)/events
- * Filter chips (scope / mode / category), server-side search, cursor pagination,
- * links to Saved events, My events and event creation.
+ * Single Filters button opens a left drawer (date / format / visibility /
+ * category); applied filters show as removable chips. Server-side search,
+ * cursor pagination, links to Saved events, My events and event creation.
  */
 
 import React, {
@@ -31,30 +32,62 @@ import { ThemedView } from "@/components/themed-view";
 import { useSession } from "@/core/session/session-provider";
 import { createEventApi } from "../services/event-api";
 import { BrandColors } from "@/shared/theme/colors";
-import { Spacing } from "@/shared/theme/spacing";
+import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
 import { ApiError } from "@/core/api/api-error";
-import type {
-  EventCategory,
-  EventItem,
-  EventMode,
-  VisibilityScope,
-} from "../types/event-types";
+import type { EventCategory, EventItem } from "../types/event-types";
 import { EventCard } from "../components/event-card";
+import { EventsBottomNav } from "../components/events-bottom-nav";
 import { EventsEmpty, EventsSkeleton } from "../components/event-states";
+import {
+  activeFilterCount,
+  EMPTY_FILTER_SELECTION,
+  EventFilterDrawer,
+  type DateFilter,
+  type EventFilterSelection,
+} from "../components/event-filter-drawer";
 
-type ScopeFilter = "ALL" | VisibilityScope;
-type ModeFilter = "ALL" | EventMode;
+const DATE_CHIP_LABEL: Record<Exclude<DateFilter, "ANY">, string> = {
+  TODAY: "Today",
+  WEEK: "This week",
+  MONTH: "This month",
+};
+
+/** Viewer-relative date window — instant bounds for the server-side filter. */
+function dateRange(f: DateFilter): { from?: string; to?: string } {
+  if (f === "ANY") return {};
+  const now = new Date();
+  const end = new Date(now);
+  if (f === "TODAY") {
+    end.setHours(23, 59, 59, 999);
+  } else if (f === "WEEK") {
+    // Through the upcoming Sunday end-of-day.
+    end.setDate(end.getDate() + ((7 - end.getDay()) % 7));
+    end.setHours(23, 59, 59, 999);
+  } else {
+    end.setMonth(end.getMonth() + 1, 0);
+    end.setHours(23, 59, 59, 999);
+  }
+  return { from: now.toISOString(), to: end.toISOString() };
+}
 
 export default function EventsScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { apiClient } = useSession();
+  const { apiClient, session } = useSession();
   const eventApi = React.useMemo(() => createEventApi(apiClient), [apiClient]);
 
-  const [scope, setScope] = useState<ScopeFilter>("ALL");
-  const [mode, setMode] = useState<ModeFilter>("ALL");
-  const [categoryId, setCategoryId] = useState<string | null>(null);
+  // "in {community}" line in the search pill — closest place-like label
+  // available from the session's access context.
+  const locationLabel =
+    session?.access?.communities.find(
+      (c) => c.communityId === session.activeCommunityId,
+    )?.communityName ?? "your community";
+
+  const [filters, setFilters] = useState<EventFilterSelection>(
+    EMPTY_FILTER_SELECTION,
+  );
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [categories, setCategories] = useState<EventCategory[]>([]);
@@ -93,9 +126,10 @@ export default function EventsScreen() {
         .then(() =>
           eventApi.discover(
             {
-              scope: scope === "ALL" ? undefined : scope,
-              mode: mode === "ALL" ? undefined : mode,
-              categoryId: categoryId ?? undefined,
+              scope: filters.scope === "ALL" ? undefined : filters.scope,
+              mode: filters.mode === "ALL" ? undefined : filters.mode,
+              categoryId: filters.categoryId ?? undefined,
+              ...dateRange(filters.date),
               search: debouncedSearch || undefined,
             },
             nextCursor,
@@ -123,12 +157,12 @@ export default function EventsScreen() {
           setRefreshing(false);
         });
     },
-    [eventApi, scope, mode, categoryId, debouncedSearch],
+    [eventApi, filters, debouncedSearch],
   );
 
   // Show the skeleton again when the filters change — adjusted during
   // render instead of in the effect (set-state-in-effect).
-  const filterKey = `${scope}|${mode}|${categoryId ?? ""}|${debouncedSearch}`;
+  const filterKey = `${filters.scope}|${filters.mode}|${filters.date}|${filters.categoryId ?? ""}|${debouncedSearch}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (prevFilterKey !== filterKey) {
     setPrevFilterKey(filterKey);
@@ -153,11 +187,65 @@ export default function EventsScreen() {
     [router],
   );
 
-  const hasFilters =
-    scope !== "ALL" ||
-    mode !== "ALL" ||
-    categoryId !== null ||
-    debouncedSearch.length > 0;
+  const filterCount = activeFilterCount(filters);
+  const hasFilters = filterCount > 0 || debouncedSearch.length > 0;
+
+  const toggleSave = useCallback(
+    async (eventId: string, saved: boolean) => {
+      // Optimistic flip — rolled back if the request fails.
+      setItems((prev) =>
+        prev.map((i) => (i.event.id === eventId ? { ...i, saved } : i)),
+      );
+      try {
+        if (saved) await eventApi.saveEvent(eventId);
+        else await eventApi.unsaveEvent(eventId);
+      } catch {
+        setItems((prev) =>
+          prev.map((i) =>
+            i.event.id === eventId ? { ...i, saved: !saved } : i,
+          ),
+        );
+      }
+    },
+    [eventApi],
+  );
+
+  // Removable chips describing the applied filters.
+  const chips = useMemo(() => {
+    const list: { key: string; label: string; clear: () => void }[] = [];
+    if (filters.scope !== "ALL") {
+      list.push({
+        key: "scope",
+        label:
+          filters.scope === "COMMUNITY" ? "My communities" : "Country-wide",
+        clear: () => setFilters((f) => ({ ...f, scope: "ALL" })),
+      });
+    }
+    if (filters.mode !== "ALL") {
+      list.push({
+        key: "mode",
+        label: filters.mode === "IN_PERSON" ? "In person" : "Online",
+        clear: () => setFilters((f) => ({ ...f, mode: "ALL" })),
+      });
+    }
+    if (filters.date !== "ANY") {
+      list.push({
+        key: "date",
+        label: DATE_CHIP_LABEL[filters.date],
+        clear: () => setFilters((f) => ({ ...f, date: "ANY" })),
+      });
+    }
+    if (filters.categoryId) {
+      list.push({
+        key: "category",
+        label:
+          categories.find((c) => c.id === filters.categoryId)?.displayName ??
+          "Category",
+        clear: () => setFilters((f) => ({ ...f, categoryId: null })),
+      });
+    }
+    return list;
+  }, [filters, categories]);
 
   const listData = useMemo(() => items, [items]);
 
@@ -165,127 +253,117 @@ export default function EventsScreen() {
     <ThemedView style={s.root}>
       <StatusBar style="auto" />
       <SafeAreaView style={s.safeArea} edges={["top", "left", "right"]}>
-        {/* Header */}
-        <View style={[s.header, { borderBottomColor: theme.border }]}>
-          <ThemedText type="title">Events</ThemedText>
-          <View style={s.headerActions}>
+        {/* Header — Eventbrite-style search/location pill + filters circle */}
+        <View style={s.headerRow}>
+          <View
+            style={[
+              s.searchPill,
+              {
+                backgroundColor: theme.backgroundElement,
+                borderColor: theme.border,
+              },
+            ]}
+          >
+            <Ionicons
+              name="search"
+              size={19}
+              color={theme.text}
+              style={s.searchIcon}
+            />
+            <View style={s.searchTextCol}>
+              <TextInput
+                style={[s.searchInput, { color: theme.text }]}
+                placeholder="Find things to do"
+                placeholderTextColor={theme.textSecondary}
+                value={search}
+                onChangeText={setSearch}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="search"
+              />
+              <ThemedText style={s.searchLocation} numberOfLines={1}>
+                in {locationLabel}
+              </ThemedText>
+            </View>
+            {search.length > 0 && (
+              <Pressable
+                onPress={() => setSearch("")}
+                hitSlop={8}
+                accessibilityLabel="Clear search"
+                style={s.searchClear}
+              >
+                <Ionicons
+                  name="close-circle"
+                  size={16}
+                  color={theme.textSecondary}
+                />
+              </Pressable>
+            )}
             <Pressable
-              onPress={() => router.push("/(app)/events/saved" as never)}
+              onPress={() => setDrawerOpen(true)}
               accessibilityRole="button"
-              accessibilityLabel="Saved events"
-              style={s.iconBtn}
+              accessibilityLabel="Open filters"
+              style={[
+                s.filtersCircle,
+                { backgroundColor: theme.background, borderColor: theme.border },
+              ]}
             >
-              <Ionicons name="bookmark-outline" size={20} color={theme.text} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push("/(app)/events/my" as never)}
-              accessibilityRole="button"
-              accessibilityLabel="My events"
-              style={s.iconBtn}
-            >
-              <Ionicons name="person-outline" size={20} color={theme.text} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push("/(app)/events/create" as never)}
-              accessibilityRole="button"
-              accessibilityLabel="Create event"
-              style={[s.iconBtn, s.createBtn, { backgroundColor: theme.text }]}
-            >
-              <Ionicons name="add" size={20} color={theme.background} />
+              <Ionicons name="options-outline" size={17} color={theme.text} />
+              {filterCount > 0 && (
+                <View style={s.filtersDot}>
+                  <ThemedText style={s.filtersDotText}>{filterCount}</ThemedText>
+                </View>
+              )}
             </Pressable>
           </View>
         </View>
 
-        {/* Search */}
-        <View
-          style={[
-            s.searchBar,
-            {
-              backgroundColor: theme.backgroundElement,
-              borderColor: theme.border,
-            },
-          ]}
-        >
-          <Ionicons
-            name="search-outline"
-            size={16}
-            color={theme.textSecondary}
-          />
-          <TextInput
-            style={[s.searchInput, { color: theme.text }]}
-            placeholder="Search events…"
-            placeholderTextColor={theme.textSecondary}
-            value={search}
-            onChangeText={setSearch}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="search"
-          />
-          {search.length > 0 && (
-            <Pressable
-              onPress={() => setSearch("")}
-              hitSlop={8}
-              accessibilityLabel="Clear search"
-            >
-              <Ionicons name="close" size={16} color={theme.textSecondary} />
-            </Pressable>
-          )}
-        </View>
-
-        {/* Filters */}
-        <View style={s.filters}>
+        {/* Applied-filter chips */}
+        {chips.length > 0 && (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={s.chipRow}
+            style={s.chipsScroll}
           >
-            {(["ALL", "COMMUNITY", "COUNTRY"] as ScopeFilter[]).map((f) => (
-              <Chip
-                key={f}
-                active={scope === f}
-                onPress={() => setScope(f)}
-                label={
-                  f === "ALL"
-                    ? "All"
-                    : f === "COMMUNITY"
-                      ? "My communities"
-                      : "Country-wide"
-                }
-              />
+            {chips.map((chip) => (
+              <Pressable
+                key={chip.key}
+                onPress={chip.clear}
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${chip.label} filter`}
+                style={[s.chip, { backgroundColor: BrandColors.primarySurface }]}
+              >
+                <ThemedText style={[s.chipText, { color: BrandColors.primary }]}>
+                  {chip.label}
+                </ThemedText>
+                <Ionicons name="close" size={13} color={BrandColors.primary} />
+              </Pressable>
             ))}
-            {(["ALL", "IN_PERSON", "ONLINE_EXTERNAL"] as ModeFilter[]).map(
-              (f) => (
-                <Chip
-                  key={f}
-                  active={mode === f}
-                  onPress={() => setMode(f)}
-                  label={
-                    f === "ALL"
-                      ? "Any format"
-                      : f === "IN_PERSON"
-                        ? "In person"
-                        : "Online"
-                  }
-                />
-              ),
+            {chips.length > 1 && (
+              <Pressable
+                onPress={() => setFilters(EMPTY_FILTER_SELECTION)}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Clear all filters"
+              >
+                <ThemedText style={s.clearAll} themeColor="textSecondary">
+                  Clear all
+                </ThemedText>
+              </Pressable>
             )}
-            <View style={s.chipDivider} />
-            {categories.map((c) => (
-              <Chip
-                key={c.id}
-                active={categoryId === c.id}
-                onPress={() => setCategoryId(categoryId === c.id ? null : c.id)}
-                label={c.displayName}
-              />
-            ))}
           </ScrollView>
-        </View>
+        )}
 
         {/* List */}
         <FlatList
           data={listData}
           renderItem={({ item }) => (
-            <EventCard item={item} onPress={openDetail} />
+            <EventCard
+              item={item}
+              onPress={openDetail}
+              onToggleSave={toggleSave}
+            />
           )}
           keyExtractor={(item) => item.event.id}
           onEndReached={loadMore}
@@ -339,107 +417,98 @@ export default function EventsScreen() {
           }
           showsVerticalScrollIndicator={false}
           contentContainerStyle={
-            items.length === 0 ? { flexGrow: 1 } : undefined
+            items.length === 0 ? { flexGrow: 1 } : { paddingBottom: Spacing.three }
           }
         />
       </SafeAreaView>
-    </ThemedView>
-  );
-}
 
-function Chip({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`Filter: ${label}`}
-      accessibilityState={{ selected: active }}
-      style={[
-        s.chip,
-        {
-          backgroundColor: active
-            ? BrandColors.primary
-            : theme.backgroundElement,
-          borderColor: active ? BrandColors.primary : theme.border,
-        },
-      ]}
-    >
-      <ThemedText style={[s.chipText, active && s.chipTextActive]}>
-        {label}
-      </ThemedText>
-    </Pressable>
+      <EventsBottomNav active="discover" />
+
+      {drawerOpen && (
+        <EventFilterDrawer
+          selection={filters}
+          categories={categories}
+          onApply={(sel) => {
+            setFilters(sel);
+            setDrawerOpen(false);
+          }}
+          onClose={() => setDrawerOpen(false)}
+        />
+      )}
+    </ThemedView>
   );
 }
 
 const s = StyleSheet.create({
   root: { flex: 1 },
   safeArea: { flex: 1 },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  headerActions: {
+  headerRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.two,
+    paddingHorizontal: Spacing.one,
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.three,
   },
-  iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  searchPill: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: BorderRadius.full,
+    paddingLeft: Spacing.three,
+    paddingRight: Spacing.one,
+    paddingVertical: 7,
+    minHeight: 56,
+  },
+  searchIcon: { marginRight: Spacing.two },
+  searchTextCol: { flex: 1, justifyContent: "center" },
+  searchInput: { fontSize: 13, padding: 0, margin: 0 },
+  searchLocation: { fontSize: 15, fontWeight: "700", marginTop: 1 },
+  searchClear: { marginRight: Spacing.one },
+  filtersCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "transparent",
   },
-  createBtn: { borderRadius: 12 },
-  searchBar: {
-    flexDirection: "row",
+  filtersDot: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: BrandColors.primary,
     alignItems: "center",
-    gap: Spacing.two,
-    margin: Spacing.three,
-    marginHorizontal: Spacing.four,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: Spacing.three,
-    height: 42,
+    justifyContent: "center",
   },
-  searchInput: { flex: 1, fontSize: 15, height: "100%" },
-  filters: { paddingBottom: Spacing.one },
+  filtersDotText: {
+    color: BrandColors.white,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  chipsScroll: { flexGrow: 0, marginBottom: Spacing.two },
   chipRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.one,
-  },
-  chipDivider: {
-    width: StyleSheet.hairlineWidth,
-    height: 22,
-    marginHorizontal: Spacing.half,
+    paddingHorizontal: Spacing.one,
+    paddingRight: Spacing.one,
   },
   chip: {
-    minHeight: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    justifyContent: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
   },
-  chipText: { fontSize: 13, fontWeight: "600" },
-  chipTextActive: { color: BrandColors.white, fontWeight: "700" },
+  chipText: { fontSize: 12, fontWeight: "700" },
+  clearAll: { fontSize: 12, fontWeight: "700" },
   errorRow: {
     alignItems: "center",
     paddingTop: Spacing.five,

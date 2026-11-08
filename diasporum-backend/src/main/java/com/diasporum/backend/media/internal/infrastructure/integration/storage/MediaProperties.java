@@ -12,7 +12,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record MediaProperties(boolean enabled, String endpoint,
         String accessKeyId, String secretAccessKey, String bucket,
         String region, Duration uploadUrlTtl, Duration downloadUrlTtl,
-        Duration sessionTtl, long maxUploadBytes) {
+        Duration sessionTtl, long maxUploadBytes, long audioMaxDurationMs) {
 
     public MediaProperties {
         if (isBlank(region)) {
@@ -29,6 +29,9 @@ public record MediaProperties(boolean enabled, String endpoint,
         }
         if (maxUploadBytes <= 0) {
             maxUploadBytes = 25L * 1024 * 1024;     // approved 25 MiB limit
+        }
+        if (audioMaxDurationMs <= 0) {
+            audioMaxDurationMs = 300_000;           // approved 5-minute audio cap
         }
     }
 

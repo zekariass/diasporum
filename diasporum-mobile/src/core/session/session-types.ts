@@ -6,26 +6,29 @@
  * the current session.
  */
 
-import type { ProfileResponse } from '@/features/profile/types/profile-types';
-import type { AccountMe } from '@/core/auth/auth-types';
-import type { MembershipView } from '@/features/communities/types/community-types';
+import type { ProfileResponse } from "@/features/profile/types/profile-types";
+import type { AccountMe } from "@/core/auth/auth-types";
+import type {
+  MembershipView,
+  MyCommunityAccess,
+} from "@/features/communities/types/community-types";
 
 /** Ordered onboarding steps. 'main-app' means onboarding is complete. */
 export type OnboardingStep =
-  | 'country-origin'
-  | 'country-current'
-  | 'community-preview'
-  | 'profile'
-  | 'complete'
-  | 'main-app';
+  | "country-origin"
+  | "country-current"
+  | "community-preview"
+  | "profile"
+  | "complete"
+  | "main-app";
 
 export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
-  'country-origin',
-  'country-current',
-  'community-preview',
-  'profile',
-  'complete',
-  'main-app',
+  "country-origin",
+  "country-current",
+  "community-preview",
+  "profile",
+  "complete",
+  "main-app",
 ];
 
 /**
@@ -39,6 +42,8 @@ export interface SessionState {
   readonly profile: ProfileResponse | null;
   readonly memberships: MembershipView[];
   readonly activeCommunityId: string | null;
+  /** Null only while using a legacy backend or when the capability request failed. */
+  readonly access: MyCommunityAccess | null;
 }
 
 /**
@@ -52,18 +57,18 @@ export interface SessionState {
  * completion screen via POST /me/onboarding/complete.
  */
 export function resolveOnboardingStep(state: SessionState): OnboardingStep {
-  if (!state.profile || !state.profile.originCountryId) return 'country-origin';
-  if (!state.profile.currentCountryId) return 'country-current';
+  if (!state.profile || !state.profile.originCountryId) return "country-origin";
+  if (!state.profile.currentCountryId) return "country-current";
   const profileDone =
     state.profile.displayName != null &&
     state.profile.username != null &&
     state.profile.profileCompleted;
   if (!profileDone) {
     // Informational preview → routes forward to the profile step.
-    return 'community-preview';
+    return "community-preview";
   }
   const hasCommunity =
     state.memberships.length > 0 && state.activeCommunityId != null;
   // Completion screen creates the membership via POST /me/onboarding/complete.
-  return hasCommunity ? 'main-app' : 'complete';
+  return hasCommunity ? "main-app" : "complete";
 }

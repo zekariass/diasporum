@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Image, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
@@ -173,7 +173,9 @@ export default function RequestEditorScreen() {
     <ThemedView style={serviceStyles.root}>
       <SafeAreaView style={serviceStyles.root} edges={["top", "left", "right"]}>
         <ScreenHeader back title={id ? "Edit request" : "Request a service"} />
-        {loading ? <LoadingScreen /> : <ScrollView contentContainerStyle={serviceStyles.content} keyboardShouldPersistTaps="handled">
+        {loading ? <LoadingScreen /> : <KeyboardAvoidingView style={serviceStyles.keyboard}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}><ScrollView
+          contentContainerStyle={serviceStyles.content} keyboardShouldPersistTaps="handled">
           <LeadMarketplaceNotice />
           <ThemedText type="smallBold">Category</ThemedText>
           <View style={styles.categories}>{categories.map((category) => (
@@ -230,7 +232,7 @@ export default function RequestEditorScreen() {
           <ThemedText type="small" themeColor="textSecondary">{publishedEdit
             ? "Safe edits do not use another SERVICE_JOB_POST quota unit."
             : "Draft creation is free. Publishing uses one SERVICE_JOB_POST quota unit."}</ThemedText>
-        </ScrollView>}
+        </ScrollView></KeyboardAvoidingView>}
       </SafeAreaView>
     </ThemedView>
   );

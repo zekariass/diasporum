@@ -12,16 +12,22 @@ import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 
 export function EventsSkeleton() {
   const theme = useTheme();
-  const bg = { backgroundColor: theme.backgroundElement };
+  const bg = { backgroundColor: theme.backgroundSelected };
   return (
     <View accessibilityLabel="Loading events">
-      {[0, 1, 2, 3].map((i) => (
-        <View key={i} style={[styles.skRow, { borderColor: theme.border }]}>
-          <View style={[styles.skBadge, bg]} />
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          style={[
+            styles.skRow,
+            { borderColor: theme.border, backgroundColor: theme.backgroundElement },
+          ]}
+        >
+          <View style={[styles.skCover, bg]} />
           <View style={styles.skBody}>
-            <View style={[styles.skLine, bg, { width: "62%" }]} />
+            <View style={[styles.skLine, bg, { width: "38%" }]} />
             <View style={[styles.skLine, bg, { width: "90%" }]} />
-            <View style={[styles.skLine, bg, { width: "40%" }]} />
+            <View style={[styles.skLine, bg, { width: "55%" }]} />
           </View>
         </View>
       ))}
@@ -83,16 +89,14 @@ export function EventsEmpty({
 
 const styles = StyleSheet.create({
   skRow: {
-    flexDirection: "row",
-    gap: Spacing.three,
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.lg,
-    padding: Spacing.three,
-    marginHorizontal: Spacing.four,
-    marginVertical: Spacing.one + Spacing.half,
+    marginHorizontal: Spacing.one,
+    marginVertical: Spacing.two,
+    padding: Spacing.two,
   },
-  skBadge: { width: 52, height: 62, borderRadius: 12 },
-  skBody: { flex: 1, gap: 10, paddingTop: 4 },
+  skCover: { width: "100%", aspectRatio: 16 / 9, borderRadius: BorderRadius.md },
+  skBody: { gap: 10, padding: Spacing.two, paddingTop: Spacing.three },
   skLine: { height: 12, borderRadius: 6 },
   empty: {
     alignItems: "center",

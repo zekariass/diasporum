@@ -80,7 +80,7 @@ export function EventCover({ eventId, coverMediaId, style }: Props) {
         style={[
           styles.placeholder,
           style,
-          { backgroundColor: theme.backgroundElement },
+          { backgroundColor: theme.backgroundSelected },
         ]}
         accessibilityLabel="No event cover"
       >
@@ -98,7 +98,7 @@ export function EventCover({ eventId, coverMediaId, style }: Props) {
         style={[
           styles.placeholder,
           style,
-          { backgroundColor: theme.backgroundElement },
+          { backgroundColor: theme.backgroundSelected },
         ]}
         accessibilityLabel="Loading event cover"
       >

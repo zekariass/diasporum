@@ -148,12 +148,42 @@ public class MatchmakingRepository {
                 + " AND visibility='PRIVATE')", addressId, userId);
     }
 
+    public boolean activeAccount(UUID userId) {
+        return exists("SELECT 1 FROM users WHERE id=? AND account_status='ACTIVE' AND deleted_at IS NULL", userId);
+    }
+
+    public boolean needsAgeConfirmation(UUID userId) {
+        return exists("SELECT 1 FROM profiles WHERE id=? AND age_eligibility_confirmed_at IS NULL"
+                + " AND date_of_birth <= (CURRENT_DATE - INTERVAL '18 years')::date", userId);
+    }
+
     public boolean adult(UUID userId) {
         return bool("SELECT matchmaking_account_is_adult(?)", userId);
     }
 
+    public boolean hasDateOfBirth(UUID userId) {
+        return bool("SELECT COALESCE((SELECT date_of_birth IS NOT NULL"
+                + " FROM profiles WHERE id=?),false)", userId);
+    }
+
     public boolean eligible(UUID userId) {
         return bool("SELECT matchmaking_user_is_eligible(?)", userId);
+    }
+
+    public boolean hasDiscoveryLocation(UUID userId) {
+        return exists("SELECT 1 FROM user_discovery_locations WHERE user_id=?", userId);
+    }
+
+    public Optional<MatchRow> matchForPair(UUID a, UUID b) {
+        return jdbc.query("SELECT id,user_a_id,user_b_id,status::text,matched_at,closed_at,"
+                + "closed_by,close_reason FROM matchmaking_matches WHERE user_a_id=least(?::uuid,?::uuid)"
+                + " AND user_b_id=greatest(?::uuid,?::uuid)",
+                (rs, row) -> match(rs, row), a, b, a, b).stream().findFirst();
+    }
+
+    public void actorLock(UUID actor) {
+        jdbc.query("SELECT pg_advisory_xact_lock(hashtextextended('matchmaking-actor:'||?::text,0))",
+                rs -> null, actor);
     }
 
     public boolean discoveryOptedIn(UUID userId) {
@@ -171,22 +201,25 @@ public class MatchmakingRepository {
                 a.toString(), b.toString(), a.toString(), b.toString());
     }
 
-    public List<PublicProfileRow> discover(UUID actor, UUID after, int limit) {
+    public List<PublicProfileRow> discover(UUID actor, UUID communityId,
+            UUID after, int limit) {
         String sql = PUBLIC_SELECT + " WHERE mp.user_id>? AND mp.user_id<>?"
-                + " AND matchmaking_user_is_eligible(?)"
+                + " AND EXISTS(SELECT 1 FROM community_memberships cm"
+                + " WHERE cm.community_id=? AND cm.user_id=mp.user_id AND cm.status='ACTIVE')"
+                + " AND matchmaking_user_is_eligible(mp.user_id)"
                 + " AND matchmaking_users_compatible(?,mp.user_id)"
                 + " AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE"
                 + " (b.blocker_user_id=? AND b.blocked_user_id=mp.user_id)"
                 + " OR (b.blocker_user_id=mp.user_id AND b.blocked_user_id=?))"
                 + " AND NOT EXISTS(SELECT 1 FROM matchmaking_swipes s"
-                + " WHERE s.swiper_user_id=? AND s.target_user_id=mp.user_id)"
+                + " WHERE s.swiper_user_id=? AND s.target_user_id=mp.user_id AND s.status='ACTIVE')"
                 + " AND NOT EXISTS(SELECT 1 FROM matchmaking_matches m"
                 + " WHERE m.user_a_id=least(?::uuid,mp.user_id)"
                 + " AND m.user_b_id=greatest(?::uuid,mp.user_id))"
                 + " ORDER BY mp.user_id LIMIT ?";
         return jdbc.query(sql, (rs, row) -> publicProfile(rs, row),
-                after == null ? ZERO_UUID : after, actor, actor, actor, actor, actor, actor,
-                actor, actor, limit);
+                after == null ? ZERO_UUID : after, actor, communityId, actor,
+                actor, actor, actor, actor, actor, limit);
     }
 
     public Optional<PublicProfileRow> publicProfile(UUID userId) {
@@ -197,7 +230,7 @@ public class MatchmakingRepository {
     public List<PublicProfileRow> receivedLikes(UUID actor, UUID after, int limit) {
         String sql = PUBLIC_SELECT + " JOIN matchmaking_swipes s ON s.swiper_user_id=mp.user_id"
                 + " AND s.target_user_id=? AND s.action='LIKE' AND s.status='ACTIVE'"
-                + " WHERE mp.user_id>? AND matchmaking_user_is_eligible(?)"
+                + " WHERE mp.user_id>? AND matchmaking_user_is_eligible(mp.user_id)"
                 + " AND matchmaking_users_compatible(?,mp.user_id)"
                 + " AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE"
                 + " (b.blocker_user_id=? AND b.blocked_user_id=mp.user_id)"
@@ -208,7 +241,7 @@ public class MatchmakingRepository {
                 + " ORDER BY mp.user_id LIMIT ?";
         return jdbc.query(sql, (rs, row) -> publicProfile(rs, row), actor,
                 after == null ? ZERO_UUID : after,
-                actor, actor, actor, actor, actor, actor, limit);
+                actor, actor, actor, actor, actor, limit);
     }
 
     public Optional<SwipeRow> swipe(UUID actor, UUID target) {
@@ -217,12 +250,18 @@ public class MatchmakingRepository {
                 .stream().findFirst();
     }
 
-    public UUID insertSwipe(UUID actor, UUID target, String action) {
-        jdbc.update("INSERT INTO matchmaking_swipes(swiper_user_id,target_user_id,action,status)"
-                + " VALUES(?,?,?::matchmaking_swipe_action,'ACTIVE')", actor, target, action);
+    public UUID insertSwipe(UUID actor, UUID target, String action, UUID communityId) {
+        jdbc.update("INSERT INTO matchmaking_swipes(swiper_user_id,target_user_id,action,status,community_id)"
+                + " VALUES(?,?,?::matchmaking_swipe_action,'ACTIVE',?)"
+                                + " ON CONFLICT(swiper_user_id,target_user_id) DO UPDATE SET action=EXCLUDED.action,"
+                                + "status='ACTIVE',community_id=EXCLUDED.community_id,"
+                                + "created_at=now(),updated_at=now()"
+                                + " WHERE matchmaking_swipes.status IN ('WITHDRAWN','REWOUND')",
+                actor, target, action, communityId);
         return jdbc.queryForObject("INSERT INTO matchmaking_swipe_history(swiper_user_id,"
-                + "target_user_id,event_type,action) VALUES(?,?,'SWIPE',?::matchmaking_swipe_action)"
-                + " RETURNING id", UUID.class, actor, target, action);
+                + "target_user_id,event_type,action,community_id)"
+                + " VALUES(?,?,'SWIPE',?::matchmaking_swipe_action,?) RETURNING id",
+                UUID.class, actor, target, action, communityId);
     }
 
     public boolean reciprocalActiveLike(UUID actor, UUID target) {
@@ -265,7 +304,12 @@ public class MatchmakingRepository {
                 + "m.matched_at,m.closed_at,m.closed_by,m.close_reason" + PUBLIC_FROM
                 + " JOIN matchmaking_matches m ON m.status='MATCHED'"
                 + " AND ((m.user_a_id=? AND m.user_b_id=mp.user_id)"
-                + " OR (m.user_b_id=? AND m.user_a_id=mp.user_id)) WHERE true" + cursor
+                + " OR (m.user_b_id=? AND m.user_a_id=mp.user_id))"
+                                + " WHERE matchmaking_account_is_adult(mp.user_id)"
+                                + " AND mp.status NOT IN ('SUSPENDED','DELETED')"
+                                + " AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE"
+                                + " (b.blocker_user_id=m.user_a_id AND b.blocked_user_id=m.user_b_id)"
+                                + " OR (b.blocker_user_id=m.user_b_id AND b.blocked_user_id=m.user_a_id))" + cursor
                 + " ORDER BY m.matched_at DESC,m.id DESC LIMIT ?";
         return jdbc.query(sql,
                 (rs, row) -> new MatchPageRow(match(rs, row), publicProfile(rs, row)),
@@ -289,8 +333,22 @@ public class MatchmakingRepository {
                         + " WHERE h.swiper_user_id=? AND h.event_type='SWIPE'"
                         + " AND NOT EXISTS(SELECT 1 FROM matchmaking_swipe_history r"
                         + " WHERE r.reverses_event_id=h.id)"
-                        + " ORDER BY h.created_at DESC,h.id DESC LIMIT 1 FOR UPDATE OF h,s",
+                        + " ORDER BY h.created_at DESC,h.id DESC LIMIT 1",
                 (rs, row) -> historySwipe(rs, row), actor).stream().findFirst();
+    }
+
+    public List<PublicProfileRow> sentLikes(UUID actor, UUID after, int limit) {
+        return jdbc.query(PUBLIC_SELECT
+                + " JOIN matchmaking_swipes s ON s.target_user_id=mp.user_id AND s.swiper_user_id=?"
+                + " AND s.action='LIKE' AND s.status='ACTIVE'"
+                + " WHERE mp.user_id>? AND matchmaking_users_compatible(?,mp.user_id)"
+                + " AND NOT EXISTS(SELECT 1 FROM matchmaking_matches m WHERE"
+                + " m.user_a_id=least(?::uuid,mp.user_id) AND m.user_b_id=greatest(?::uuid,mp.user_id))"
+                + " AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE"
+                + " (b.blocker_user_id=? AND b.blocked_user_id=mp.user_id)"
+                + " OR (b.blocker_user_id=mp.user_id AND b.blocked_user_id=?))"
+                + " ORDER BY mp.user_id LIMIT ?", (rs, row) -> publicProfile(rs, row),
+                actor, after == null ? ZERO_UUID : after, actor, actor, actor, actor, actor, limit);
     }
 
     public void reverseSwipe(HistorySwipe event, String eventType, String status) {
@@ -455,7 +513,10 @@ public class MatchmakingRepository {
                 rs.getString("activity_level"), rs.getObject("height_cm", Integer.class),
                 rs.getString("marriage_timeline"), rs.getObject("long_distance_relationship", Boolean.class),
                 rs.getString("religion_importance"), rs.getObject("willing_to_relocate", Boolean.class),
-                rs.getString("verification_status"));
+                rs.getString("verification_status"), rs.getString("bio"), rs.getString("public_location"),
+                List.of((String[]) rs.getArray("interests").getArray()),
+                List.of((String[]) rs.getArray("languages").getArray()),
+                rs.getString("name_visibility"), rs.getString("photo_visibility"));
     }
 
     private static final String PUBLIC_COLUMNS = "mp.user_id,"
@@ -468,9 +529,16 @@ public class MatchmakingRepository {
             + " mp.relationship_intention,mp.marital_status,mp.has_children,mp.wants_children,"
             + " mp.smoking,mp.drinking,mp.activity_level,mp.height_cm,mp.marriage_timeline,"
             + " mp.long_distance_relationship,mp.religion_importance,mp.willing_to_relocate,"
-            + " mp.verification_status";
+            + " mp.verification_status,mp.name_visibility::text,mp.photo_visibility::text,p.bio,"
+            + " concat_ws(', ',CASE WHEN ups.show_city THEN NULLIF(p.city,'') END,country.name) AS public_location,"
+            + " ARRAY(SELECT i.display_name FROM user_interests ui JOIN interests i ON i.id=ui.interest_id"
+            + " WHERE ui.user_id=mp.user_id AND i.is_active ORDER BY i.display_name) AS interests,"
+            + " ARRAY(SELECT l.display_name FROM user_languages ul JOIN languages l ON l.id=ul.language_id"
+            + " WHERE ul.user_id=mp.user_id AND l.is_active ORDER BY l.display_name) AS languages";
     private static final String PUBLIC_FROM = " FROM matchmaking_profiles mp"
             + " JOIN profiles p ON p.id=mp.user_id"
+            + " JOIN user_privacy_settings ups ON ups.user_id=mp.user_id"
+            + " LEFT JOIN countries country ON country.id=p.current_country_id"
             + " LEFT JOIN media_objects op ON op.id=mp.photo_media_id AND op.status='READY'"
             + " LEFT JOIN media_objects bp ON bp.id=mp.blurred_photo_media_id AND bp.status='READY'";
     private static final String PUBLIC_SELECT = "SELECT " + PUBLIC_COLUMNS + PUBLIC_FROM;

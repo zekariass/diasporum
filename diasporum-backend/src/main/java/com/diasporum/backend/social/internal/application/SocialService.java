@@ -1,6 +1,7 @@
 package com.diasporum.backend.social.internal.application;
 
 import com.diasporum.backend.identity.IdentityApi;
+import com.diasporum.backend.media.MediaApi;
 import com.diasporum.backend.social.SocialApi.RelationshipView;
 import java.util.List;
 import java.util.UUID;
@@ -17,10 +18,12 @@ public class SocialService {
 
     private final JdbcTemplate jdbc;
     private final IdentityApi identity;
+    private final MediaApi media;
 
-    public SocialService(JdbcTemplate jdbc, IdentityApi identity) {
+    public SocialService(JdbcTemplate jdbc, IdentityApi identity, MediaApi media) {
         this.jdbc = jdbc;
         this.identity = identity;
+        this.media = media;
     }
 
     private boolean exists(String sql, Object... args) {
@@ -226,6 +229,22 @@ public class SocialService {
         boolean fb = isFollowing(target, viewer);
         return new RelationshipView(f, fb, f && fb, isFriend(viewer, target),
                 isBlockedByMe(viewer, target));
+    }
+
+    // ---- profile media ----
+
+    /** Block-checked download URL for {@code target}'s avatar — the parent-
+     * authorized path for profile photos (generic /media URLs are owner-only). */
+    public String avatarDownloadUrl(UUID requester, UUID target) {
+        requireNotBlocked(requester, target, "AVATAR");
+        UUID avatarMediaId = identity.profileSummary(target)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "USER_NOT_FOUND"))
+                .avatarMediaId();
+        if (avatarMediaId == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "AVATAR_NOT_FOUND");
+        }
+        return media.authorizedDownloadUrl(avatarMediaId);
     }
 }
 

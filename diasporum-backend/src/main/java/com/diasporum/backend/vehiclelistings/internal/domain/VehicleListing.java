@@ -8,7 +8,8 @@ import java.util.UUID;
 
 /** Safe vehicle projection containing no exact address or private contact data. */
 public record VehicleListing(UUID id, UUID countryId, UUID communityId,
-        UUID ownerUserId, UUID businessAccountId, UUID createdByUserId,
+        UUID ownerUserId, UUID businessAccountId, UUID businessListingId,
+        UUID createdByUserId,
         String visibilityScope, String listingPurpose, UUID categoryId, UUID makeId,
         UUID modelId, UUID variantId, String categoryKey, String categoryName,
         String makeName, String modelName, String variantName, String title,

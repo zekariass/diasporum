@@ -20,7 +20,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
-/** Verifies the fresh V1-V12 schema and a populated V12 no-op upgrade. */
+/** Verifies the fresh migrated schema and a populated no-op upgrade. */
 @SpringBootTest
 @Testcontainers
 class PollSchemaIntegrationTest {
@@ -72,7 +72,8 @@ class PollSchemaIntegrationTest {
 
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM"
                 + " flyway_schema_history WHERE NOT success", Integer.class));
-        assertEquals(12, jdbc.queryForObject("SELECT max(version::integer) FROM"
+        assertEquals(Integer.valueOf(flyway.info().current().getVersion().toString()),
+                jdbc.queryForObject("SELECT max(version::integer) FROM"
                 + " flyway_schema_history WHERE success", Integer.class));
         assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM pg_constraint"
                 + " WHERE contype='p' AND conrelid IN ('feed_polls'::regclass,"

@@ -116,17 +116,22 @@ public class OutboxDispatcher {
      * a member revoked between enqueue and dispatch simply never receives it.
      */
     void publish(ClaimedEvent e) throws Exception {
-        Set<UUID> recipients = "USER".equals(e.aggregateType())
-                ? Set.of(e.aggregateId()) : recipientsFor(e.aggregateId());
-        if (recipients.isEmpty()) {
-            // Conversation deleted between enqueue and dispatch — nothing to
-            // deliver; mark published so the queue does not stall.
-            markPublished(e.id());
-            return;
-        }
         @SuppressWarnings("unchecked")
         Map<String, Object> data = new LinkedHashMap<>(
                 mapper.readValue(e.payloadJson(), Map.class));
+        Set<UUID> recipients = switch (e.eventType()) {
+            case "MATCHMAKING_MATCHED", "MATCHMAKING_UNMATCHED" ->
+                    matchmakingRecipient(e, data);
+            default -> "USER".equals(e.aggregateType())
+                    ? Set.of(e.aggregateId())
+                    : recipientsFor(e.aggregateId(), e.eventType(), data);
+        };
+        if (recipients.isEmpty()) {
+            // Deleted, stale or no-longer-authorized events are consumed rather
+            // than retried; PostgreSQL remains the authority for a later refresh.
+            markPublished(e.id());
+            return;
+        }
         data.put("eventId", e.id().toString());
         data.put("type", e.eventType());
         for (UUID userId : recipients) {
@@ -136,19 +141,50 @@ public class OutboxDispatcher {
     }
 
     /**
+     * Deliver a matchmaking invalidation only to its addressed current
+     * participant while the match and linked chat remain accessible.
+     */
+    private Set<UUID> matchmakingRecipient(ClaimedEvent e,
+            Map<String, Object> data) {
+        UUID matchId = UUID.fromString(String.valueOf(data.get("matchId")));
+        String expectedStatus = "MATCHMAKING_MATCHED".equals(e.eventType())
+                ? "MATCHED" : "UNMATCHED";
+        return jdbc.query("SELECT user_a_id,user_b_id FROM matchmaking_matches m"
+                        + " WHERE m.id=? AND m.status::text=?"
+                        + " AND (m.user_a_id=? OR m.user_b_id=?)"
+                        + " AND matchmaking_chat_is_accessible(m.id)",
+                rs -> {
+                    Set<UUID> out = new HashSet<>();
+                    while (rs.next()) {
+                        out.add(rs.getObject("user_a_id", UUID.class));
+                        out.add(rs.getObject("user_b_id", UUID.class));
+                    }
+                    out.retainAll(Set.of(e.aggregateId()));
+                    return out;
+                }, matchId, expectedStatus, e.aggregateId(), e.aggregateId());
+    }
+
+    /**
      * Participant-side recipients: personal side → that user; business side →
      * all currently active members (live membership, never a stale row).
      */
-    Set<UUID> recipientsFor(UUID conversationId) {
-        var sides = jdbc.query("SELECT participant_a_id,"
-                        + "participant_a_business_account_id,participant_b_id,"
-                        + "participant_b_business_account_id"
-                        + " FROM direct_conversations WHERE id=?",
+    Set<UUID> recipientsFor(UUID conversationId, String eventType,
+            Map<String, Object> data) {
+        var sides = jdbc.query("SELECT c.participant_a_id,"
+                        + "c.participant_a_business_account_id,c.participant_b_id,"
+                        + "c.participant_b_business_account_id"
+                        + " FROM direct_conversations c"
+                        + " LEFT JOIN matchmaking_matches m ON m.id=c.matchmaking_match_id"
+                        + " WHERE c.id=? AND (c.matchmaking_match_id IS NULL OR ("
+                        + "   matchmaking_chat_is_accessible(c.matchmaking_match_id) AND ("
+                        + "     m.status='MATCHED' OR (m.status='UNMATCHED'"
+                        + "       AND c.status='CLOSED' AND ?='CONVERSATION_UPDATED'"
+                        + "       AND ?='CLOSED'))))",
                 (rs, i) -> new UUID[]{rs.getObject(1, UUID.class),
                         rs.getObject(2, UUID.class),
                         rs.getObject(3, UUID.class),
                         rs.getObject(4, UUID.class)},
-                conversationId);
+                conversationId, eventType, data.get("status"));
         Set<UUID> out = new HashSet<>();
         for (UUID[] s : sides) {
             for (int k = 0; k < 2; k++) {

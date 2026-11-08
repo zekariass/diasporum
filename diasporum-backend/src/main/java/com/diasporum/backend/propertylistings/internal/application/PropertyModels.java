@@ -24,7 +24,8 @@ public final class PropertyModels {
     }
 
     public record PropertyCommand(UUID countryId, UUID communityId,
-            UUID businessAccountId, UUID propertyTypeId, String visibilityScope,
+            UUID businessAccountId, UUID businessListingId, UUID propertyTypeId,
+            String visibilityScope,
             String listingPurpose, String title, String description,
             java.util.Map<String, Object> additionalAttributes,
             BigDecimal priceAmount, String currencyCode, String pricePeriod,
@@ -43,12 +44,13 @@ public final class PropertyModels {
     }
 
     public record PublicLocation(String city, String region, Double latitude,
-            Double longitude) {
+            Double longitude, String countryName) {
     }
 
     /** Safe projection: deliberately no address id, exact point or private address fields. */
     public record PropertyRow(UUID id, UUID countryId, UUID communityId, UUID ownerUserId,
-            UUID businessAccountId, UUID createdByUserId, UUID propertyTypeId,
+            UUID businessAccountId, UUID businessListingId, UUID createdByUserId,
+            UUID propertyTypeId,
             String visibilityScope, String listingPurpose, String title,
             String description, JsonNode additionalAttributes, BigDecimal priceAmount,
             String currencyCode, String pricePeriod, Integer bedrooms,
@@ -61,23 +63,37 @@ public final class PropertyModels {
     }
 
     public record Listed(PropertyRow property, PropertyTypeView propertyType,
-            PublicLocation location, UUID coverMediaId, boolean saved,
-            Instant cursorTime) {
+            PublicLocation location, UUID coverMediaId, boolean saved, long viewCount,
+            long enquiryCount, long saveCount, Instant cursorTime) {
     }
 
     public record PropertyItem(PropertyRow property, PropertyTypeView propertyType,
             PublicLocation location, UUID coverMediaId, boolean saved,
-            boolean canManage) {
+            boolean canManage, long viewCount, long enquiryCount, long saveCount) {
     }
 
     public record SearchCriteria(UUID countryId, UUID communityId, UUID propertyTypeId,
             String listingPurpose, BigDecimal minPrice, BigDecimal maxPrice,
             Integer minBedrooms, Integer maxBedrooms, Integer bathrooms,
             String furnishedStatus, String city, String search, Double latitude,
-            Double longitude, Double radiusKm) {
+            Double longitude, Double radiusKm, UUID businessListingId) {
     }
 
-    public record PropertyPage(List<PropertyItem> items, String nextCursor) {
+    public record BrowseOptions(String sort, String currencyCode, String pricePeriod,
+            BigDecimal minFloorArea, BigDecimal maxFloorArea, String floorAreaUnit,
+            LocalDate availableBy, BigDecimal maxDeposit, Boolean billsIncluded,
+            Integer maxTenancyMonths, String tenure, String conditionKey,
+            Integer maxBathrooms) {
+        public static BrowseOptions defaults() {
+            return new BrowseOptions("NEWEST", null, null, null, null, null, null,
+                    null, null, null, null, null, null);
+        }
+    }
+
+    public record PropertyPage(List<PropertyItem> items, String nextCursor, Long totalCount) {
+        public PropertyPage(List<PropertyItem> items, String nextCursor) {
+            this(items, nextCursor, null);
+        }
     }
 
     public record PropertyMediaView(UUID mediaId, int sortOrder, boolean cover) {
@@ -87,10 +103,23 @@ public final class PropertyModels {
             String preferredMethod) {
     }
 
-    public record OwnerView(String displayName, String businessAccountName) {
+    public record OwnerView(String displayName, String businessAccountName, UUID avatarMediaId) {
+    }
+
+    /** Public Business Profile a listing is published under — safe public fields only. */
+    public record ListedByView(UUID businessId, String name, String categoryName,
+            String verificationStatus, UUID logoMediaId) {
+    }
+
+    /** Manager-only private address projection; never populated for public viewers. */
+    public record PrivateAddressView(String addressLine1, String addressLine2,
+            String city, String region, String postalCode, String formattedAddress,
+            Double latitude, Double longitude) {
     }
 
     public record PropertyDetail(PropertyItem item, List<PropertyMediaView> media,
-            List<AmenityView> amenities, ContactView contact, OwnerView owner) {
+            List<AmenityView> amenities, ContactView contact, OwnerView owner,
+            ListedByView listedBy, PrivateAddressView privateAddress,
+            List<UUID> communityIds) {
     }
 }

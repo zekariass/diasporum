@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, ScrollView, TextInput, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ThemedView } from "@/components/themed-view";
@@ -179,6 +179,7 @@ export default function RequestDetailScreen() {
         {loading ? <LoadingScreen /> : !request ? (
           <ErrorState message={error ?? "Request not found."} onRetry={() => { setLoading(true); void load(); }} />
         ) : (
+          <KeyboardAvoidingView style={serviceStyles.keyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <ScrollView contentContainerStyle={serviceStyles.content} keyboardShouldPersistTaps="handled">
             <ThemedText type="smallBold" style={{ color: BrandColors.primary }}>
               {request.categoryDisplayName} · {request.status}
@@ -261,6 +262,7 @@ export default function RequestDetailScreen() {
             </View> : null}
             {!request.canManage ? <PrimaryButton label="Report request" variant="ghost" onPress={report} /> : null}
           </ScrollView>
+          </KeyboardAvoidingView>
         )}
       </SafeAreaView>
     </ThemedView>

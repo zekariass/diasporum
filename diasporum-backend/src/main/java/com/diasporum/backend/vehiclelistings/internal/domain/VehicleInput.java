@@ -9,7 +9,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /** Client-editable fields; ownership and lifecycle status are server-controlled. */
-public record VehicleInput(UUID businessAccountId, String visibilityScope, UUID communityId,
+public record VehicleInput(UUID businessAccountId, UUID businessListingId,
+        String visibilityScope, UUID communityId,
         List<UUID> selectedCommunityIds, String listingPurpose, UUID categoryId, UUID makeId,
         UUID modelId, UUID variantId, String title, String description, Integer modelYear,
         Integer mileage, String mileageUnit, String fuelType, String transmission,
@@ -19,7 +20,8 @@ public record VehicleInput(UUID businessAccountId, String visibilityScope, UUID 
         BigDecimal priceAmount, String currencyCode, String pricePeriod,
         BigDecimal rentalDeposit, Integer mileageAllowance, String rentalConditions,
         LocationInput location, List<UUID> featureIds, Instant expiresAt,
-        boolean clearLocation, boolean clearExpiry, Set<String> clearFields) {
+        boolean clearLocation, boolean clearExpiry, Set<String> clearFields,
+        ContactInput contact, boolean clearContact) {
 
     public VehicleInput {
         clearFields = clearFields == null ? Set.of() : Set.copyOf(clearFields);
@@ -27,5 +29,11 @@ public record VehicleInput(UUID businessAccountId, String visibilityScope, UUID 
 
     public record LocationInput(String city, String region, String formattedAddress,
             Double discoveryLatitude, Double discoveryLongitude) {
+    }
+
+    /** Optional seller contact channels; each field is exposed only when its flag is set. */
+    public record ContactInput(String phone, String whatsapp, String email,
+            String preferredMethod, Boolean showPhone, Boolean showWhatsapp,
+            Boolean showEmail) {
     }
 }

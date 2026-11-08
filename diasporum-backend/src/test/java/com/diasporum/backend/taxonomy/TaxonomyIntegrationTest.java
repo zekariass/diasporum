@@ -147,7 +147,7 @@ class TaxonomyIntegrationTest {
         var req = new com.diasporum.backend.identity.internal.api.rest.UpdateProfileRequest(
                 null, null, null, null, null, pt, null, null);
         var p = new com.diasporum.backend.identity.internal.application.ProfileService(
-                jdbc, api).updateProfile(uid, req);
+                jdbc, api, event -> { }).updateProfile(uid, req);
         assertEquals(pt, p.originCountryId());
     }
 }

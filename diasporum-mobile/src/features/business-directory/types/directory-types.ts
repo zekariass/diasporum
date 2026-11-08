@@ -41,10 +41,13 @@ export interface Business {
   updatedAt: string;
   saved: boolean;
   canManage: boolean;
+  businessAccountId: string | null;
   businessAccountName: string | null;
   logoMediaId: string | null;
   coverMediaId: string | null;
   distanceMeters: number | null;
+  listingCount: number;
+  locationCount: number;
 }
 
 export interface BusinessAddress {

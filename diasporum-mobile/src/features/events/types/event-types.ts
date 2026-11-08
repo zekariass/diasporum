@@ -135,12 +135,16 @@ export interface UpdateEventRequest {
   eventMode?: EventMode;
   startsAt?: string;
   endsAt?: string;
+  /** Explicitly clears endsAt when true (endsAt must be omitted). */
+  clearEndsAt?: boolean;
   timezone?: string;
   locationName?: string;
   externalUrl?: string;
   capacity?: number;
   categoryId?: string;
   countryTopicCategoryId?: string;
+  /** Explicitly clears the optional country topic when true. */
+  clearCountryTopic?: boolean;
   coverMediaId?: string;
   clearCover?: boolean;
 }
@@ -149,7 +153,11 @@ export interface DiscoveryFilters {
   communityId?: string;
   scope?: VisibilityScope;
   categoryId?: string;
+  /** Optional country practical-category filter (never widens visibility). */
+  topicCategoryId?: string;
   mode?: EventMode;
+  /** Matches the venue/location text for in-person events. */
+  location?: string;
   from?: string;
   to?: string;
   search?: string;

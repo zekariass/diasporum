@@ -21,6 +21,31 @@ public final class BusinessAccountAuthorization {
         };
     }
 
+    /**
+     * Role hierarchy for membership management. A manager may only act on
+     * members whose role ranks strictly below their own; the OWNER alone can
+     * manage administrators, and ownership itself changes only through an
+     * explicit transfer.
+     */
+    public static int rankOf(String role) {
+        return switch (role) {
+            case "OWNER" -> 40;
+            case "ADMINISTRATOR" -> 30;
+            case "EDITOR" -> 20;
+            case "LISTING_MANAGER" -> 20;
+            case "BILLING_MANAGER" -> 20;
+            default -> 0;
+        };
+    }
+
+    /** Roles a pending invitation may carry; OWNER must always be accepted. */
+    public static boolean invitable(String role) {
+        return switch (role) {
+            case "ADMINISTRATOR", "EDITOR", "LISTING_MANAGER", "BILLING_MANAGER" -> true;
+            default -> false;
+        };
+    }
+
     public record Capabilities(
             boolean manageProfiles,
             boolean manageListings,

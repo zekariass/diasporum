@@ -123,6 +123,14 @@ public class SocialController {
         return list(social.blocked(principal.userId(), page, size(s)), page, size(s));
     }
 
+    /** Parent-authorized avatar URL for another user's profile photo —
+     * enforces blocks; generic /media download URLs are owner-scoped. */
+    @GetMapping("/profiles/{t}/avatar/download-url")
+    public Map<String, String> avatarDownloadUrl(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable("t") UUID t) {
+        return Map.of("downloadUrl", social.avatarDownloadUrl(principal.userId(), t));
+    }
+
     // relationship
     @GetMapping("/relationship/{t}")
     public RelationshipView relationship(@AuthenticationPrincipal DiasporumUserPrincipal principal,

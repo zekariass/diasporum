@@ -16,27 +16,47 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSession } from "@/core/session/session-provider";
 import { BrandColors } from "@/shared/theme/colors";
 import { useTheme } from "@/hooks/use-theme";
-import { getMediaUrl, refreshMediaUrl } from "../utils/media-cache";
+import {
+  getAvatarUrl,
+  getFeedMediaUrl,
+  getMediaUrl,
+  peekAvatarUrl,
+  peekFeedMediaUrl,
+  peekMediaUrl,
+  refreshAvatarUrl,
+  refreshFeedMediaUrl,
+  refreshMediaUrl,
+} from "../utils/media-cache";
 export { clearMediaCache } from "../utils/media-cache";
 
 interface Props {
   mediaId: string;
   style?: object;
+  /** Resolve via the parent-authorized feed endpoint (media on posts). */
+  feed?: boolean;
+  /** Resolve via the block-checked avatar endpoint for this user's photo. */
+  userId?: string;
   /** Fires once the bitmap loads — lets callers size the frame to the real aspect ratio. */
   onDimensions?: (width: number, height: number) => void;
 }
 
-export function MediaImage({ mediaId, style, onDimensions }: Props) {
+export function MediaImage({ mediaId, style, feed, userId, onDimensions }: Props) {
   const theme = useTheme();
   const { apiClient } = useSession();
-  const [uri, setUri] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Warm-cache init — skips the placeholder frame entirely when the signed
+  // URL was already resolved (e.g. same image shown on the feed screen).
+  const [uri, setUri] = useState<string | null>(() =>
+    userId ? peekAvatarUrl(userId) : feed ? peekFeedMediaUrl(mediaId) : peekMediaUrl(mediaId));
+  const [loading, setLoading] = useState(uri == null);
   const [failed, setFailed] = useState(false);
   const [retried, setRetried] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    getMediaUrl(apiClient, mediaId)
+    const resolve = userId
+      ? () => getAvatarUrl(apiClient, userId)
+      : () => (feed ? getFeedMediaUrl : getMediaUrl)(apiClient, mediaId);
+    resolve()
       .then((u) => {
         if (!cancelled) {
           setUri(u);
@@ -52,7 +72,7 @@ export function MediaImage({ mediaId, style, onDimensions }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [apiClient, mediaId]);
+  }, [apiClient, mediaId, feed, userId]);
 
   // Retry once with fresh URL on image load failure (expired signed URL → 403)
   const handleError = useCallback(() => {
@@ -62,7 +82,10 @@ export function MediaImage({ mediaId, style, onDimensions }: Props) {
     }
     setRetried(true);
     setLoading(true);
-    refreshMediaUrl(apiClient, mediaId)
+    const refresh = userId
+      ? () => refreshAvatarUrl(apiClient, userId)
+      : () => (feed ? refreshFeedMediaUrl : refreshMediaUrl)(apiClient, mediaId);
+    refresh()
       .then((u) => {
         setUri(u);
         setLoading(false);
@@ -71,7 +94,7 @@ export function MediaImage({ mediaId, style, onDimensions }: Props) {
         setFailed(true);
         setLoading(false);
       });
-  }, [retried, apiClient, mediaId]);
+  }, [retried, apiClient, mediaId, feed, userId]);
 
   const handleLoad = useCallback(
     (e: ImageLoadEvent) => {

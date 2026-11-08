@@ -18,6 +18,7 @@ jest.mock("expo-image-picker", () => ({
   requestMediaLibraryPermissionsAsync: async () => ({ granted: true }),
   launchImageLibraryAsync: async () => ({ canceled: true, assets: [] }),
 }));
+jest.mock("@react-native-community/datetimepicker", () => ({ __esModule: true, default: () => null }));
 jest.mock("expo-router", () => ({
   useRouter: () => mockRouter,
   router: mockRouter,
@@ -102,7 +103,7 @@ describe("Jobs discovery", () => {
     await renderScreen(<JobsScreen />);
     expect(await screen.findByText("Backend engineer")).toBeTruthy();
 
-    await fireEvent.changeText(screen.getByPlaceholderText("Search title, employer or description"), "nurse");
+    await fireEvent.changeText(screen.getByPlaceholderText("Job title, company or keyword"), "nurse");
     await waitFor(() => expect(mockClient.get).toHaveBeenCalledWith(
       expect.stringContaining("search=nurse"), { authenticated: true },
     ));
@@ -111,6 +112,49 @@ describe("Jobs discovery", () => {
     expect(await screen.findByText("Mobile engineer")).toBeTruthy();
     expect(mockClient.get).toHaveBeenCalledWith(expect.stringContaining("cursor=next"), { authenticated: true });
   }, 15000);
+
+  it("saves and unsaves a job from the listing card", async () => {
+    await renderScreen(<JobsScreen />);
+    await fireEvent.press(await screen.findByLabelText("Save job"));
+    await waitFor(() => expect(mockClient.put).toHaveBeenCalledWith(
+      "/api/v1/jobs/job-1/save", {}, { authenticated: true },
+    ));
+    await fireEvent.press(await screen.findByLabelText("Unsave job"));
+    await waitFor(() => expect(mockClient.delete).toHaveBeenCalledWith(
+      "/api/v1/jobs/job-1/save", { authenticated: true },
+    ));
+  });
+
+  it("applies the location city filter through the location sheet", async () => {
+    await renderScreen(<JobsScreen />);
+    await fireEvent.press(screen.getByLabelText("Location: Anywhere"));
+    await fireEvent.changeText(await screen.findByLabelText("City or region"), "Berlin");
+    await fireEvent.press(screen.getByLabelText("Apply"));
+    await waitFor(() => expect(mockClient.get).toHaveBeenCalledWith(
+      expect.stringContaining("city=Berlin"), { authenticated: true },
+    ));
+  });
+
+  it("applies category, employment-type chip and sort filters", async () => {
+    await renderScreen(<JobsScreen />);
+    await fireEvent.press(await screen.findByLabelText("Filters"));
+    await fireEvent.press(await screen.findByLabelText("Technology"));
+    await fireEvent.press(screen.getByLabelText("Show results"));
+    await waitFor(() => expect(mockClient.get).toHaveBeenCalledWith(
+      expect.stringContaining("categoryId=category-1"), { authenticated: true },
+    ));
+
+    await fireEvent.press(screen.getByLabelText("Temporary"));
+    await waitFor(() => expect(mockClient.get).toHaveBeenCalledWith(
+      expect.stringContaining("employmentType=TEMPORARY"), { authenticated: true },
+    ));
+
+    await fireEvent.press(screen.getByLabelText("Sort jobs"));
+    await fireEvent.press(await screen.findByLabelText("Closing soon"));
+    await waitFor(() => expect(mockClient.get).toHaveBeenCalledWith(
+      expect.stringContaining("sort=CLOSING"), { authenticated: true },
+    ));
+  });
 
   it("shows empty and error states", async () => {
     mockClient.get.mockImplementation((url: string) => {
@@ -179,17 +223,30 @@ describe("Job details", () => {
 });
 
 describe("Job editor and collections", () => {
-  it("validates and creates a job", async () => {
+  it("validates and creates a job through the wizard", async () => {
     await renderScreen(<JobEditorScreen />);
-    await fireEvent.press(await screen.findByText("Technology"));
-    await fireEvent.changeText(screen.getByPlaceholderText("Employer name"), "Diasporum");
-    await fireEvent.press(screen.getByLabelText("Publish job"));
+
+    // Step 1 — Post as & audience (defaults are fine).
+    await fireEvent.press(screen.getByLabelText("Continue"));
+
+    // Step 2 — Job details: a missing title blocks advancing.
+    await fireEvent.changeText(await screen.findByLabelText("Employer name (required)"), "Diasporum");
+    await fireEvent.press(await screen.findByLabelText("Technology"));
+    await fireEvent.press(screen.getByLabelText("Continue"));
     expect(await screen.findByText("Enter a job title.")).toBeTruthy();
     expect(mockClient.post).not.toHaveBeenCalledWith("/api/v1/jobs", expect.anything(), expect.anything());
 
-    await fireEvent.changeText(screen.getByPlaceholderText("Job title"), "Backend engineer");
-    await fireEvent.changeText(screen.getByPlaceholderText("Description"), "Build community services");
-    await fireEvent.changeText(screen.getByPlaceholderText("City"), "Frankfurt");
+    await fireEvent.changeText(screen.getByLabelText("Job title (required)"), "Backend engineer");
+    await fireEvent.changeText(screen.getByLabelText("Description (required)"), "Build community services");
+    await fireEvent.press(screen.getByLabelText("Continue"));
+
+    // Step 3 — Role & location.
+    await fireEvent.changeText(await screen.findByLabelText("City"), "Frankfurt");
+    await fireEvent.press(screen.getByLabelText("Continue"));
+
+    // Steps 4 and 5 have no required fields; review then publish.
+    await fireEvent.press(screen.getByLabelText("Continue"));
+    await fireEvent.press(screen.getByLabelText("Continue"));
     await fireEvent.press(screen.getByLabelText("Publish job"));
     await waitFor(() => expect(mockClient.post).toHaveBeenCalledWith("/api/v1/jobs",
       expect.objectContaining({ title: "Backend engineer", categoryIds: ["category-1"], draft: false }),
@@ -201,8 +258,13 @@ describe("Job editor and collections", () => {
     mockParams = { id: "job-1" };
     currentDetail = makeDetail({ canManage: true });
     await renderScreen(<JobEditorScreen edit />);
+    await fireEvent.press(await screen.findByLabelText("Continue"));
     expect(await screen.findByDisplayValue("Backend engineer")).toBeTruthy();
-    await fireEvent.changeText(screen.getByPlaceholderText("Job title"), "Senior backend engineer");
+    await fireEvent.changeText(screen.getByLabelText("Job title (required)"), "Senior backend engineer");
+    await fireEvent.press(screen.getByLabelText("Continue"));
+    await fireEvent.press(screen.getByLabelText("Continue"));
+    await fireEvent.press(screen.getByLabelText("Continue"));
+    await fireEvent.press(screen.getByLabelText("Continue"));
     await fireEvent.press(screen.getByLabelText("Save changes"));
     await waitFor(() => expect(mockClient.patch).toHaveBeenCalledWith(
       "/api/v1/jobs/job-1", expect.objectContaining({ title: "Senior backend engineer" }), { authenticated: true },

@@ -1,4 +1,5 @@
 import type { ApiClient } from "@/core/api/api-client";
+import { propertySaveStore } from "../utils/property-save-store";
 import type {
   Amenity,
   PropertyCommand,
@@ -9,21 +10,30 @@ import type {
   PropertyType,
 } from "../types/property-types";
 
-type QueryValue = string | number | undefined;
+type QueryValue = string | number | boolean | undefined;
 
 function buildQuery(params: [string, QueryValue][]): string {
   const query = params
     .filter(([, value]) => value !== undefined && value !== "")
-    .map(
-      ([key, value]) =>
-        `${key}=${encodeURIComponent(String(value))}`,
-    )
+    .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
     .join("&");
   return query ? `?${query}` : "";
 }
 
 export function createPropertyApi(client: ApiClient) {
   const auth = { authenticated: true } as const;
+  const store = propertySaveStore(client);
+  const read = async <T extends PropertyPage | PropertyDetail>(
+    path: string,
+  ): Promise<T> => {
+    const version = store.version();
+    const result = await client.get<T>(path, auth);
+    const items = "items" in result ? result.items : [result.item];
+    items.forEach((item) =>
+      store.reconcile(item.property.id, item.saved, version),
+    );
+    return result;
+  };
   return {
     types: (countryId: string) =>
       client.get<{ items: PropertyType[] }>(
@@ -37,8 +47,21 @@ export function createPropertyApi(client: ApiClient) {
       cursor?: string,
       size = 20,
     ) =>
-      client.get<PropertyPage>(
+      read<PropertyPage>(
         `/api/v1/properties${buildQuery([
+          ["sort", filters.sort],
+          ["currencyCode", filters.currencyCode],
+          ["pricePeriod", filters.pricePeriod],
+          ["minFloorArea", filters.minFloorArea],
+          ["maxFloorArea", filters.maxFloorArea],
+          ["floorAreaUnit", filters.floorAreaUnit],
+          ["availableBy", filters.availableBy],
+          ["maxDeposit", filters.maxDeposit],
+          ["billsIncluded", filters.billsIncluded],
+          ["maxTenancyMonths", filters.maxTenancyMonths],
+          ["tenure", filters.tenure],
+          ["conditionKey", filters.conditionKey],
+          ["maxBathrooms", filters.maxBathrooms],
           ["countryId", filters.countryId],
           ["communityId", filters.communityId],
           ["propertyTypeId", filters.propertyTypeId],
@@ -54,13 +77,13 @@ export function createPropertyApi(client: ApiClient) {
           ["latitude", filters.latitude],
           ["longitude", filters.longitude],
           ["radiusKm", filters.radiusKm],
+          ["businessListingId", filters.businessListingId],
           ["cursor", cursor],
           ["size", size],
         ])}`,
-        auth,
       ),
     detail: (propertyId: string) =>
-      client.get<PropertyDetail>(`/api/v1/properties/${propertyId}`, auth),
+      read<PropertyDetail>(`/api/v1/properties/${propertyId}`),
     create: (command: PropertyCommand) =>
       client.post<PropertyDetail>("/api/v1/properties", command, auth),
     update: (propertyId: string, command: PropertyCommand) =>
@@ -93,28 +116,40 @@ export function createPropertyApi(client: ApiClient) {
         undefined,
         auth,
       ),
+    sold: (propertyId: string) =>
+      client.post<PropertyDetail>(
+        `/api/v1/properties/${propertyId}/sold`,
+        undefined,
+        auth,
+      ),
+    rented: (propertyId: string) =>
+      client.post<PropertyDetail>(
+        `/api/v1/properties/${propertyId}/rented`,
+        undefined,
+        auth,
+      ),
     mine: (
       status?: PropertyStatus,
       businessAccountId?: string,
       cursor?: string,
       size = 20,
+      businessListingId?: string,
     ) =>
-      client.get<PropertyPage>(
+      read<PropertyPage>(
         `/api/v1/me/properties${buildQuery([
           ["status", status],
           ["businessAccountId", businessAccountId],
+          ["businessListingId", businessListingId],
           ["cursor", cursor],
           ["size", size],
         ])}`,
-        auth,
       ),
     saved: (cursor?: string, size = 20) =>
-      client.get<PropertyPage>(
+      read<PropertyPage>(
         `/api/v1/me/properties/saved${buildQuery([
           ["cursor", cursor],
           ["size", size],
         ])}`,
-        auth,
       ),
     save: (propertyId: string) =>
       client.put<void>(`/api/v1/properties/${propertyId}/save`, {}, auth),

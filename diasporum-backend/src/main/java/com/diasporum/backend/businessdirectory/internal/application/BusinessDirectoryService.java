@@ -56,7 +56,13 @@ public class BusinessDirectoryService extends DirectorySupport {
             + "(SELECT bm.media_id FROM business_media bm"
             + " WHERE bm.business_id=b.id AND bm.is_logo LIMIT 1) AS logo_media_id,"
             + "(SELECT bm.media_id FROM business_media bm"
-            + " WHERE bm.business_id=b.id AND bm.is_cover LIMIT 1) AS cover_media_id";
+            + " WHERE bm.business_id=b.id AND bm.is_cover LIMIT 1) AS cover_media_id,"
+            + "((SELECT count(*) FROM property_listings p"
+            + " WHERE p.business_listing_id=b.id AND p.status<>'REMOVED')"
+            + " +(SELECT count(*) FROM vehicle_listings v"
+            + " WHERE v.business_listing_id=b.id AND v.status<>'REMOVED')) AS listing_count,"
+            + "(SELECT count(*) FROM business_locations bl"
+            + " WHERE bl.business_id=b.id AND bl.is_active) AS location_count";
 
     private final BusinessAccountsApi businessAccounts;
     private final CommunityApi community;
@@ -106,7 +112,8 @@ public class BusinessDirectoryService extends DirectorySupport {
     }
 
     private record Listed(ListingRow listing, CategoryView category, boolean saved,
-            UUID logoMediaId, UUID coverMediaId, Double distanceMeters) {
+            UUID logoMediaId, UUID coverMediaId, Double distanceMeters,
+            long listingCount, long locationCount) {
     }
 
     private record SavedListed(Listed item, Instant savedAt) {
@@ -140,7 +147,8 @@ public class BusinessDirectoryService extends DirectorySupport {
         return new Listed(listing(rs), category, rs.getBoolean("saved"),
                 rs.getObject("logo_media_id", UUID.class),
                 rs.getObject("cover_media_id", UUID.class),
-                rs.getObject("distance_m", Double.class));
+                rs.getObject("distance_m", Double.class),
+                rs.getLong("listing_count"), rs.getLong("location_count"));
     }
 
     private BusinessView view(Listed item, boolean canManage, String accountName) {
@@ -149,8 +157,10 @@ public class BusinessDirectoryService extends DirectorySupport {
                 b.slug(), b.description(), b.phone(), b.email(), b.websiteUrl(),
                 b.verificationStatus(), b.status(), b.visibilityScope(), b.communityId(),
                 b.averageRating(), b.reviewCount(), b.sponsored(), b.createdAt(),
-                b.updatedAt(), item.saved(), canManage, accountName, item.logoMediaId(),
-                item.coverMediaId(), item.distanceMeters());
+                b.updatedAt(), item.saved(), canManage, b.businessAccountId(),
+                accountName, item.logoMediaId(),
+                item.coverMediaId(), item.distanceMeters(), item.listingCount(),
+                item.locationCount());
     }
 
     // =================== categories ===================

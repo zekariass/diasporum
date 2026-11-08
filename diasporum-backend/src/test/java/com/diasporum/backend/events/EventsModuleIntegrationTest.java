@@ -89,8 +89,8 @@ class EventsModuleIntegrationTest {
 
     @BeforeEach
     void setup() {
-        jdbc.execute("TRUNCATE reports,event_saves,event_rsvps,event_media,"
-                + "events CASCADE");
+        jdbc.execute("TRUNCATE reports,notifications,event_saves,event_rsvps,"
+                + "event_media,events CASCADE");
         for (String t : new String[]{"community_memberships", "external_identities",
                 "profiles", "communities", "airports", "countries"}) {
             jdbc.update("DELETE FROM " + t);
@@ -256,8 +256,8 @@ class EventsModuleIntegrationTest {
         var e = createSimple(organizer, "Owned", inHours(24), null);
         var denied = assertThrows(ResponseStatusException.class,
                 () -> service.update(member, e.event().id(), null, "Hacked", null,
-                        null, null, null, null, null, null, null, null,
-                        null, null, false));
+                        null, null, null, false, null, null, null, null,
+                        null, null, false, null, false));
         assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode());
         assertThrows(ResponseStatusException.class,
                 () -> service.cancel(member, e.event().id(), null));
@@ -265,8 +265,8 @@ class EventsModuleIntegrationTest {
                 () -> service.delete(member, e.event().id()));
 
         var updated = service.update(organizer, e.event().id(), null, "Renamed",
-                null, null, null, null, null, null, null, null, null, null,
-                null, false);
+                null, null, null, null, false, null, null, null, null, null,
+                null, false, null, false);
         assertEquals("Renamed", updated.event().title());
     }
 
@@ -279,20 +279,20 @@ class EventsModuleIntegrationTest {
         // non-manager cannot change visibility
         var denied = assertThrows(ResponseStatusException.class,
                 () -> service.update(member, e.event().id(), "COUNTRY", null,
-                        null, null, null, null, null, null, null, null, null,
-                        null, null, false));
+                        null, null, null, null, false, null, null, null,
+                        null, null, null, false, null, false));
         assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode());
         // invalid target scope
         var invalid = assertThrows(ResponseStatusException.class,
                 () -> service.update(organizer, e.event().id(), "EVERYONE", null,
-                        null, null, null, null, null, null, null, null, null,
-                        null, null, false));
+                        null, null, null, null, false, null, null, null,
+                        null, null, null, false, null, false));
         assertEquals(HttpStatus.BAD_REQUEST, invalid.getStatusCode());
 
         // organizer widens to COUNTRY — same-country non-member gains access
         var widened = service.update(organizer, e.event().id(), "COUNTRY", null,
-                null, null, null, null, null, null, null, null, null, null,
-                null, false);
+                null, null, null, null, false, null, null, null, null,
+                null, null, false, null, false);
         assertEquals("COUNTRY", widened.event().visibilityScope());
         assertEquals("Scope switch", service.detail(outsider, e.event().id())
                 .event().title());
@@ -305,14 +305,15 @@ class EventsModuleIntegrationTest {
                 + " AND community_id=?", organizer, community);
         var exMember = assertThrows(ResponseStatusException.class,
                 () -> service.update(organizer, e.event().id(), "COMMUNITY", null,
-                        null, null, null, null, null, null, null, null, null,
-                        null, null, false));
+                        null, null, null, null, false, null, null, null,
+                        null, null, null, false, null, false));
         assertEquals(HttpStatus.FORBIDDEN, exMember.getStatusCode());
         communities.join(organizer, community);
 
         // narrowing back to COMMUNITY removes the outsider's access
         service.update(organizer, e.event().id(), "COMMUNITY", null, null, null,
-                null, null, null, null, null, null, null, null, null, false);
+                null, null, false, null, null, null, null, null, null,
+                false, null, false);
         assertThrows(ResponseStatusException.class,
                 () -> service.detail(outsider, e.event().id()));
         assertEquals("Scope switch", service.detail(member, e.event().id())
@@ -324,8 +325,8 @@ class EventsModuleIntegrationTest {
                 + " WHERE id=?", started.event().id());
         var tooLate = assertThrows(ResponseStatusException.class,
                 () -> service.update(organizer, started.event().id(), "COUNTRY",
-                        null, null, null, null, null, null, null, null, null,
-                        null, null, null, false));
+                        null, null, null, null, null, false, null, null,
+                        null, null, null, null, false, null, false));
         assertEquals(HttpStatus.CONFLICT, tooLate.getStatusCode());
     }
 
@@ -337,22 +338,22 @@ class EventsModuleIntegrationTest {
             createSimple(organizer, "Event " + i, inHours(10 + i), null);
         }
         var page1 = service.discover(member, null, null, null, null, null, null,
-                null, null, 2);
+                null, null, null, null, 2);
         assertEquals(2, page1.items().size());
         assertEquals("Event 1", page1.items().get(0).event().title());
         assertNotNull(page1.nextCursor());
         var page2 = service.discover(member, null, null, null, null, null, null,
-                null, page1.nextCursor(), 2);
+                null, null, null, page1.nextCursor(), 2);
         assertEquals(2, page2.items().size());
         assertEquals("Event 3", page2.items().get(0).event().title());
         var page3 = service.discover(member, null, null, null, null, null, null,
-                null, page2.nextCursor(), 2);
+                null, null, null, page2.nextCursor(), 2);
         assertEquals(1, page3.items().size());
         assertEquals(null, page3.nextCursor());
 
         // search + category filter + community listing
         var found = service.discover(member, null, null, categoryId, null, null,
-                null, "Event 3", null, 10);
+                null, null, null, "Event 3", null, 10);
         assertEquals(1, found.items().size());
         var communityPage = service.communityEvents(member, community, null, 10);
         assertEquals(5, communityPage.items().size());
@@ -363,7 +364,7 @@ class EventsModuleIntegrationTest {
         jdbc.update("UPDATE events SET starts_at=now()-interval '2 hours'"
                 + " WHERE title='Event 1'");
         var upcoming = service.discover(member, null, null, null, null, null,
-                null, null, null, 10);
+                null, null, null, null, null, 10);
         assertEquals(4, upcoming.items().size());
     }
 
@@ -375,15 +376,15 @@ class EventsModuleIntegrationTest {
                 "Hall", null, null, null, null, false);
         // member sees both
         assertEquals(2, service.discover(member, null, null, null, null, null,
-                null, null, null, 10).items().size());
+                null, null, null, null, null, 10).items().size());
         // outsider (no memberships, current=DE) sees only the country event
         var forOutsider = service.discover(outsider, null, null, null, null,
-                null, null, null, null, 10);
+                null, null, null, null, null, null, 10);
         assertEquals(1, forOutsider.items().size());
         assertEquals("Country event", forOutsider.items().get(0).event().title());
         // abroad sees nothing
         assertEquals(0, service.discover(abroad, null, null, null, null, null,
-                null, null, null, 10).items().size());
+                null, null, null, null, null, 10).items().size());
     }
 
     // =================== RSVP + capacity + waitlist ===================
@@ -436,8 +437,8 @@ class EventsModuleIntegrationTest {
         // capacity cannot be reduced below current GOING count
         var ex = assertThrows(ResponseStatusException.class,
                 () -> service.update(organizer, e.event().id(), null, null, null,
-                        null, null, null, null, null, null, 1, null, null, null,
-                        false));
+                        null, null, null, false, null, null, null, 1, null,
+                        null, false, null, false));
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
     }
 
@@ -452,7 +453,8 @@ class EventsModuleIntegrationTest {
 
         // one extra seat → only the earliest waitlisted participant promotes
         service.update(organizer, e.event().id(), null, null, null, null, null,
-                null, null, null, null, 2, null, null, null, false);
+                null, false, null, null, null, 2, null, null, false, null,
+                false);
         var counts = service.counts(e.event().id());
         assertEquals(2, counts.going());
         assertEquals(1, counts.waitlisted());
@@ -461,7 +463,8 @@ class EventsModuleIntegrationTest {
 
         // enough seats for everyone → the rest of the waitlist drains
         service.update(organizer, e.event().id(), null, null, null, null, null,
-                null, null, null, null, 5, null, null, null, false);
+                null, false, null, null, null, 5, null, null, false, null,
+                false);
         assertEquals(3, service.counts(e.event().id()).going());
         assertEquals(0, service.counts(e.event().id()).waitlisted());
         assertEquals("GOING", rsvpStatusOf(e.event().id(), member2));
@@ -473,13 +476,14 @@ class EventsModuleIntegrationTest {
         jdbc.update("UPDATE events SET starts_at=now()-interval '1 hour'"
                 + " WHERE id=?", late.event().id());
         service.update(organizer, late.event().id(), null, null, null, null,
-                null, null, null, null, null, 2, null, null, null, false);
+                null, null, false, null, null, null, 2, null, null, false,
+                null, false);
         assertEquals("GOING", rsvpStatusOf(late.event().id(), member));
         // lowering capacity after start remains blocked
         var tooLate = assertThrows(ResponseStatusException.class,
                 () -> service.update(organizer, late.event().id(), null, null,
-                        null, null, null, null, null, null, null, 1, null,
-                        null, null, false));
+                        null, null, null, null, false, null, null, null, 1,
+                        null, null, false, null, false));
         assertEquals(HttpStatus.CONFLICT, tooLate.getStatusCode());
     }
 
@@ -499,8 +503,8 @@ class EventsModuleIntegrationTest {
         ExecutorService pool = Executors.newFixedThreadPool(5);
         try {
             Future<?> raise = pool.submit(() -> service.update(organizer,
-                    e.event().id(), null, null, null, null, null, null, null,
-                    null, null, 5, null, null, null, false));
+                    e.event().id(), null, null, null, null, null, null, false,
+                    null, null, null, 5, null, null, false, null, false));
             Future<String> r1 = pool.submit(() -> service.setRsvp(extra1,
                     e.event().id(), "GOING").status());
             Future<String> r2 = pool.submit(() -> service.setRsvp(extra2,
@@ -621,8 +625,8 @@ class EventsModuleIntegrationTest {
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
         // editing a cancelled event → 409
         assertThrows(ResponseStatusException.class, () -> service.update(organizer,
-                e.event().id(), null, "Too late", null, null, null, null, null,
-                null, null, null, null, null, null, false));
+                e.event().id(), null, "Too late", null, null, null, null, false,
+                null, null, null, null, null, null, false, null, false));
         // has GOING participants → delete forbidden
         assertThrows(ResponseStatusException.class,
                 () -> service.delete(organizer, e.event().id()));
@@ -696,6 +700,165 @@ class EventsModuleIntegrationTest {
         // non-viewer cannot report
         assertThrows(ResponseStatusException.class, () -> service.report(abroad,
                 e.event().id(), "SPAM", null));
+    }
+
+    // =================== lifecycle guards / visibility re-checks ===================
+
+    @Test
+    void rsvpRejectedForDraftsAndDeleteBlockedAfterStart() {
+        var draft = service.create(organizer, community, "COMMUNITY", categoryId,
+                null, "Draft", "Body", "IN_PERSON", inHours(24), null, "UTC",
+                "Hall", null, null, null, null, true);
+        // members can't see drafts at all; the organizer sees it but
+        // still can't RSVP until it is published
+        var memberEx = assertThrows(ResponseStatusException.class,
+                () -> service.setRsvp(member, draft.event().id(), "GOING"));
+        assertEquals(HttpStatus.NOT_FOUND, memberEx.getStatusCode());
+        var organizerEx = assertThrows(ResponseStatusException.class,
+                () -> service.setRsvp(organizer, draft.event().id(), "GOING"));
+        assertEquals(HttpStatus.CONFLICT, organizerEx.getStatusCode());
+        service.publish(organizer, draft.event().id());
+        assertEquals("GOING", service.setRsvp(member, draft.event().id(),
+                "GOING").status());
+
+        // deletion is a pre-start operation only
+        var started = createSimple(organizer, "Already started", inHours(24),
+                null);
+        jdbc.update("UPDATE events SET starts_at=now()-interval '1 hour'"
+                + " WHERE id=?", started.event().id());
+        var ex = assertThrows(ResponseStatusException.class,
+                () -> service.delete(organizer, started.event().id()));
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+    }
+
+    @Test
+    void savedEventsHonourCurrentVisibility() {
+        var e = createSimple(organizer, "Members only save", inHours(24), null);
+        service.save(member, e.event().id());
+        assertEquals(1, ((List<?>) service.savedEvents(member, 0, 20)
+                .get("items")).size());
+        // losing community membership removes the row from the saved listing
+        jdbc.update("DELETE FROM community_memberships WHERE user_id=?"
+                + " AND community_id=?", member, community);
+        assertEquals(0, ((List<?>) service.savedEvents(member, 0, 20)
+                .get("items")).size());
+        // direct detail access is denied identically
+        assertThrows(ResponseStatusException.class,
+                () -> service.detail(member, e.event().id()));
+
+        // country-scope: a member who moves away loses saved visibility too
+        var country = service.create(organizer, community, "COUNTRY", categoryId,
+                null, "Country save", "Body", "IN_PERSON", inHours(25), null,
+                "UTC", "Hall", null, null, null, null, false);
+        service.save(outsider, country.event().id());
+        assertEquals(1, ((List<?>) service.savedEvents(outsider, 0, 20)
+                .get("items")).size());
+        jdbc.update("UPDATE profiles SET current_country_id=? WHERE id=?",
+                origin, outsider);
+        assertEquals(0, ((List<?>) service.savedEvents(outsider, 0, 20)
+                .get("items")).size());
+        jdbc.update("UPDATE profiles SET current_country_id=? WHERE id=?",
+                dest, outsider);
+    }
+
+    @Test
+    void searchMatchesTitleAndDescription() {
+        createSimple(organizer, "Amharic cooking class", inHours(24), null);
+        service.create(organizer, community, "COMMUNITY", categoryId, null,
+                "Weekend meetup", "Learn traditional injera baking", "IN_PERSON",
+                inHours(25), null, "UTC", "Hall", null, null, null, null,
+                false);
+        var byTitle = service.discover(member, null, null, null, null, null,
+                null, null, null, "cooking", null, 10);
+        assertEquals(1, byTitle.items().size());
+        var byDescription = service.discover(member, null, null, null, null,
+                null, null, null, null, "injera", null, 10);
+        assertEquals(1, byDescription.items().size());
+        assertEquals("Weekend meetup",
+                byDescription.items().get(0).event().title());
+    }
+
+    @Test
+    void clearEndsAtAndTopicOnUpdate() {
+        var e = createSimple(organizer, "With end", inHours(24), null);
+        service.update(organizer, e.event().id(), null, null, null, null, null,
+                inHours(26), false, null, null, null, null, null, null, false,
+                null, false);
+        assertNotNull(service.detail(organizer, e.event().id()).event()
+                .endsAt());
+        var cleared = service.update(organizer, e.event().id(), null, null,
+                null, null, null, null, true, null, null, null, null, null,
+                null, false, null, false);
+        assertEquals(null, cleared.event().endsAt());
+    }
+
+    // =================== notifications ===================
+
+    @Test
+    void rsvpPromotionAndCancellationNotify() {
+        var e = createSimple(organizer, "Notified", inHours(24), 1);
+        service.setRsvp(member, e.event().id(), "GOING");
+        // RSVP confirmation notification to the participant
+        Integer confirm = jdbc.queryForObject("SELECT count(*) FROM"
+                        + " notifications WHERE recipient_user_id=?"
+                        + " AND type='EVENT_UPDATE' AND target_id=?",
+                Integer.class, member, e.event().id());
+        assertTrue(confirm >= 1);
+        // organizer hears about the new attendee
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications"
+                        + " WHERE recipient_user_id=? AND dedupe_key=?",
+                Integer.class, organizer,
+                "event:" + e.event().id() + ":org-rsvp:" + member + ":GOING"));
+
+        // member2 waitlists, member withdraws → promotion notification
+        service.setRsvp(member2, e.event().id(), "GOING");
+        assertEquals("WAITLISTED", rsvpStatusOf(e.event().id(), member2));
+        service.setRsvp(member, e.event().id(), "NOT_GOING");
+        assertEquals("GOING", rsvpStatusOf(e.event().id(), member2));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications"
+                        + " WHERE recipient_user_id=? AND dedupe_key=?",
+                Integer.class, member2,
+                "event:" + e.event().id() + ":promoted:" + member2));
+
+        // cancellation broadcast to active participants (idempotent on retry)
+        service.cancel(organizer, e.event().id(), "Venue lost");
+        Integer cancelled = jdbc.queryForObject("SELECT count(*) FROM"
+                        + " notifications WHERE dedupe_key=?",
+                Integer.class, "event:" + e.event().id() + ":cancelled");
+        assertEquals(1, cancelled);                  // only member2 still active
+        service.cancel(organizer, e.event().id(), "Venue lost");
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications"
+                        + " WHERE dedupe_key=?", Integer.class,
+                "event:" + e.event().id() + ":cancelled"));
+    }
+
+    @Test
+    void reminderWorkerSendsOncePerSchedule() {
+        var e = createSimple(organizer, "Remind me", inHours(12), null);
+        service.setRsvp(member, e.event().id(), "GOING");
+        service.setRsvp(member2, e.event().id(), "INTERESTED");
+        var worker = ctx.getBean(
+                com.diasporum.backend.events.internal.application
+                        .EventReminderWorker.class);
+        worker.sendReminders();
+        long startsAtMillis = jdbc.queryForObject("SELECT"
+                        + " extract(epoch from starts_at)*1000 FROM events"
+                        + " WHERE id=?", Long.class, e.event().id());
+        String key = "event:" + e.event().id() + ":remind:" + member + ":"
+                + startsAtMillis;
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications"
+                        + " WHERE recipient_user_id=? AND type='EVENT_REMINDER'"
+                        + " AND dedupe_key=?", Integer.class, member, key));
+        // second scan is a no-op — the dedupe key absorbs it
+        worker.sendReminders();
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications"
+                        + " WHERE dedupe_key=?", Integer.class, key));
+        // cancelled events leave the window
+        service.cancel(organizer, e.event().id(), null);
+        worker.sendReminders();
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM notifications"
+                        + " WHERE type='EVENT_REMINDER' AND target_id=?",
+                Integer.class, e.event().id()));
     }
 
     // =================== HTTP endpoints ===================

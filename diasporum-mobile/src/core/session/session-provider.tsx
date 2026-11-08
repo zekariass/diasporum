@@ -19,17 +19,17 @@ import React, {
   useEffect,
   useRef,
   useState,
-} from 'react';
+} from "react";
 
-import { useAuth } from '@/core/auth/auth-provider';
-import { createApiClient } from '@/core/api/api-client';
-import { createProfileApi } from '@/features/profile/services/profile-api';
-import { createCommunityApi } from '@/features/communities/services/community-api';
-import { createAuthApi } from '@/features/authentication/services/auth-api';
-import type { SessionState, OnboardingStep } from './session-types';
-import { resolveOnboardingStep } from './session-types';
-import type { UpdateProfileRequest } from '@/features/profile/types/profile-types';
-import { ApiError } from '@/core/api/api-error';
+import { useAuth } from "@/core/auth/auth-provider";
+import { createApiClient } from "@/core/api/api-client";
+import { createProfileApi } from "@/features/profile/services/profile-api";
+import { createCommunityApi } from "@/features/communities/services/community-api";
+import { createAuthApi } from "@/features/authentication/services/auth-api";
+import type { SessionState, OnboardingStep } from "./session-types";
+import { resolveOnboardingStep } from "./session-types";
+import type { UpdateProfileRequest } from "@/features/profile/types/profile-types";
+import { ApiError } from "@/core/api/api-error";
 
 export interface SessionContextValue {
   /** null while loading or when not authenticated */
@@ -70,10 +70,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const apiClient = React.useMemo(
     () => createApiClient({ authContext: auth }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [authState.status === 'authenticated' ? authState.tokens.accessToken : null]
+    [
+      authState.status === "authenticated"
+        ? authState.tokens.accessToken
+        : null,
+    ],
   );
-  const profileApi = React.useMemo(() => createProfileApi(apiClient), [apiClient]);
-  const communityApi = React.useMemo(() => createCommunityApi(apiClient), [apiClient]);
+  const profileApi = React.useMemo(
+    () => createProfileApi(apiClient),
+    [apiClient],
+  );
+  const communityApi = React.useMemo(
+    () => createCommunityApi(apiClient),
+    [apiClient],
+  );
   const authApi = React.useMemo(() => createAuthApi(apiClient), [apiClient]);
 
   const load = useCallback(async () => {
@@ -85,38 +95,45 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // Account identity comes from /api/v1/auth/me — it exists for every
       // authenticated user. /api/v1/me/profile 404s when the account has no
       // profile yet: that is NOT an auth failure, it routes to onboarding.
-      const [meRes, profileRes, membershipsRes, activeRes] = await Promise.all([
-        authApi.me(),
-        profileApi.profile().catch((e: unknown) => {
-          if (ApiError.isApiError(e) && e.httpStatus === 404) return null;
-          throw e;
-        }),
-        communityApi.myCommunities().catch(() => ({ items: [] as never[] })),
-        communityApi.activeCommunity().catch(() => ({ communityId: null })),
-      ]);
+      const [meRes, profileRes, membershipsRes, activeRes, accessRes] =
+        await Promise.all([
+          authApi.me(),
+          profileApi.profile().catch((e: unknown) => {
+            if (ApiError.isApiError(e) && e.httpStatus === 404) return null;
+            throw e;
+          }),
+          communityApi.myCommunities().catch(() => ({ items: [] as never[] })),
+          communityApi.activeCommunity().catch(() => ({ communityId: null })),
+          communityApi.myAccess().catch(() => null),
+        ]);
       setSession({
         me: meRes,
         profile: profileRes,
         memberships: membershipsRes.items,
         activeCommunityId: activeRes.communityId,
+        access: accessRes,
       });
       setError(null);
     } catch (err) {
       const apiErr = err as ApiError;
-      setError(apiErr.userMessage ?? 'Failed to load session. Please try again.');
+      setError(
+        apiErr.userMessage ?? "Failed to load session. Please try again.",
+      );
       setSession(null);
     } finally {
       setIsLoading(false);
       loadingRef.current = false;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authState.status === 'authenticated' ? authState.tokens.accessToken : null]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    authState.status === "authenticated" ? authState.tokens.accessToken : null,
+  ]);
 
   // Load session whenever the access token changes (new login or refresh).
   // Guard: skip when unauthenticated — prevents unnecessary API calls that
   // would fire without a bearer token and 401.
   useEffect(() => {
-    if (authState.status === 'authenticated') {
+    if (authState.status === "authenticated") {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       void load();
     }
@@ -124,7 +141,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   // Reset session when the user becomes unauthenticated.
   useEffect(() => {
-    if (authState.status === 'unauthenticated') {
+    if (authState.status === "unauthenticated") {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSession(null);
       setIsLoading(false);
@@ -142,9 +159,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     async (fields: UpdateProfileRequest) => {
       if (!session) return;
       const updated = await profileApi.updateProfile(fields);
-      setSession((prev) => prev && { ...prev, profile: updated });
+      if ("originCountryId" in fields || "currentCountryId" in fields) {
+        // Country changes reconcile Default membership and active context server-side.
+        await refresh();
+      } else {
+        setSession((prev) => prev && { ...prev, profile: updated });
+      }
     },
-    [session, profileApi]
+    [session, profileApi, refresh],
   );
 
   const joinCommunity = useCallback(
@@ -152,7 +174,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       await communityApi.join(communityId);
       await refresh();
     },
-    [communityApi, refresh]
+    [communityApi, refresh],
   );
 
   const setActiveCommunity = useCallback(
@@ -160,7 +182,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       await communityApi.setActiveCommunity(communityId);
       await refresh();
     },
-    [communityApi, refresh]
+    [communityApi, refresh],
   );
 
   const updatePreferredLanguage = useCallback(
@@ -168,7 +190,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       await profileApi.updateSettings({ preferredLanguageCode: code });
       // Settings update doesn't change profile fields that affect onboarding step
     },
-    [profileApi]
+    [profileApi],
   );
 
   const completeOnboarding = useCallback(async () => {
@@ -178,7 +200,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const onboardingStep = session
     ? resolveOnboardingStep(session)
-    : 'country-origin';
+    : "country-origin";
 
   const value: SessionContextValue = {
     session,
@@ -201,6 +223,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
 export function useSession(): SessionContextValue {
   const ctx = useContext(SessionContext);
-  if (!ctx) throw new Error('useSession must be used within SessionProvider');
+  if (!ctx) throw new Error("useSession must be used within SessionProvider");
   return ctx;
 }

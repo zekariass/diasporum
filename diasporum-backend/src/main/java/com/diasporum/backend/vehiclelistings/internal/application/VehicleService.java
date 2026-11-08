@@ -8,14 +8,18 @@ import com.diasporum.backend.identity.IdentityApi.ProfileSummary;
 import com.diasporum.backend.media.MediaApi;
 import com.diasporum.backend.messaging.MessagingApi;
 import com.diasporum.backend.moderation.ModerationApi;
+import com.diasporum.backend.notifications.NotificationsApi;
 import com.diasporum.backend.social.SocialApi;
 import com.diasporum.backend.taxonomy.TaxonomyApi;
+import com.diasporum.backend.vehiclelistings.internal.domain.VehicleContact;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleCursor;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleInput;
+import com.diasporum.backend.vehiclelistings.internal.domain.VehicleInput.ContactInput;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleListing;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleMedia;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehiclePage;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleQueryResult;
+import com.diasporum.backend.vehiclelistings.internal.domain.VehicleSavedSearch;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleSearch;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleSeller;
 import com.diasporum.backend.vehiclelistings.internal.domain.VehicleView;
@@ -52,6 +56,7 @@ public class VehicleService {
     private static final int DEFAULT_PAGE = 20;
     private static final int MAX_PAGE = 50;
     private static final int MAX_MEDIA = 5;
+    private static final int MAX_SAVED_SEARCHES = 25;
     private static final Set<String> MANAGER_ROLES = Set.of("OWNER", "ADMINISTRATOR",
             "EDITOR", "LISTING_MANAGER");
     private static final Set<String> EDITABLE = Set.of("DRAFT", "PUBLISHED", "PAUSED", "EXPIRED");
@@ -73,6 +78,8 @@ public class VehicleService {
             "POOR", "UNSPECIFIED");
     private static final Set<String> SERVICE_HISTORY = Set.of("FULL", "PARTIAL", "NONE", "UNKNOWN");
     private static final Set<String> SORTS = Set.of("NEWEST", "PRICE_ASC", "PRICE_DESC", "DISTANCE");
+    private static final Set<String> CONTACT_METHODS = Set.of("PHONE", "WHATSAPP", "EMAIL",
+            "MESSAGING");
 
     private final VehicleRepository repository;
     private final IdentityApi identity;
@@ -84,14 +91,15 @@ public class VehicleService {
     private final MessagingApi messaging;
     private final BillingApi billing;
     private final ModerationApi moderation;
+    private final NotificationsApi notifications;
     private final VehiclePolicies policies;
     private final ObjectMapper mapper;
 
     public VehicleService(VehicleRepository repository, IdentityApi identity,
             CommunityApi community, TaxonomyApi taxonomy, MediaApi media,
             BusinessAccountsApi businesses, SocialApi social, MessagingApi messaging,
-            BillingApi billing, ModerationApi moderation, VehiclePolicies policies,
-            ObjectMapper mapper) {
+            BillingApi billing, ModerationApi moderation, NotificationsApi notifications,
+            VehiclePolicies policies, ObjectMapper mapper) {
         this.repository = repository;
         this.identity = identity;
         this.community = community;
@@ -102,6 +110,7 @@ public class VehicleService {
         this.messaging = messaging;
         this.billing = billing;
         this.moderation = moderation;
+        this.notifications = notifications;
         this.policies = policies;
         this.mapper = mapper;
     }
@@ -116,7 +125,8 @@ public class VehicleService {
         UUID addressId = createAddress(actor, country, value.location());
         VehicleListing listing = new VehicleListing(UUID.randomUUID(), country,
                 "COMMUNITY".equals(value.visibilityScope()) ? value.communityId() : null,
-                input.businessAccountId() == null ? actor : null, input.businessAccountId(), actor,
+                input.businessAccountId() == null ? actor : null, input.businessAccountId(),
+                value.businessListingId(), actor,
                 value.visibilityScope(), value.listingPurpose(), value.categoryId(), value.makeId(),
                 value.modelId(), value.variantId(), null, null, null, null, null, value.title().trim(),
                 value.description().trim(), value.modelYear(), value.mileage(), value.mileageUnit(),
@@ -223,18 +233,19 @@ public class VehicleService {
         return page(actor, result, value.sort(), fingerprint, true);
     }
 
-    public VehiclePage owned(UUID actor, UUID businessFilter, String status,
-            String cursor, int size) {
+    public VehiclePage owned(UUID actor, UUID businessFilter, UUID businessListingId,
+            String status, String cursor, int size) {
         int limit = pageSize(size);
         List<UUID> businessIds = manageableBusinessIds(actor);
         String normalizedStatus = status == null ? null : upper(status);
         if (normalizedStatus != null && !Set.of("DRAFT", "PUBLISHED", "PAUSED", "EXPIRED",
                 "SOLD", "RENTED").contains(normalizedStatus)) throw bad("INVALID_VEHICLE_STATUS");
         String fingerprint = fingerprint((businessFilter == null ? "" : businessFilter)
-                + "|" + normalizedStatus);
+                + "|" + normalizedStatus + "|" + (businessListingId == null ? ""
+                : businessListingId));
         VehicleCursor decoded = decode(cursor, "OWNED", fingerprint);
-        var result = repository.owned(actor, businessIds, businessFilter, normalizedStatus,
-                decoded, limit);
+        var result = repository.owned(actor, businessIds, businessFilter, businessListingId,
+                normalizedStatus, decoded, limit);
         return page(actor, result, "OWNED", fingerprint, false);
     }
 
@@ -257,6 +268,45 @@ public class VehicleService {
 
     public void unsave(UUID actor, UUID id) {
         repository.unsave(actor, id);
+    }
+
+    public List<VehicleSavedSearch> savedSearches(UUID actor) {
+        requireActor(actor);
+        return repository.savedSearches(actor).stream()
+                .map(row -> new VehicleSavedSearch(row.id(), actor, row.name(),
+                        readSearch(row.filters()), row.createdAt()))
+                .toList();
+    }
+
+    @Transactional
+    public VehicleSavedSearch saveSearch(UUID actor, String name, VehicleSearch input) {
+        requireActor(actor);
+        VehicleSearch filters = validateSearch(input);
+        String json = mapper.writeValueAsString(filters);
+        var existing = repository.savedSearchIdByFilters(actor, json);
+        if (existing.isPresent()) {
+            return repository.savedSearches(actor).stream()
+                    .filter(row -> row.id().equals(existing.get())).findFirst()
+                    .map(row -> new VehicleSavedSearch(row.id(), actor, row.name(), filters,
+                            row.createdAt()))
+                    .orElseThrow(VehicleService::notFound);
+        }
+        if (repository.countSavedSearches(actor) >= MAX_SAVED_SEARCHES) {
+            throw conflict("SAVED_SEARCH_LIMIT");
+        }
+        String label = name == null || name.isBlank() ? "Saved search" : name.trim();
+        if (label.length() > 160) throw bad("INVALID_SEARCH_NAME");
+        UUID id = repository.insertSavedSearch(actor, label, json);
+        return new VehicleSavedSearch(id, actor, label, filters, Instant.now());
+    }
+
+    public void deleteSavedSearch(UUID actor, UUID id) {
+        requireActor(actor);
+        if (!repository.deleteSavedSearch(actor, id)) throw notFound();
+    }
+
+    private VehicleSearch readSearch(String json) {
+        return mapper.readValue(json, VehicleSearch.class);
     }
 
     @Transactional
@@ -317,8 +367,14 @@ public class VehicleService {
         if (sellerRepresentative == null || !social.canInteract(actorRepresentative, sellerRepresentative)) {
             throw forbidden("VEHICLE_CONTACT_BLOCKED");
         }
-        return messaging.ensureContextConversation(actor, actingBusinessAccountId,
+        UUID conversationId = messaging.ensureContextConversation(actor, actingBusinessAccountId,
                 "VEHICLE_LISTING", id, listing.ownerUserId(), listing.businessAccountId());
+        // Dedupe on the shared conversation: repeated contact attempts never
+        // re-notify the owner for the same thread.
+        notifications.notify(sellerRepresentative, "VEHICLE_ENQUIRY",
+                "New vehicle enquiry", listing.title(), "VEHICLE_LISTING", id,
+                "vehicle-enquiry:" + conversationId);
+        return conversationId;
     }
 
     @Transactional
@@ -376,7 +432,7 @@ public class VehicleService {
         List<VehicleView> items = enrich(actor, result.items(), publicResults, false);
         String next = result.nextSortKey() == null ? null : encode(new VehicleCursor(sort,
                 result.nextSortKey(), result.items().getLast().id(), fingerprint));
-        return new VehiclePage(items, next);
+        return new VehiclePage(items, next, result.totalCount());
     }
 
     private List<VehicleView> enrich(UUID actor, List<VehicleListing> source,
@@ -432,9 +488,27 @@ public class VehicleService {
             views.add(new VehicleView(listing, listing.location(), listingMedia,
                     features.getOrDefault(listing.id(), List.of()),
                     includeSelected ? repository.selectedCommunities(listing.id()) : List.of(),
-                    seller, canManage));
+                    seller,
+                    listing.businessListingId() == null ? null
+                            : repository.businessProfileView(listing.businessListingId()),
+                    includeSelected ? contactView(listing.id(), canManage) : null,
+                    canManage));
         }
         return views;
+    }
+
+    /** Managers see the stored channels as entered; everyone else only flagged fields. */
+    private VehicleContact contactView(UUID listingId, boolean manager) {
+        var row = repository.contactFor(listingId);
+        if (row == null) return null;
+        if (manager) {
+            return new VehicleContact(row.phone(), row.whatsapp(), row.email(),
+                    row.preferredMethod(), row.showPhone(), row.showWhatsapp(), row.showEmail());
+        }
+        return new VehicleContact(row.showPhone() ? row.phone() : null,
+                row.showWhatsapp() ? row.whatsapp() : null,
+                row.showEmail() ? row.email() : null, row.preferredMethod(),
+                null, null, null);
     }
 
     private static boolean activeSeller(VehicleListing listing,
@@ -449,6 +523,11 @@ public class VehicleService {
     }
 
     private void validate(UUID actor, UUID country, VehicleInput v) {
+        if (v.businessListingId() != null) {
+            if (v.businessAccountId() == null) throw bad("BUSINESS_PROFILE_REQUIRES_ACCOUNT");
+            if (!repository.businessProfileOwnedByAccount(v.businessListingId(),
+                    v.businessAccountId())) throw bad("INVALID_BUSINESS_PROFILE");
+        }
         validateAudience(actor, country, v);
         if (!repository.catalogueValid(v.categoryId(), v.makeId(), v.modelId(), v.variantId())) {
             throw bad("INVALID_VEHICLE_CATALOGUE");
@@ -481,8 +560,32 @@ public class VehicleService {
         } else if (v.pricePeriod() != null && !Set.of("DAY", "WEEK", "MONTH")
                 .contains(v.pricePeriod())) throw bad("INVALID_RENT_PRICING");
         validateLocation(v.location());
+        validateContact(v.contact());
         validatePolicy(v);
         validateFeatures(v);
+    }
+
+    private static void validateContact(ContactInput contact) {
+        if (contact == null) return;
+        if (contact.phone() != null) text(contact.phone(), 40, "INVALID_CONTACT_PHONE");
+        if (contact.whatsapp() != null) text(contact.whatsapp(), 40, "INVALID_CONTACT_WHATSAPP");
+        if (contact.email() != null && (contact.email().length() > 320
+                || !contact.email().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"))) {
+            throw bad("INVALID_CONTACT_EMAIL");
+        }
+        String preferred = upper(contact.preferredMethod());
+        if (preferred != null && !CONTACT_METHODS.contains(preferred)) {
+            throw bad("INVALID_CONTACT_METHOD");
+        }
+        // A channel preference requires the channel itself to be provided.
+        if (("PHONE".equals(preferred) && contact.phone() == null)
+                || ("WHATSAPP".equals(preferred) && contact.whatsapp() == null)
+                || ("EMAIL".equals(preferred) && contact.email() == null)) {
+            throw bad("INVALID_CONTACT_METHOD");
+        }
+        if (contact.phone() == null && contact.whatsapp() == null && contact.email() == null) {
+            throw bad("VEHICLE_CONTACT_REQUIRED");
+        }
     }
 
     private void validateAudience(UUID actor, UUID country, VehicleInput v) {
@@ -592,9 +695,18 @@ public class VehicleService {
                 null, null, null, null, null, null, null,
                 null, null, null, null, null, null,
                 null, null, null, null, null, null, null,
-                Map.of(), "NEWEST") : input;
+                Map.of(), "NEWEST", null, null, null, null, null, null) : input;
         String sort = upper(v.sort());
         require(sort, SORTS, "INVALID_VEHICLE_SORT");
+        String mileageUnit = v.mileageUnit() == null ? "KM" : upper(v.mileageUnit());
+        require(mileageUnit, MILEAGE_UNITS, "INVALID_MILEAGE_UNIT");
+        nonnegative(v.mileageMin(), "INVALID_MILEAGE_RANGE");
+        nonnegative(v.mileageMax(), "INVALID_MILEAGE_RANGE");
+        if (v.mileageMin() != null && v.mileageMax() != null && v.mileageMin() > v.mileageMax()) {
+            throw bad("INVALID_MILEAGE_RANGE");
+        }
+        String pricePeriod = trim(v.pricePeriod()) == null ? null : upper(v.pricePeriod());
+        if (pricePeriod != null) require(pricePeriod, Set.of("TOTAL", "DAY", "WEEK", "MONTH"), "INVALID_PRICE_PERIOD");
         String currency = v.currency() == null ? null : upper(v.currency());
         if ((v.priceMin() != null || v.priceMax() != null || sort.startsWith("PRICE"))
                 && (currency == null || !currency.matches("[A-Z]{3}"))) throw bad("CURRENCY_REQUIRED");
@@ -628,12 +740,16 @@ public class VehicleService {
                 v.bodyType() == null ? null : upper(v.bodyType()),
                 v.condition() == null ? null : upper(v.condition()), v.engineSizeMin(), v.engineSizeMax(),
                 v.countryId(), v.communityId(), trim(v.city()), trim(v.region()), v.originLatitude(),
-                v.originLongitude(), v.radiusMeters(), attributes, sort);
+                v.originLongitude(), v.radiusMeters(), attributes, sort,
+                v.driveType() == null ? null : upper(v.driveType()), v.seats(), v.doors(),
+                v.registrationYearMin(), v.registrationYearMax(), v.businessListingId(),
+                mileageUnit, trim(v.colour()) == null ? null : upper(v.colour()), pricePeriod);
     }
 
     private VehicleInput defaults(VehicleInput v) {
         if (v == null) throw bad("INVALID_VEHICLE");
-        return new VehicleInput(v.businessAccountId(), v.visibilityScope() == null ? "COUNTRY"
+        return new VehicleInput(v.businessAccountId(), v.businessListingId(),
+                v.visibilityScope() == null ? "COUNTRY"
                 : upper(v.visibilityScope()), v.communityId(), v.selectedCommunityIds(),
                 upper(v.listingPurpose()), v.categoryId(), v.makeId(), v.modelId(), v.variantId(),
                 v.title(), v.description(), v.modelYear(), v.mileage(),
@@ -648,13 +764,24 @@ public class VehicleService {
                 v.serviceHistory() == null ? null : upper(v.serviceHistory()), v.priceAmount(),
                 upper(v.currencyCode()), v.pricePeriod() == null ? null : upper(v.pricePeriod()),
                 v.rentalDeposit(), v.mileageAllowance(), v.rentalConditions(), v.location(),
-                v.featureIds() == null ? List.of() : v.featureIds(), v.expiresAt(), false, false, Set.of());
+                v.featureIds() == null ? List.of() : v.featureIds(), v.expiresAt(), false, false,
+                Set.of(), normalizeContact(v.contact()), v.clearContact());
+    }
+
+    private static ContactInput normalizeContact(ContactInput contact) {
+        if (contact == null) return null;
+        return new ContactInput(trim(contact.phone()), trim(contact.whatsapp()),
+                trim(contact.email()) == null ? null
+                        : trim(contact.email()).toLowerCase(Locale.ROOT),
+                upper(contact.preferredMethod()), contact.showPhone(), contact.showWhatsapp(),
+                contact.showEmail());
     }
 
     private VehicleInput merge(VehicleListing e, VehicleInput p) {
         if (p == null) throw bad("INVALID_VEHICLE");
         Set<String> clear = p.clearFields();
         return defaults(new VehicleInput(e.businessAccountId(),
+                p.businessListingId() == null ? e.businessListingId() : p.businessListingId(),
                 p.visibilityScope() == null ? e.visibilityScope() : p.visibilityScope(),
                 p.visibilityScope() == null ? e.communityId() : p.communityId(),
                 p.selectedCommunityIds() == null ? repository.selectedCommunities(e.id())
@@ -701,12 +828,21 @@ public class VehicleService {
                         .getOrDefault(e.id(), List.of()).stream().map(f -> f.id()).toList()
                         : p.featureIds(),
                 p.clearExpiry() ? null : p.expiresAt() == null ? e.expiresAt() : p.expiresAt(),
-                p.clearLocation(), p.clearExpiry(), clear));
+                p.clearLocation(), p.clearExpiry(), clear,
+                p.clearContact() ? null : p.contact() == null ? storedContact(e.id()) : p.contact(),
+                false));
+    }
+
+    private ContactInput storedContact(UUID listingId) {
+        var row = repository.contactFor(listingId);
+        return row == null ? null : new ContactInput(row.phone(), row.whatsapp(), row.email(),
+                row.preferredMethod(), row.showPhone(), row.showWhatsapp(), row.showEmail());
     }
 
     private VehicleListing copyForUpdate(VehicleListing e, VehicleInput v, UUID country, UUID address) {
         return new VehicleListing(e.id(), country, "COMMUNITY".equals(v.visibilityScope())
-                ? v.communityId() : null, e.ownerUserId(), e.businessAccountId(), e.createdByUserId(),
+                ? v.communityId() : null, e.ownerUserId(), e.businessAccountId(),
+                v.businessListingId(), e.createdByUserId(),
                 v.visibilityScope(), v.listingPurpose(), v.categoryId(), v.makeId(), v.modelId(),
                 v.variantId(), e.categoryKey(), e.categoryName(), e.makeName(), e.modelName(), e.variantName(),
                 v.title().trim(), v.description().trim(), v.modelYear(), v.mileage(), v.mileageUnit(),
@@ -719,7 +855,8 @@ public class VehicleService {
     }
 
     private VehicleInput inputOf(VehicleListing e) {
-        return defaults(new VehicleInput(e.businessAccountId(), e.visibilityScope(), e.communityId(),
+        return defaults(new VehicleInput(e.businessAccountId(), e.businessListingId(),
+                e.visibilityScope(), e.communityId(),
                 repository.selectedCommunities(e.id()), e.listingPurpose(), e.categoryId(), e.makeId(),
                 e.modelId(), e.variantId(), e.title(), e.description(), e.modelYear(), e.mileage(),
                 e.mileageUnit(), e.fuelType(), e.transmission(), e.driveType(), e.bodyType(),
@@ -729,13 +866,15 @@ public class VehicleService {
                 e.rentalConditions(), e.location() == null ? null : new VehicleInput.LocationInput(
                         e.location().city(), e.location().region(), e.location().formattedAddress(), null, null),
                 repository.featuresFor(List.of(e.id())).getOrDefault(e.id(), List.of()).stream()
-                        .map(f -> f.id()).toList(), e.expiresAt(), false, false, Set.of()));
+                        .map(f -> f.id()).toList(), e.expiresAt(), false, false, Set.of(),
+                storedContact(e.id()), false));
     }
 
     private void replaceJoins(UUID id, VehicleInput value) {
         repository.replaceCommunities(id, "SELECTED_COMMUNITIES".equals(value.visibilityScope())
                 ? value.selectedCommunityIds() : List.of());
         repository.replaceFeatures(id, value.featureIds());
+        repository.replaceContact(id, value.contact());
     }
 
     private UUID createAddress(UUID actor, UUID country, VehicleInput.LocationInput location) {

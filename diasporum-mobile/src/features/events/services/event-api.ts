@@ -34,6 +34,16 @@ export function createEventApi(client: ApiClient) {
         authenticated: true,
       }),
 
+    /** Optional country topic categories for the EVENT module (taxonomy). */
+    topicCategories: (countryId: string) =>
+      client.get<{ items: { id: string; name: string }[] }>(
+        `/api/v1/categories${buildQuery([
+          ["countryId", countryId],
+          ["module", "EVENT"],
+        ])}`,
+        { authenticated: true },
+      ),
+
     // ---- lifecycle ----
     createEvent: (req: CreateEventRequest) =>
       client.post<EventDetail>("/api/v1/events", req, { authenticated: true }),
@@ -77,7 +87,9 @@ export function createEventApi(client: ApiClient) {
           ["communityId", filters.communityId],
           ["scope", filters.scope],
           ["categoryId", filters.categoryId],
+          ["topicCategoryId", filters.topicCategoryId],
           ["mode", filters.mode],
+          ["location", filters.location],
           ["from", filters.from],
           ["to", filters.to],
           ["search", filters.search],

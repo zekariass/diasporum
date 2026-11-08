@@ -12,6 +12,8 @@ import org.springframework.web.ErrorResponseException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
  * Global translation of exceptions to the shared {@link ApiError} envelope.
@@ -36,6 +38,14 @@ public class ApiExceptionHandler {
                 request.getRequestURI(), fields));
     }
 
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    ResponseEntity<ApiError> handleParameterType(MethodArgumentTypeMismatchException ex,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiError.of(
+                400, "VALIDATION_FAILED", "Invalid request parameter",
+                request.getRequestURI(), Map.of(ex.getName(), "Invalid value")));
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     ResponseEntity<ApiError> handleUnreadableBody(HttpMessageNotReadableException ex,
             HttpServletRequest request) {
@@ -48,9 +58,14 @@ public class ApiExceptionHandler {
     ResponseEntity<ApiError> handleErrorResponse(ErrorResponseException ex,
             HttpServletRequest request) {
         HttpStatusCode status = ex.getStatusCode();
+        // ResponseStatusException reasons are this codebase's client-facing machine
+        // codes (e.g. MATCHMAKING_NOT_ELIGIBLE) — forward them instead of flattening
+        // every error to the raw HTTP status string.
+        String reason = ex instanceof ResponseStatusException responseStatus
+                ? responseStatus.getReason() : null;
+        String code = reason == null || reason.isBlank() ? status.toString() : reason;
         return ResponseEntity.status(status).body(ApiError.of(
-                status.value(), status.toString(), status.toString(),
-                request.getRequestURI()));
+                status.value(), code, code, request.getRequestURI()));
     }
 
     @ExceptionHandler(Exception.class)

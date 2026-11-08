@@ -6,11 +6,14 @@
     "@expo/ui": "~58.0.25",
     "@expo/vector-icons": "^15.0.2",
     "@react-native-community/datetimepicker": "9.2.1",
+    "@react-native-community/slider": "^5.2.2",
     "@react-native-google-signin/google-signin": "^17.0.0",
     "ably": "^2.30.0",
     "expo": "~58.0.21",
     "expo-apple-authentication": "~58.0.2",
+    "expo-audio": "~58.0.11",
     "expo-auth-session": "~58.0.16",
+    "expo-calendar": "~58.0.6",
     "expo-constants": "~58.0.14",
     "expo-crypto": "~58.0.7",
     "expo-dev-client": "~58.0.18",
@@ -21,6 +24,7 @@
     "expo-glass-effect": "~58.0.5",
     "expo-image": "~58.0.18",
     "expo-image-picker": "~58.0.10",
+    "expo-linear-gradient": "~58.0.3",
     "expo-linking": "~58.0.15",
     "expo-location": "~58.0.20",
     "expo-router": "~58.0.28",
@@ -68,7 +72,8 @@
     ],
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/src/$1",
-      "^@/assets/(.*)$": "<rootDir>/assets/$1"
+      "^@/assets/(.*)$": "<rootDir>/assets/$1",
+      "^expo-audio$": "<rootDir>/src/__mocks__/expo-audio.ts"
     }
   },
   "private": true

@@ -2,7 +2,7 @@
  * Bottom tab navigator — labeled line icons, filled when
  * active, with a central rounded-square Create action.
  * Home, Rooms, +Create, Messages, Profile.
- * Explore, Reels and Communities remain routable but are not tab items.
+ * Explore and Communities remain routable but are not tab items.
  */
 
 import { useState, type ComponentProps } from "react";
@@ -20,6 +20,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "@/hooks/use-theme";
 import { CreateSheet } from "@/shared/components/create-sheet";
+import { useSession } from "@/core/session/session-provider";
+import { isCommunityModuleEnabled } from "@/core/session/community-capabilities";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 
@@ -55,7 +57,9 @@ function tabIcon(route: keyof typeof TAB_ICONS) {
 export default function TabsLayout() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const { session } = useSession();
   const [createOpen, setCreateOpen] = useState(false);
+  const roomsEnabled = isCommunityModuleEnabled(session?.access, "VOICE_ROOMS");
 
   return (
     <>
@@ -87,7 +91,11 @@ export default function TabsLayout() {
         />
         <Tabs.Screen
           name="rooms"
-          options={{ title: "Rooms", tabBarIcon: tabIcon("rooms") }}
+          options={{
+            title: "Rooms",
+            tabBarIcon: tabIcon("rooms"),
+            href: roomsEnabled ? undefined : null,
+          }}
         />
         <Tabs.Screen
           name="create"
@@ -123,9 +131,8 @@ export default function TabsLayout() {
           name="profile"
           options={{ title: "Profile", tabBarIcon: tabIcon("profile") }}
         />
-        {/* Kept routable, hidden from the tab bar */}
+        {/* Kept routable, hidden from the tab bar. Reels moved to /(app)/reels. */}
         <Tabs.Screen name="explore" options={{ href: null }} />
-        <Tabs.Screen name="reels" options={{ href: null }} />
         <Tabs.Screen name="communities" options={{ href: null }} />
       </Tabs>
       <CreateSheet visible={createOpen} onClose={() => setCreateOpen(false)} />

@@ -1,6 +1,8 @@
 package com.diasporum.backend.businessaccounts;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.diasporum.backend.businessaccounts.internal.application.BusinessAccountAuthorization;
 import com.diasporum.backend.businessaccounts.internal.application.BusinessAccountAuthorization.Capabilities;
@@ -43,5 +45,25 @@ class BusinessAccountAuthorizationTest {
     void unknownRoleHasNoCapabilities() {
         assertEquals(new Capabilities(false, false, false, false, false),
                 BusinessAccountAuthorization.capabilitiesFor("UNKNOWN"));
+    }
+
+    @Test
+    void ownerRanksAboveAdministratorAndStaffRoles() {
+        assertTrue(BusinessAccountAuthorization.rankOf("OWNER")
+                > BusinessAccountAuthorization.rankOf("ADMINISTRATOR"));
+        assertTrue(BusinessAccountAuthorization.rankOf("ADMINISTRATOR")
+                > BusinessAccountAuthorization.rankOf("EDITOR"));
+        assertTrue(BusinessAccountAuthorization.rankOf("EDITOR")
+                > BusinessAccountAuthorization.rankOf("UNKNOWN"));
+    }
+
+    @Test
+    void ownerRoleIsNeverInvitable() {
+        assertTrue(BusinessAccountAuthorization.invitable("ADMINISTRATOR"));
+        assertTrue(BusinessAccountAuthorization.invitable("EDITOR"));
+        assertTrue(BusinessAccountAuthorization.invitable("LISTING_MANAGER"));
+        assertTrue(BusinessAccountAuthorization.invitable("BILLING_MANAGER"));
+        assertFalse(BusinessAccountAuthorization.invitable("OWNER"));
+        assertFalse(BusinessAccountAuthorization.invitable("UNKNOWN"));
     }
 }

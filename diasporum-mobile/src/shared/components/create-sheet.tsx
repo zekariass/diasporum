@@ -16,6 +16,11 @@ import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
 import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
+import { useSession } from "@/core/session/session-provider";
+import {
+  FEATURE_MODULE_KEYS,
+  isCommunityModuleEnabled,
+} from "@/core/session/community-capabilities";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 
@@ -111,6 +116,28 @@ export function CreateSheet({ visible, onClose }: Props) {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { session } = useSession();
+  const optionFeatures: Record<string, string> = {
+    post: "feed",
+    reel: "reels",
+    property: "property",
+    vehicle: "vehicle",
+    "spare-bag": "spare-bag",
+    "service-request": "services",
+    event: "event",
+    job: "jobs",
+    "community-help": "help",
+  };
+  const options = OPTIONS.filter((option) => {
+    const moduleKey = FEATURE_MODULE_KEYS[optionFeatures[option.key]];
+    return (
+      moduleKey == null || isCommunityModuleEnabled(session?.access, moduleKey)
+    );
+  });
+  const businessEnabled = isCommunityModuleEnabled(
+    session?.access,
+    "BUSINESS_DIRECTORY",
+  );
   const [translateY] = useState(
     () => new Animated.Value(Dimensions.get("window").height),
   );
@@ -209,43 +236,51 @@ export function CreateSheet({ visible, onClose }: Props) {
             </Pressable>
           </View>
 
-          <Pressable
-            onPress={() => close(() => router.push("/(app)/business" as never))}
-            accessibilityRole="button"
-            accessibilityLabel="Go to Business Workspace"
-            style={({ pressed }) => [
-              styles.workspaceLink,
-              {
-                backgroundColor: theme.primarySurface,
-                borderColor: theme.border,
-              },
-              pressed && styles.optionPressed,
-            ]}
-          >
-            <View
-              style={[
-                styles.workspaceIcon,
-                { backgroundColor: `${theme.primary}18` },
+          {businessEnabled ? (
+            <Pressable
+              onPress={() =>
+                close(() => router.push("/(app)/business" as never))
+              }
+              accessibilityRole="button"
+              accessibilityLabel="Go to Business Workspace"
+              style={({ pressed }) => [
+                styles.workspaceLink,
+                {
+                  backgroundColor: theme.primarySurface,
+                  borderColor: theme.border,
+                },
+                pressed && styles.optionPressed,
               ]}
             >
+              <View
+                style={[
+                  styles.workspaceIcon,
+                  { backgroundColor: `${theme.primary}18` },
+                ]}
+              >
+                <Ionicons
+                  name="briefcase-outline"
+                  size={17}
+                  color={theme.primary}
+                />
+              </View>
+              <ThemedText style={styles.workspaceLinkText}>
+                Business Workspace
+              </ThemedText>
               <Ionicons
-                name="briefcase-outline"
-                size={17}
+                name="chevron-forward"
+                size={16}
                 color={theme.primary}
               />
-            </View>
-            <ThemedText style={styles.workspaceLinkText}>
-              Business Workspace
-            </ThemedText>
-            <Ionicons name="chevron-forward" size={16} color={theme.primary} />
-          </Pressable>
+            </Pressable>
+          ) : null}
 
           <ScrollView
             bounces={false}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.grid}
           >
-            {OPTIONS.map((option) => {
+            {options.map((option) => {
               const available = Boolean(option.route);
               return (
                 <Pressable

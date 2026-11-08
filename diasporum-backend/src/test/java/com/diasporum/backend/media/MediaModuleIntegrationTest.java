@@ -9,7 +9,6 @@ import com.diasporum.backend.security.DiasporumUserPrincipal;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import java.util.List;
 import java.util.UUID;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -59,6 +58,7 @@ class MediaModuleIntegrationTest {
         @Primary
         StorageClient storageClient() {
             var objects = new ConcurrentHashMap<String, StorageClient.ObjectMeta>();
+            var bytes = new ConcurrentHashMap<String, byte[]>();
             return new StorageClient() {
                 public String presignPut(String k, String ct, java.time.Duration t) {
                     objects.put(k, new StorageClient.ObjectMeta(1024, ct));
@@ -70,8 +70,16 @@ class MediaModuleIntegrationTest {
                 public java.util.Optional<StorageClient.ObjectMeta> head(String k) {
                     return java.util.Optional.ofNullable(objects.get(k));
                 }
+                public java.util.Optional<byte[]> get(String k) {
+                    return java.util.Optional.ofNullable(bytes.get(k));
+                }
+                public void put(String k, byte[] data, String contentType) {
+                    bytes.put(k, data);
+                    objects.put(k, new StorageClient.ObjectMeta(data.length, contentType));
+                }
                 public void delete(String k) {
                     objects.remove(k);
+                    bytes.remove(k);
                 }
             };
         }
@@ -128,6 +136,36 @@ class MediaModuleIntegrationTest {
         // other user cannot complete it
         assertThrows(ResponseStatusException.class,
                 () -> service.complete(user("m2"), r.assetId(), null));
+    }
+
+    @Test
+    void feedAudioLifecycleAndDuration() {
+        var r = service.initiate(u1, "FEED_AUDIO", "audio/mpeg", 500_000L,
+                12_000L);
+        var a = service.complete(u1, r.assetId(), 500_000L, 12_000L);
+        assertEquals("READY", a.status());
+        assertEquals("FEED_AUDIO", a.purpose());
+        assertEquals(12_000L, a.durationMs());
+        assertEquals(12_000L, api.asset(r.assetId()).orElseThrow().durationMs());
+        assertTrue(api.validateForAttach(r.assetId(), u1, "FEED_AUDIO"));
+    }
+
+    @Test
+    void feedAudioValidation() {
+        assertThrows(ResponseStatusException.class,               // bad mime
+                () -> service.initiate(u1, "FEED_AUDIO",
+                        "audio/x-ms-wma", 1000L));
+        assertThrows(ResponseStatusException.class,               // over 300s cap
+                () -> service.initiate(u1, "FEED_AUDIO", "audio/mpeg", 1000L,
+                        301_000L));
+        // over-cap duration declared at complete rejects the upload
+        var r = service.initiate(u1, "FEED_AUDIO", "audio/mpeg", 1000L);
+        assertThrows(ResponseStatusException.class,
+                () -> service.complete(u1, r.assetId(), 1000L, 999_000L));
+        // declared at initiate, complete without duration keeps it
+        var r2 = service.initiate(u1, "FEED_AUDIO", "audio/mpeg", 1000L, 5_000L);
+        assertEquals(5_000L, service.complete(u1, r2.assetId(), null)
+                .durationMs());
     }
 
     @Test

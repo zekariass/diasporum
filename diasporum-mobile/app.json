@@ -46,6 +46,14 @@
         {
           "locationWhenInUsePermission": "Allow Diasporum to use your approximate location for nearby vehicle discovery and listing search."
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow Diasporum to record voice messages for your posts.",
+          "enableBackgroundPlayback": false,
+          "enableBackgroundRecording": false
+        }
       ]
     ],
     "experiments": {

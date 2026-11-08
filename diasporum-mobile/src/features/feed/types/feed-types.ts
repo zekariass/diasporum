@@ -15,18 +15,21 @@ export interface ProfileSummary {
 
 // ---- FeedItem (FeedService.FeedItem — JSON field order follows record order) ----
 export interface FeedItem {
-  itemId: string;              // "FEED_POST:<uuid>"
-  contentType: PostType;       // GENERAL | ANNOUNCEMENT | POLL | REEL | COMMUNITY_HELP
-  sourceModule: string;        // "feed"
-  sourceId: string;            // post UUID
+  itemId: string; // "FEED_POST:<uuid>"
+  contentType: PostType; // GENERAL | ANNOUNCEMENT | POLL | REEL | COMMUNITY_HELP
+  sourceModule: string; // "feed"
+  sourceId: string; // post UUID
   author: ProfileSummary | null; // resolved server-side via profileSummaries
   communityId: string;
-  publishedAt: string;         // ISO 8601
+  publishedAt: string; // ISO 8601
   title: string | null;
   body: string | null;
   mediaIds: string[];
+  media: MediaAttachment[]; // FeedService.MediaAttachment — kind-aware
+  tags: string[]; // hashtag display names, post order
   commentCount: number;
   reactionCount: number;
+  shareCount: number;
   viewerReaction: ReactionKey | null;
   viewed: boolean;
   saved: boolean;
@@ -49,6 +52,13 @@ export interface FeedPage {
   nextCursor: string | null;
 }
 
+/** GET /api/v1/feed/mine — own posts plus a total count for profile stats. */
+export interface MinePage {
+  items: FeedItem[];
+  nextCursor: string | null;
+  total: number;
+}
+
 /** TaxonomyApi.CategoryView — country practical category for a module. */
 export interface CategoryView {
   id: string;
@@ -69,6 +79,31 @@ export interface CommunityDetail {
   active: boolean;
 }
 
+/** FeedService.MediaAttachment — attachment metadata for kind-aware render. */
+export interface MediaAttachment {
+  id: string;
+  purpose: string; // FEED_IMAGE | FEED_VIDEO | FEED_AUDIO | DOCUMENT
+  mimeType: string | null;
+  durationMs: number | null;
+  sizeBytes: number | null;
+}
+
+/** FeedService.TagView — suggestion row. */
+export interface TagView {
+  tagKey: string;
+  displayName: string;
+  postCount: number;
+}
+
+/** FeedService.PostDetail — GET /feed/posts/{id}. */
+export interface PostDetail {
+  post: PostRow;
+  tags: string[];
+  media: MediaAttachment[];
+  viewerReaction: ReactionKey | null;
+  saved: boolean;
+}
+
 export interface PostRow {
   id: string;
   authorId: string;
@@ -84,6 +119,7 @@ export interface PostRow {
   commentsEnabled: boolean;
   commentCount: number;
   reactionCount: number;
+  shareCount: number;
   publishedAt: string;
   createdAt: string;
 }
@@ -102,13 +138,18 @@ export interface CommentPage {
   nextCursor: string | null;
 }
 
-export type PostType = 'GENERAL' | 'ANNOUNCEMENT' | 'POLL' | 'REEL' | 'COMMUNITY_HELP';
-export type ReactionKey = 'LIKE' | 'LOVE' | 'HELPFUL' | 'INSIGHTFUL' | 'THANKS';
-export type FeedMode = 'FOR_YOU' | 'LATEST';
+export type PostType =
+  | "GENERAL"
+  | "ANNOUNCEMENT"
+  | "POLL"
+  | "REEL"
+  | "COMMUNITY_HELP";
+export type ReactionKey = "LIKE" | "LOVE" | "HELPFUL" | "INSIGHTFUL" | "THANKS";
+export type FeedMode = "FOR_YOU" | "LATEST";
 /** Reels screen mode — distinct from the timeline FOR_YOU/LATEST modes. */
-export type ReelsMode = 'community' | 'following';
-export type HelpKind = 'REQUEST' | 'OFFER';
-export type HelpStatus = 'OPEN' | 'PAUSED' | 'RESOLVED' | 'CLOSED' | 'EXPIRED';
+export type ReelsMode = "community" | "following";
+export type HelpKind = "REQUEST" | "OFFER";
+export type HelpStatus = "OPEN" | "PAUSED" | "RESOLVED" | "CLOSED" | "EXPIRED";
 
 export interface CreatePostRequest {
   communityId: string;
@@ -119,6 +160,8 @@ export interface CreatePostRequest {
   visibilityScope?: string;
   categoryId?: string;
   mediaIds?: string[];
+  tags?: string[];
+  idempotencyKey?: string;
 }
 
 export interface CreateHelpPostRequest {
@@ -128,12 +171,26 @@ export interface CreateHelpPostRequest {
   title?: string;
   body?: string;
   expiresAt?: string;
+  mediaIds?: string[];
+  tags?: string[];
+  idempotencyKey?: string;
 }
 
-export type PollStatus = 'ACTIVE' | 'EXPIRED' | 'CLOSED';
-export type PollResultsVisibility = 'IMMEDIATE' | 'AFTER_VOTING' | 'AFTER_CLOSE';
-export type ReportReason = 'SPAM' | 'SCAM' | 'HARASSMENT' | 'HATE'
-  | 'SEXUAL_MISCONDUCT' | 'MISINFORMATION' | 'IMPERSONATION' | 'PRIVACY' | 'OTHER';
+export type PollStatus = "ACTIVE" | "EXPIRED" | "CLOSED";
+export type PollResultsVisibility =
+  | "IMMEDIATE"
+  | "AFTER_VOTING"
+  | "AFTER_CLOSE";
+export type ReportReason =
+  | "SPAM"
+  | "SCAM"
+  | "HARASSMENT"
+  | "HATE"
+  | "SEXUAL_MISCONDUCT"
+  | "MISINFORMATION"
+  | "IMPERSONATION"
+  | "PRIVACY"
+  | "OTHER";
 
 export interface PollOption {
   id: string;

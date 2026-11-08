@@ -188,6 +188,7 @@ public class CommunityService {
 
     @Transactional
     public void leave(UUID userId, UUID communityId) {
+        requireNotDefault(userId, communityId);
         var m = membershipOf(userId, communityId).orElse(null);
         if (m == null || "LEFT".equals(m.status())) {
             return;                                 // idempotent no-op
@@ -214,6 +215,11 @@ public class CommunityService {
             return;
         }
         var community = requireCommunity(communityId);
+        var profile = requireUser(userId);
+        if (!community.originCountryId().equals(profile.originCountryId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "COMMUNITY_ORIGIN_MISMATCH");
+        }
         if (!isActiveMember(userId, community.id())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "NOT_A_MEMBER");
@@ -273,6 +279,7 @@ public class CommunityService {
      * The last COMMUNITY_ADMIN cannot be removed. */
     @Transactional
     public void removeMember(UUID actorId, UUID communityId, UUID targetId) {
+        requireNotDefault(targetId, communityId);
         if (!isCommunityAdmin(actorId, communityId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "ADMIN_REQUIRED");
         }
@@ -321,6 +328,13 @@ public class CommunityService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_ROLE");
         }
         return membershipOf(targetId, communityId).orElseThrow();
+    }
+
+    private void requireNotDefault(UUID userId, UUID communityId) {
+        identity.defaultCommunityId(userId).filter(communityId::equals).ifPresent(id -> {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "DEFAULT_COMMUNITY_REQUIRED");
+        });
     }
 
     private int countByRole(UUID communityId, String role) {

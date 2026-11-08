@@ -117,10 +117,29 @@ export default function SecurityScreen() {
       },
     ]);
 
+  const signOut = () =>
+    Alert.alert('Sign out', 'Sign out of Diasporum on this device?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign out', style: 'destructive', onPress: () => void auth.logout() },
+    ]);
+
   const logoutAll = () =>
     Alert.alert('Sign out everywhere', 'All sessions will be revoked.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out all', style: 'destructive', onPress: () => void auth.logout() },
+      {
+        text: 'Sign out all', style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setBusy('all'); setError(null);
+            try {
+              await api.logoutAll();
+              void auth.logout();
+            } catch (e) {
+              setError(msg(e, 'Could not sign out everywhere.'));
+            } finally { setBusy(null); }
+          })();
+        },
+      },
     ]);
 
   const currentSid = auth.authState.status === 'authenticated'
@@ -180,8 +199,11 @@ export default function SecurityScreen() {
             }
           />
 
+          <ThemedText type="subtitle">Sign out</ThemedText>
+          <PrimaryButton label="Sign out" variant="danger" onPress={signOut}
+            disabled={busy !== null} />
           <PrimaryButton label="Sign out of all sessions" variant="secondary"
-            onPress={logoutAll} disabled={busy !== null} />
+            onPress={logoutAll} loading={busy === 'all'} disabled={busy !== null} />
         </ScrollView>
       </SafeAreaView>
     </ThemedView>

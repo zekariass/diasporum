@@ -96,6 +96,10 @@ class ServiceMarketplaceModuleIntegrationTest {
                 + "billing_usage_records,billing_subscriptions,business_account_audit_events,"
                 + "business_account_members,business_accounts,global_user_roles,external_identities,"
                 + "profiles,users,addresses,countries CASCADE");
+        jdbc.update("UPDATE billing_plan_entitlements SET enabled=false,quantity_limit=NULL,"
+                + "reset_period=NULL WHERE feature_id IN (SELECT id FROM billing_features"
+                + " WHERE feature_key IN ('SERVICE_JOB_POST','SERVICE_LEAD_ACCESS',"
+                + "'SERVICE_QUOTE_SEND'))");
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES('Germany','DE','DEU')");
         country = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='DE'", UUID.class);
         jdbc.update("INSERT INTO service_categories(category_key,sort_order) VALUES('TEST_SERVICE',1)");

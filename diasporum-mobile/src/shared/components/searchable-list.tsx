@@ -11,6 +11,8 @@ import {
   StyleSheet,
   TextInput,
   View,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -40,6 +42,8 @@ interface SearchableListProps {
   searchPlaceholder?: string;
   emptyLabel?: string;
   renderItem?: (item: SearchableListItem) => React.ReactNode;
+  /** Applied to the FlatList's outer view — use for hard bounds (e.g. maxHeight) inside sheets. */
+  listStyle?: StyleProp<ViewStyle>;
 }
 
 export function SearchableList({
@@ -54,6 +58,7 @@ export function SearchableList({
   searchPlaceholder = 'Search…',
   emptyLabel = 'No results found',
   renderItem,
+  listStyle,
 }: SearchableListProps) {
   const theme = useTheme();
   const [query, setQuery] = useState('');
@@ -98,6 +103,8 @@ export function SearchableList({
         keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        style={listStyle}
+        contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <ThemedText style={styles.empty} themeColor="textSecondary">
             {emptyLabel}
@@ -163,6 +170,7 @@ function DefaultRow({
 
 const styles = StyleSheet.create({
   container: { flex: 1, gap: Spacing.two },
+  listContent: { paddingBottom: Spacing.five },
   searchWrap: {
     borderWidth: 1,
     borderRadius: BorderRadius.lg,

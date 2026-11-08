@@ -3,6 +3,7 @@ package com.diasporum.backend.propertylistings.internal.api.rest;
 import com.diasporum.backend.propertylistings.internal.application.PropertyDiscoveryService;
 import com.diasporum.backend.propertylistings.internal.application.PropertyEngagementService;
 import com.diasporum.backend.propertylistings.internal.application.PropertyLifecycleService;
+import com.diasporum.backend.propertylistings.internal.application.PropertyModels.BrowseOptions;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.PropertyCommand;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.PropertyDetail;
 import com.diasporum.backend.propertylistings.internal.application.PropertyModels.PropertyPage;
@@ -115,6 +116,18 @@ public class PropertyController {
         return lifecycle.close(principal.userId(), propertyId);
     }
 
+    @PostMapping("/properties/{propertyId}/sold")
+    public PropertyDetail sold(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID propertyId) {
+        return lifecycle.sold(principal.userId(), propertyId);
+    }
+
+    @PostMapping("/properties/{propertyId}/rented")
+    public PropertyDetail rented(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID propertyId) {
+        return lifecycle.rented(principal.userId(), propertyId);
+    }
+
     @GetMapping("/properties")
     public PropertyPage discover(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @RequestParam(required = false) UUID countryId,
@@ -132,21 +145,41 @@ public class PropertyController {
             @RequestParam(required = false) Double latitude,
             @RequestParam(required = false) Double longitude,
             @RequestParam(required = false) Double radiusKm,
+            @RequestParam(defaultValue = "NEWEST") String sort,
+            @RequestParam(required = false) String currencyCode,
+            @RequestParam(required = false) String pricePeriod,
+            @RequestParam(required = false) BigDecimal minFloorArea,
+            @RequestParam(required = false) BigDecimal maxFloorArea,
+            @RequestParam(required = false) String floorAreaUnit,
+            @RequestParam(required = false) java.time.LocalDate availableBy,
+            @RequestParam(required = false) BigDecimal maxDeposit,
+            @RequestParam(required = false) Boolean billsIncluded,
+            @RequestParam(required = false) Integer maxTenancyMonths,
+            @RequestParam(required = false) String tenure,
+            @RequestParam(required = false) String conditionKey,
+            @RequestParam(required = false) Integer maxBathrooms,
+            @RequestParam(required = false) UUID businessListingId,
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int size) {
         var criteria = new SearchCriteria(countryId, communityId, propertyTypeId,
                 listingPurpose, minPrice, maxPrice, minBedrooms, maxBedrooms, bathrooms,
-                furnishedStatus, city, search, latitude, longitude, radiusKm);
-        return discovery.discover(principal.userId(), criteria, cursor, size);
+                furnishedStatus, city, search, latitude, longitude, radiusKm,
+                businessListingId);
+        return discovery.discover(principal.userId(), criteria, cursor, size,
+                new BrowseOptions(sort, currencyCode, pricePeriod, minFloorArea, maxFloorArea,
+                        floorAreaUnit, availableBy, maxDeposit, billsIncluded, maxTenancyMonths,
+                        tenure, conditionKey, maxBathrooms));
     }
 
     @GetMapping("/me/properties")
     public PropertyPage mine(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) UUID businessAccountId,
+            @RequestParam(required = false) UUID businessListingId,
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int size) {
-        return discovery.mine(principal.userId(), status, businessAccountId, cursor, size);
+        return discovery.mine(principal.userId(), status, businessAccountId,
+                businessListingId, cursor, size);
     }
 
     @GetMapping("/me/properties/saved")

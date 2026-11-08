@@ -97,6 +97,40 @@ class MessagingRealtimeIntegrationTest {
                 null, null, null);
     }
 
+    private UUID matchedPair() {
+        for (UUID user : List.of(u1, u2)) {
+            jdbc.update("UPDATE users SET deleted_at=NULL WHERE id=?", user);
+            jdbc.update("UPDATE profiles SET date_of_birth='1990-01-01',"
+                    + "age_eligibility_confirmed_at=now() WHERE id=?", user);
+            jdbc.update("UPDATE user_privacy_settings SET allow_matchmaking_discovery=true"
+                    + " WHERE user_id=?", user);
+            jdbc.update("INSERT INTO matchmaking_profiles(user_id,gender_key,status,"
+                    + "name_visibility,photo_visibility) VALUES(?,'WOMAN','DRAFT',"
+                    + "'HIDDEN','HIDDEN')", user);
+            jdbc.update("INSERT INTO matchmaking_preferences(user_id) VALUES(?)", user);
+            jdbc.update("UPDATE matchmaking_profiles SET status='ACTIVE' WHERE user_id=?",
+                    user);
+        }
+        jdbc.update("INSERT INTO matchmaking_swipes(swiper_user_id,target_user_id,action)"
+                + " VALUES(?,?,'LIKE'),(?,?,'LIKE')", u1, u2, u2, u1);
+        return jdbc.queryForObject("INSERT INTO matchmaking_matches(user_a_id,user_b_id)"
+                + " VALUES(least(?::uuid,?::uuid),greatest(?::uuid,?::uuid)) RETURNING id",
+                UUID.class, u1, u2, u1, u2);
+    }
+
+    private void matchEvent(UUID recipient, String type, UUID matchId) {
+        jdbc.update("INSERT INTO outbox_events(aggregate_type,aggregate_id,event_type,"
+                + "destination,payload,event_dedupe_key) VALUES('USER',?,?,'ABLY',"
+                + "jsonb_build_object('matchId',?::uuid),?)", recipient, type, matchId,
+                type.toLowerCase() + ":" + matchId + ":" + recipient);
+    }
+
+    private void closeMatch(UUID matchId) {
+        jdbc.update("UPDATE matchmaking_matches SET status='UNMATCHED',closed_at=now(),"
+                + "closed_by=?,close_reason='Test closure' WHERE id=? AND status='MATCHED'",
+                u1, matchId);
+    }
+
     private void allowAll(UUID user) {
         jdbc.update("UPDATE user_privacy_settings SET dm_permission='EVERYONE'"
                 + " WHERE user_id=?", user);
@@ -112,8 +146,8 @@ class MessagingRealtimeIntegrationTest {
     void clean() {
         Mockito.reset(ably);
         for (String t : new String[]{"direct_messages", "message_requests",
-                "direct_conversations", "outbox_events",
-                "user_follows", "user_blocks", "user_mutes",
+                "direct_conversations", "outbox_events", "matchmaking_matches",
+                "matchmaking_profiles", "user_follows", "user_blocks", "user_mutes",
                 "user_privacy_settings", "external_identities", "profiles"}) {
             jdbc.update("DELETE FROM " + t);
         }
@@ -332,6 +366,79 @@ class MessagingRealtimeIntegrationTest {
                 anyMap());
         verify(ably).publish(eq("user:" + u2), eq("MESSAGE_CREATED"),
                 anyMap());
+    }
+
+    // =================== matchmaking delivery-time authorization ===================
+
+    @Test
+    void currentMatchEventsReachOnlyCurrentParticipants() {
+        when(ably.isUsable()).thenReturn(true);
+        UUID matchId = matchedPair();
+        matchEvent(u1, "MATCHMAKING_MATCHED", matchId);
+        matchEvent(u2, "MATCHMAKING_MATCHED", matchId);
+        matchEvent(u3, "MATCHMAKING_MATCHED", matchId);
+        dispatcher.dispatch();
+        verify(ably).publish(eq("user:" + u1), eq("MATCHMAKING_MATCHED"), anyMap());
+        verify(ably).publish(eq("user:" + u2), eq("MATCHMAKING_MATCHED"), anyMap());
+        verify(ably, never()).publish(eq("user:" + u3), anyString(), anyMap());
+    }
+
+    @Test
+    void staleMatchEventsAreConsumedAndUnmatchInvalidationStillArrives() {
+        when(ably.isUsable()).thenReturn(true);
+        UUID matchId = matchedPair();
+        matchEvent(u1, "MATCHMAKING_MATCHED", matchId);
+        matchEvent(u2, "MATCHMAKING_MATCHED", matchId);
+        closeMatch(matchId);
+        matchEvent(u1, "MATCHMAKING_UNMATCHED", matchId);
+        matchEvent(u2, "MATCHMAKING_UNMATCHED", matchId);
+        dispatcher.dispatch();
+        verify(ably, never()).publish(anyString(), eq("MATCHMAKING_MATCHED"), anyMap());
+        verify(ably).publish(eq("user:" + u1), eq("MATCHMAKING_UNMATCHED"), anyMap());
+        verify(ably).publish(eq("user:" + u2), eq("MATCHMAKING_UNMATCHED"), anyMap());
+        assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM outbox_events"
+                + " WHERE published_at IS NOT NULL", Integer.class));
+    }
+
+    @Test
+    void blockedPairReceivesNeitherStaleMatchNorQueuedMessageEvents() {
+        when(ably.isUsable()).thenReturn(true);
+        UUID matchId = matchedPair();
+        allowAll(u2);
+        var conversation = service.createConversation(u1, general(u2));
+        jdbc.update("UPDATE direct_conversations SET matchmaking_match_id=? WHERE id=?",
+                matchId, conversation.id());
+        service.sendMessage(u1, conversation.id(), "queued before block", null, null);
+        matchEvent(u1, "MATCHMAKING_MATCHED", matchId);
+        matchEvent(u2, "MATCHMAKING_MATCHED", matchId);
+        jdbc.update("INSERT INTO user_blocks(blocker_user_id,blocked_user_id) VALUES(?,?)",
+                u1, u2);
+        closeMatch(matchId);
+        dispatcher.dispatch();
+        verify(ably, never()).publish(anyString(), anyString(), anyMap());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM outbox_events"
+                + " WHERE published_at IS NULL", Integer.class));
+    }
+
+    @Test
+    void closedMatchConsumesStaleMessagesButPublishesClosureInvalidation() {
+        when(ably.isUsable()).thenReturn(true);
+        UUID matchId = matchedPair();
+        allowAll(u2);
+        var conversation = service.createConversation(u1, general(u2));
+        jdbc.update("UPDATE direct_conversations SET matchmaking_match_id=? WHERE id=?",
+                matchId, conversation.id());
+        service.sendMessage(u1, conversation.id(), "queued before unmatch", null, null);
+        closeMatch(matchId);
+        jdbc.update("INSERT INTO outbox_events(aggregate_type,aggregate_id,event_type,"
+                + "destination,payload,event_dedupe_key) VALUES('DIRECT_CONVERSATION',?,"
+                + "'CONVERSATION_UPDATED','ABLY',jsonb_build_object('conversationId',?::uuid,"
+                + "'status','CLOSED'),?)", conversation.id(), conversation.id(),
+                "test-closed:" + conversation.id());
+        dispatcher.dispatch();
+        verify(ably, never()).publish(anyString(), eq("MESSAGE_CREATED"), anyMap());
+        verify(ably).publish(eq("user:" + u1), eq("CONVERSATION_UPDATED"), anyMap());
+        verify(ably).publish(eq("user:" + u2), eq("CONVERSATION_UPDATED"), anyMap());
     }
 
     // =================== token auth ===================

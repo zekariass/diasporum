@@ -29,6 +29,7 @@ import { ImageBubble } from '../components/image-bubble';
 import { DocumentBubble } from '../components/document-bubble';
 import { AttachmentPreviewBar } from '../components/attachment-preview-bar';
 import type { AttachmentView, MessageView } from '../types/messaging-types';
+import { SpareBagContextHeader } from '@/features/spare-bag/components/spare-bag-context-header';
 
 interface BubbleProps {
   item: ThreadItem;
@@ -185,6 +186,12 @@ export default function ConversationScreen() {
           </View>
         </View>
 
+        {conversation?.contextType === 'SPARE_BAG_CONTACT' && conversation.contextId ? (
+          <SpareBagContextHeader client={apiClient} contactId={conversation.contextId} />
+        ) : null}
+
+        <KeyboardAvoidingView style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0}>
         {loading ? (
           <View style={styles.center}><ActivityIndicator color={theme.primary} /></View>
         ) : error && items.length === 0 ? (
@@ -196,6 +203,7 @@ export default function ConversationScreen() {
           <FlatList
             data={items}
             inverted
+            style={styles.flex}
             keyExtractor={(item) => item.kind === 'server' ? item.message.id : item.pending.localId}
             renderItem={({ item }) => (
               <Pressable
@@ -229,12 +237,11 @@ export default function ConversationScreen() {
           />
         )}
 
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-          <AttachmentPreviewBar
-            attachments={atts.pending}
-            onRemove={atts.removeAttachment}
-            onRetry={atts.retryAttachment}
-          />
+        <AttachmentPreviewBar
+          attachments={atts.pending}
+          onRemove={atts.removeAttachment}
+          onRetry={atts.retryAttachment}
+        />
           {canSend ? (
             <View style={[styles.composer, { borderTopColor: theme.border }]}>
               <Pressable onPress={atts.addImageFromGallery} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Add image">
@@ -283,6 +290,7 @@ export default function ConversationScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   safeArea: { flex: 1 },
+  flex: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.two, paddingVertical: Spacing.two, borderBottomWidth: StyleSheet.hairlineWidth },
   backBtn: { padding: Spacing.two },
   headerBody: { flex: 1 },

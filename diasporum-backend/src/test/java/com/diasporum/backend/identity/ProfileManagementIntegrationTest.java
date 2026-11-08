@@ -12,6 +12,9 @@ import java.util.List;
 import java.util.UUID;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -206,6 +209,79 @@ class ProfileManagementIntegrationTest {
         var list = taxonomy.activeCountries();
         assertTrue(list.stream().anyMatch(c -> "Testland".equals(c.name())));
         assertTrue(list.stream().noneMatch(c -> "InactiveLand".equals(c.name())));
+    }
+
+    @Test
+    void compatibilityUsesSharedRelationshipsAndPreservesProficiency() throws Exception {
+        UUID id = user("sub-compatibility");
+        UUID interest = jdbc.queryForObject("INSERT INTO interests(interest_key,display_name,is_active)"
+                + " VALUES('profile-test-interest','Profile test interest',true)"
+                + " ON CONFLICT(interest_key) DO UPDATE SET is_active=true RETURNING id",
+                UUID.class);
+        UUID language = jdbc.queryForObject("SELECT id FROM languages WHERE is_active LIMIT 1", UUID.class);
+        profiles.replaceCompatibility(id, List.of(interest), List.of(language));
+        jdbc.update("UPDATE user_languages SET proficiency='NATIVE' WHERE user_id=?", id);
+        profiles.replaceCompatibility(id, List.of(interest, interest), List.of(language));
+        assertEquals("NATIVE", jdbc.queryForObject("SELECT proficiency FROM user_languages WHERE user_id=?", String.class, id));
+        assertEquals(List.of(interest), profiles.compatibility(id).interestIds());
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> profiles.replaceCompatibility(id, List.of(), List.of(UUID.randomUUID())));
+        assertEquals(List.of(interest), profiles.compatibility(id).interestIds());
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> profiles.replaceCompatibility(id, java.util.Arrays.asList((UUID) null), List.of()));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> profiles.replaceCompatibility(id, java.util.Collections.nCopies(31, interest), List.of()));
+        var auth = new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of());
+        mvc.perform(put("/api/v1/me/profile/compatibility").with(authentication(auth))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"interestIds\":[],\"languageIds\":[]}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.interestIds").isEmpty());
+        assertTrue(profiles.compatibility(id).languageIds().isEmpty());
+    }
+
+    @Test
+    void approximateLocationRequiresConsentRoundsAndNeverReturnsCoordinates() throws Exception {
+        UUID id = user("sub-location");
+        var auth = new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of());
+        mvc.perform(put("/api/v1/me/profile/discovery-location").with(authentication(auth))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"latitude\":38.723456,\"longitude\":-9.123456,\"consent\":false}"))
+                .andExpect(status().isBadRequest());
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> profiles.saveDiscoveryLocation(id, Double.NaN, 0, true));
+        mvc.perform(put("/api/v1/me/profile/discovery-location").with(authentication(auth))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"latitude\":38.723456,\"longitude\":-9.123456,\"consent\":true}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.hasDiscoveryLocation").value(true))
+                .andExpect(jsonPath("$.latitude").doesNotExist()).andExpect(jsonPath("$.longitude").doesNotExist());
+        assertEquals(38.72, jdbc.queryForObject("SELECT ST_Y(location::geometry) FROM user_discovery_locations WHERE user_id=?", Double.class, id), 0.000001);
+        assertEquals(-9.12, jdbc.queryForObject("SELECT ST_X(location::geometry) FROM user_discovery_locations WHERE user_id=?", Double.class, id), 0.000001);
+        mvc.perform(delete("/api/v1/me/profile/discovery-location").with(authentication(auth)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.hasDiscoveryLocation").value(false));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM user_discovery_locations WHERE user_id=?", Integer.class, id));
+    }
+
+    @Test
+    void ageReconfirmationRequiresActualAdulthoodAndPreservesDateOfBirth() throws Exception {
+        UUID id = user("sub-confirm");
+        var auth = new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(id, UUID.randomUUID(), "test@test.com", List.of()), null, List.of());
+        jdbc.update("UPDATE profiles SET date_of_birth=NULL,age_eligibility_confirmed_at=NULL WHERE id=?", id);
+        assertThrows(org.springframework.web.server.ResponseStatusException.class, () -> profiles.confirmAgeEligibility(id));
+        jdbc.update("UPDATE profiles SET date_of_birth=CURRENT_DATE - INTERVAL '17 years' WHERE id=?", id);
+        mvc.perform(post("/api/v1/me/profile/age-confirmation").with(authentication(auth))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmed\":true}"))
+                .andExpect(status().isForbidden());
+        jdbc.update("UPDATE profiles SET date_of_birth=CURRENT_DATE - INTERVAL '18 years' WHERE id=?", id);
+        var dob = profiles.getProfile(id).dateOfBirth();
+        mvc.perform(post("/api/v1/me/profile/age-confirmation").with(authentication(auth))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmed\":false}"))
+                .andExpect(status().isBadRequest());
+        profiles.confirmAgeEligibility(id);
+        var stamp = jdbc.queryForObject("SELECT age_eligibility_confirmed_at FROM profiles WHERE id=?", java.sql.Timestamp.class, id);
+        assertNotNull(stamp);
+        profiles.confirmAgeEligibility(id);
+        assertEquals(stamp, jdbc.queryForObject("SELECT age_eligibility_confirmed_at FROM profiles WHERE id=?", java.sql.Timestamp.class, id));
+        assertEquals(dob, profiles.getProfile(id).dateOfBirth());
+        jdbc.update("UPDATE users SET deleted_at=now() WHERE id=?", id);
+        assertThrows(org.springframework.web.server.ResponseStatusException.class, () -> profiles.confirmAgeEligibility(id));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class, () -> profiles.compatibility(id));
     }
 
     private java.util.Map<String, Object> availability(String u) {

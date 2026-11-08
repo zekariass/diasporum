@@ -21,9 +21,11 @@ public class RewindSwipeService {
     @Transactional
     public SwipeResult rewind(UUID actor) {
         access.requireEligible(actor);
+        repository.actorLock(actor);
         var latest = repository.latestUnreversedSwipe(actor).orElseThrow(
                 () -> MatchmakingSupport.conflict("MATCHMAKING_REWIND_NOT_AVAILABLE"));
         repository.pairLock(actor, latest.targetUserId());
+        access.requireDiscoverableTarget(actor, latest.targetUserId());
         if (repository.matchExistsForPair(actor, latest.targetUserId())) {
             throw MatchmakingSupport.conflict("MATCHMAKING_REWIND_NOT_AVAILABLE");
         }

@@ -57,7 +57,8 @@ public final class SpareBagTypes {
         }
     }
 
-    public record Owner(UUID id, String username, String displayName) {
+    public record Owner(UUID id, String username, String displayName,
+            UUID avatarMediaId) {
     }
 
     public record ListingView(Listing listing, List<Category> categories,
@@ -90,7 +91,10 @@ public final class SpareBagTypes {
             UUID originAirportId, UUID destinationAirportId,
             LocalDate dateFrom, LocalDate dateTo, BigDecimal maxPrice,
             BigDecimal minimumCapacityKg, String priceCurrency,
-            String categoryKey) {
+            String categoryKey, BigDecimal maxWeightKg, String sort) {
+    }
+
+    public record DiscoveryCounts(long passengerOffers, long senderRequests) {
     }
 
     public record Page<T>(List<T> items, String nextCursor) {

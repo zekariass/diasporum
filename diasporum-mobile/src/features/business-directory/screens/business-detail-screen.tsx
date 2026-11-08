@@ -28,6 +28,10 @@ import {
 } from "../components/directory-ui";
 import { ReportForm } from "../components/report-form";
 import { createDirectoryApi } from "../services/directory-api";
+import { createPropertyApi } from "@/features/property/services/property-api";
+import { createVehicleApi } from "@/features/vehicles/services/vehicle-api";
+import type { PropertyItem } from "@/features/property/types/property-types";
+import type { VehicleView } from "@/features/vehicles/types/vehicle-types";
 import type {
   BusinessDetail,
   OpeningHour,
@@ -54,7 +58,17 @@ export default function BusinessDetailScreen() {
   const { businessId } = useLocalSearchParams<{ businessId: string }>();
   const { apiClient } = useSession();
   const api = React.useMemo(() => createDirectoryApi(apiClient), [apiClient]);
+  const propertyApi = React.useMemo(
+    () => createPropertyApi(apiClient),
+    [apiClient],
+  );
+  const vehicleApi = React.useMemo(
+    () => createVehicleApi(apiClient),
+    [apiClient],
+  );
   const [detail, setDetail] = useState<BusinessDetail | null>(null);
+  const [profileProperties, setProfileProperties] = useState<PropertyItem[]>([]);
+  const [profileVehicles, setProfileVehicles] = useState<VehicleView[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,8 +79,25 @@ export default function BusinessDetailScreen() {
   const load = useCallback(async () => {
     if (!businessId) return;
     try {
-      setDetail(await api.detail(businessId));
+      const result = await api.detail(businessId);
+      setDetail(result);
       setError(null);
+      if (result.business.status === "PUBLISHED" && result.business.listingCount > 0) {
+        Promise.all([
+          propertyApi
+            .discover({ businessListingId: businessId }, undefined, 6)
+            .catch(() => ({ items: [], nextCursor: null })),
+          vehicleApi
+            .discover({ businessListingId: businessId }, undefined, 6)
+            .catch(() => ({ items: [], nextCursor: null })),
+        ]).then(([propertyPage, vehiclePage]) => {
+          setProfileProperties(propertyPage.items);
+          setProfileVehicles(vehiclePage.items);
+        });
+      } else {
+        setProfileProperties([]);
+        setProfileVehicles([]);
+      }
     } catch (cause) {
       setDetail(null);
       setError(
@@ -77,7 +108,7 @@ export default function BusinessDetailScreen() {
     } finally {
       setLoading(false);
     }
-  }, [api, businessId]);
+  }, [api, businessId, propertyApi, vehicleApi]);
 
   useFocusEffect(
     useCallback(() => {
@@ -243,6 +274,40 @@ export default function BusinessDetailScreen() {
             <ThemedText style={styles.body}>{business.description}</ThemedText>
           </Section>
 
+          {business.status === "PUBLISHED" && business.listingCount > 0 ? (
+            <Section title={`Listings (${business.listingCount})`}>
+              {!profileProperties.length && !profileVehicles.length ? (
+                <ThemedText style={styles.meta} themeColor="textSecondary">
+                  Loading listings…
+                </ThemedText>
+              ) : null}
+              {profileProperties.map((item) => (
+                <PublicListingRow
+                  key={item.property.id}
+                  title={item.property.title}
+                  meta={`${item.property.currencyCode} ${item.property.priceAmount.toLocaleString()} · ${item.property.listingPurpose === "RENT" ? "For rent" : "For sale"}`}
+                  icon="home-outline"
+                  onPress={() =>
+                    router.push(
+                      `/(app)/properties/${item.property.id}` as never,
+                    )
+                  }
+                />
+              ))}
+              {profileVehicles.map((item) => (
+                <PublicListingRow
+                  key={item.listing.id}
+                  title={item.listing.title}
+                  meta={`${item.listing.currencyCode ?? ""} ${(item.listing.priceAmount ?? 0).toLocaleString()} · Vehicle`}
+                  icon="car-outline"
+                  onPress={() =>
+                    router.push(`/(app)/vehicles/${item.listing.id}` as never)
+                  }
+                />
+              ))}
+            </Section>
+          ) : null}
+
           {business.phone || business.email || business.websiteUrl ? (
             <Section title="Contact details">
               {business.phone ? (
@@ -379,6 +444,39 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+function PublicListingRow({
+  title,
+  meta,
+  icon,
+  onPress,
+}: {
+  title: string;
+  meta: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      style={[styles.listingRow, { borderColor: theme.border }]}
+    >
+      <Ionicons name={icon} size={20} color={BrandColors.primary} />
+      <View style={styles.listingCopy}>
+        <ThemedText style={styles.listingTitle} numberOfLines={1}>
+          {title}
+        </ThemedText>
+        <ThemedText style={styles.meta} themeColor="textSecondary">
+          {meta}
+        </ThemedText>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+    </Pressable>
+  );
+}
+
 function ContactRow({
   icon,
   value,
@@ -435,6 +533,16 @@ const styles = StyleSheet.create({
   hourRow: { flexDirection: "row", justifyContent: "space-between", gap: Spacing.three },
   hourDay: { fontSize: 13 },
   hourValue: { fontSize: 13, fontWeight: "600" },
+  listingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.three,
+    borderWidth: 1,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.three,
+  },
+  listingCopy: { flex: 1 },
+  listingTitle: { fontSize: 14, fontWeight: "700" },
   gallery: { flexDirection: "row", gap: Spacing.three },
   galleryImage: { width: 250, height: 170, borderRadius: BorderRadius.lg, overflow: "hidden" },
   reportSection: { paddingHorizontal: Spacing.four, gap: Spacing.three },

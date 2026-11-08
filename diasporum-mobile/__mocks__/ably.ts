@@ -10,7 +10,10 @@ const state = { channels: {} as Record<string, FakeChannel>, instances: [] as Fa
 class FakeChannel {
   handlers: ((m: { name: string; data: unknown }) => void)[] = [];
   constructor(public name: string) {}
-  subscribe(cb: (m: { name: string; data: unknown }) => void) { this.handlers.push(cb); }
+  subscribe(cb: (m: { name: string; data: unknown }) => void) {
+    this.handlers.push(cb);
+    return Promise.resolve(null);
+  }
   unsubscribe() { this.handlers = []; }
 }
 

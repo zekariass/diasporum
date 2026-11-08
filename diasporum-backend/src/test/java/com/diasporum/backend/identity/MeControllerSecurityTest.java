@@ -92,7 +92,7 @@ class MeControllerSecurityTest {
         when(sessionService.user(userId))
                 .thenReturn(Optional.of(new SessionValidator.UserInfo(userId, "dev@example.com")));
         when(identityApi.profileSummary(userId))
-                .thenReturn(Optional.of(new ProfileSummary(userId, null, null, "ACTIVE", false, null, null)));
+                .thenReturn(Optional.of(new ProfileSummary(userId, null, null, "ACTIVE", false, null, null, null)));
         mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer good-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(userId.toString()))
@@ -120,7 +120,7 @@ class MeControllerSecurityTest {
         var principal = new DiasporumUserPrincipal(userId, UUID.randomUUID(), "dev@example.com", List.of());
         var auth = new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities());
         when(identityApi.profileSummary(userId))
-                .thenReturn(Optional.of(new ProfileSummary(userId, "dev", "Dev", "ACTIVE", true, null, null)));
+                .thenReturn(Optional.of(new ProfileSummary(userId, "dev", "Dev", "ACTIVE", true, null, null, null)));
         mockMvc.perform(get("/api/v1/me").with(authentication(auth)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(userId.toString()))

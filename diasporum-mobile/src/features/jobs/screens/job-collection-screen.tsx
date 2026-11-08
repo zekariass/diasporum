@@ -12,7 +12,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { BrandColors } from "@/shared/theme/colors";
 import { Spacing } from "@/shared/theme/spacing";
 import { PrimaryButton } from "@/shared/components/primary-button";
-import { JobCard } from "../components/job-card";
+import { JobCard, JobCardSkeleton } from "../components/job-card";
 import { createJobApi } from "../services/job-api";
 import type { JobItem } from "../types/job-types";
 
@@ -56,6 +56,29 @@ export default function JobCollectionScreen({ mode }: { mode: "my" | "saved" }) 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
+  const toggleSave = useCallback(async (item: JobItem) => {
+    const target = !item.saved;
+    if (mode === "saved" && !target) {
+      // Unsaving removes the row from this collection; restore on failure.
+      setItems((previous) => previous.filter((entry) => entry.job.id !== item.job.id));
+      try {
+        await api.unsave(item.job.id);
+      } catch {
+        setItems((previous) => [item, ...previous]);
+      }
+      return;
+    }
+    setItems((previous) =>
+      previous.map((entry) => entry.job.id === item.job.id ? { ...entry, saved: target } : entry));
+    try {
+      if (target) await api.save(item.job.id);
+      else await api.unsave(item.job.id);
+    } catch {
+      setItems((previous) =>
+        previous.map((entry) => entry.job.id === item.job.id ? { ...entry, saved: item.saved } : entry));
+    }
+  }, [api, mode]);
+
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
@@ -75,14 +98,19 @@ export default function JobCollectionScreen({ mode }: { mode: "my" | "saved" }) 
           data={items}
           keyExtractor={(item) => item.job.id}
           renderItem={({ item }) => (
-            <JobCard item={item} onPress={(jobId) => router.push(`/(app)/jobs/${jobId}` as never)} />
+            <JobCard item={item} onToggleSave={toggleSave}
+              onPress={(jobId) => router.push(`/(app)/jobs/${jobId}` as never)} />
           )}
           onEndReached={() => { if (cursor && !loadingRef.current) void load(cursor); }}
           onEndReachedThreshold={0.4}
           refreshControl={<RefreshControl refreshing={refreshing} tintColor={BrandColors.primary}
             onRefresh={() => { setRefreshing(true); void load(); }} />}
           ListEmptyComponent={loading ? (
-            <ActivityIndicator style={styles.state} color={BrandColors.primary} accessibilityLabel={`Loading ${title}`} />
+            <View>
+              <JobCardSkeleton />
+              <JobCardSkeleton />
+              <JobCardSkeleton />
+            </View>
           ) : error ? (
             <View style={styles.state} accessibilityRole="alert">
               <ThemedText style={styles.message}>{error}</ThemedText>
@@ -92,12 +120,14 @@ export default function JobCollectionScreen({ mode }: { mode: "my" | "saved" }) 
             <View style={styles.state}>
               <Ionicons name={mode === "my" ? "briefcase-outline" : "bookmark-outline"}
                 size={42} color={theme.textSecondary} />
-              <ThemedText type="subtitle">{mode === "my" ? "No job listings yet" : "No saved jobs"}</ThemedText>
+              <ThemedText type="subtitle">{mode === "my" ? "No job listings yet" : "You haven't saved any jobs yet."}</ThemedText>
               <ThemedText style={styles.message} themeColor="textSecondary">
                 {mode === "my" ? "Create an opportunity for your community." : "Save a job to find it here later."}
               </ThemedText>
               {mode === "my" ? <PrimaryButton label="Create job"
-                onPress={() => router.push("/(app)/jobs/create" as never)} /> : null}
+                onPress={() => router.push("/(app)/jobs/create" as never)} />
+                : <PrimaryButton label="Browse jobs" variant="secondary"
+                  onPress={() => router.push("/(app)/jobs" as never)} />}
             </View>
           )}
           ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer}

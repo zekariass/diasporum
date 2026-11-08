@@ -1,19 +1,21 @@
 /**
- * Secure token storage abstraction backed by expo-secure-store.
+ * Token storage abstraction backed by expo-secure-store on native platforms.
+ * Expo web uses tab-scoped sessionStorage because SecureStore has no web
+ * implementation; localStorage and AsyncStorage are never used.
  *
- * Tokens are NEVER stored in AsyncStorage or plain files.
  * Access token, refresh token and metadata are stored under separate keys
  * to stay well within the ~2 KB per-value limit on older iOS releases.
  */
 
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
-import type { AuthTokens } from './auth-types';
-import { AuthError } from './auth-errors';
+import type { AuthTokens } from "./auth-types";
+import { AuthError } from "./auth-errors";
 
-const KEY_ACCESS_TOKEN = 'dsp_at';
-const KEY_REFRESH_TOKEN = 'dsp_rt';
-const KEY_TOKEN_META = 'dsp_meta'; // expiresAt + tokenType + scope
+const KEY_ACCESS_TOKEN = "dsp_at";
+const KEY_REFRESH_TOKEN = "dsp_rt";
+const KEY_TOKEN_META = "dsp_meta"; // expiresAt + tokenType + scope
 
 interface StoredMeta {
   expiresAt: number;
@@ -27,6 +29,34 @@ export interface AuthStorage {
   clearTokens(): Promise<void>;
 }
 
+function browserStorage(): Storage {
+  const storage = globalThis.sessionStorage;
+  if (!storage) throw new Error("Browser session storage is unavailable");
+  return storage;
+}
+
+async function readFragment(key: string): Promise<string | null> {
+  return Platform.OS === "web"
+    ? browserStorage().getItem(key)
+    : SecureStore.getItemAsync(key);
+}
+
+async function writeFragment(key: string, value: string): Promise<void> {
+  if (Platform.OS === "web") {
+    browserStorage().setItem(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value);
+}
+
+async function deleteFragment(key: string): Promise<void> {
+  if (Platform.OS === "web") {
+    browserStorage().removeItem(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key);
+}
+
 /**
  * Reads all three token fragments. Returns null if any are missing,
  * which covers first-install and post-logout states safely.
@@ -34,9 +64,9 @@ export interface AuthStorage {
 async function getTokens(): Promise<AuthTokens | null> {
   try {
     const [at, rt, metaJson] = await Promise.all([
-      SecureStore.getItemAsync(KEY_ACCESS_TOKEN),
-      SecureStore.getItemAsync(KEY_REFRESH_TOKEN),
-      SecureStore.getItemAsync(KEY_TOKEN_META),
+      readFragment(KEY_ACCESS_TOKEN),
+      readFragment(KEY_REFRESH_TOKEN),
+      readFragment(KEY_TOKEN_META),
     ]);
 
     if (!at || !rt || !metaJson) return null;
@@ -58,14 +88,14 @@ async function getTokens(): Promise<AuthTokens | null> {
     };
   } catch (err) {
     throw new AuthError(
-      'STORAGE_ERROR',
-      `Failed to read tokens from secure storage: ${String(err)}`
+      "STORAGE_ERROR",
+      `Failed to read tokens from secure storage: ${String(err)}`,
     );
   }
 }
 
 /**
- * Persists all token fragments to SecureStore.
+ * Persists all token fragments to the current platform's storage.
  * Access token and refresh token are stored separately to avoid size limits.
  */
 async function saveTokens(tokens: AuthTokens): Promise<void> {
@@ -77,14 +107,14 @@ async function saveTokens(tokens: AuthTokens): Promise<void> {
 
   try {
     await Promise.all([
-      SecureStore.setItemAsync(KEY_ACCESS_TOKEN, tokens.accessToken),
-      SecureStore.setItemAsync(KEY_REFRESH_TOKEN, tokens.refreshToken),
-      SecureStore.setItemAsync(KEY_TOKEN_META, JSON.stringify(meta)),
+      writeFragment(KEY_ACCESS_TOKEN, tokens.accessToken),
+      writeFragment(KEY_REFRESH_TOKEN, tokens.refreshToken),
+      writeFragment(KEY_TOKEN_META, JSON.stringify(meta)),
     ]);
   } catch (err) {
     throw new AuthError(
-      'STORAGE_ERROR',
-      `Failed to save tokens to secure storage: ${String(err)}`
+      "STORAGE_ERROR",
+      `Failed to save tokens to secure storage: ${String(err)}`,
     );
   }
 }
@@ -96,9 +126,9 @@ async function saveTokens(tokens: AuthTokens): Promise<void> {
  */
 async function clearTokens(): Promise<void> {
   await Promise.allSettled([
-    SecureStore.deleteItemAsync(KEY_ACCESS_TOKEN),
-    SecureStore.deleteItemAsync(KEY_REFRESH_TOKEN),
-    SecureStore.deleteItemAsync(KEY_TOKEN_META),
+    deleteFragment(KEY_ACCESS_TOKEN),
+    deleteFragment(KEY_REFRESH_TOKEN),
+    deleteFragment(KEY_TOKEN_META),
   ]);
 }
 

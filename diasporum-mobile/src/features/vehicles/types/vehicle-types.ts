@@ -1,7 +1,10 @@
 import type { MediaUploadSelection } from "@/shared/services/media-upload";
 
 export type VehiclePurpose = "SALE" | "RENT";
-export type VehicleVisibility = "COMMUNITY" | "COUNTRY" | "SELECTED_COMMUNITIES";
+export type VehicleVisibility =
+  | "COMMUNITY"
+  | "COUNTRY"
+  | "SELECTED_COMMUNITIES";
 export type VehicleStatus =
   | "DRAFT"
   | "PENDING_REVIEW"
@@ -52,6 +55,7 @@ export interface VehicleListing {
   communityId: string | null;
   ownerUserId: string | null;
   businessAccountId: string | null;
+  businessListingId: string | null;
   createdByUserId: string;
   visibilityScope: VehicleVisibility;
   listingPurpose: VehiclePurpose;
@@ -121,6 +125,28 @@ export interface VehicleSeller {
   businessName: string | null;
 }
 
+/** Seller contact channels as exposed to the viewer (flag-filtered server-side).
+ *  show* flags are only populated for listing managers. */
+export interface VehicleContact {
+  phone: string | null;
+  whatsapp: string | null;
+  email: string | null;
+  preferredMethod: string | null;
+  showPhone?: boolean | null;
+  showWhatsapp?: boolean | null;
+  showEmail?: boolean | null;
+}
+
+/** Public Business Profile the listing is published under, when associated. */
+export interface VehicleListedBy {
+  businessId: string;
+  name: string;
+  categoryName: string | null;
+  verificationStatus: string;
+  averageRating: number | null;
+  reviewCount: number | null;
+}
+
 export interface VehicleView {
   listing: VehicleListing;
   location: VehicleLocation | null;
@@ -128,12 +154,15 @@ export interface VehicleView {
   features: VehicleFeature[];
   selectedCommunityIds: string[];
   seller: VehicleSeller | null;
+  listedBy: VehicleListedBy | null;
+  contact: VehicleContact | null;
   canManage: boolean;
 }
 
 export interface VehiclePage {
   items: VehicleView[];
   nextCursor: string | null;
+  totalCount?: number | null;
 }
 
 export interface VehicleLocationRequest {
@@ -146,6 +175,7 @@ export interface VehicleLocationRequest {
 
 export interface VehicleRequest {
   businessAccountId?: string;
+  businessListingId?: string;
   visibilityScope?: VehicleVisibility;
   communityId?: string;
   selectedCommunityIds?: string[];
@@ -185,6 +215,18 @@ export interface VehicleRequest {
   clearLocation?: boolean;
   clearExpiry?: boolean;
   clearFields?: string[];
+  contact?: VehicleContactRequest;
+  clearContact?: boolean;
+}
+
+export interface VehicleContactRequest {
+  phone?: string;
+  whatsapp?: string;
+  email?: string;
+  preferredMethod?: string;
+  showPhone?: boolean;
+  showWhatsapp?: boolean;
+  showEmail?: boolean;
 }
 
 export interface VehicleDiscoveryFilters {
@@ -198,6 +240,9 @@ export interface VehicleDiscoveryFilters {
   yearMax?: number;
   mileageMin?: number;
   mileageMax?: number;
+  mileageUnit?: string;
+  colour?: string;
+  pricePeriod?: string;
   priceMin?: number;
   priceMax?: number;
   currency?: string;
@@ -216,6 +261,27 @@ export interface VehicleDiscoveryFilters {
   radiusMeters?: number;
   attributes?: Record<string, string>;
   sort?: VehicleSort;
+  driveType?: string;
+  seats?: number;
+  doors?: number;
+  registrationYearMin?: number;
+  registrationYearMax?: number;
+  businessListingId?: string;
+}
+
+/** Filter payload as persisted by the backend (`attributeFilters` naming). */
+export type SavedVehicleSearchFilters = Omit<
+  VehicleDiscoveryFilters,
+  "attributes"
+> & {
+  attributeFilters?: Record<string, string>;
+};
+
+export interface VehicleSavedSearch {
+  id: string;
+  name: string;
+  filters: SavedVehicleSearchFilters;
+  createdAt: string;
 }
 
 export interface VehicleMediaItem {

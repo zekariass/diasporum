@@ -22,6 +22,8 @@ import { Spacing } from '@/shared/theme/spacing';
 import { useTheme } from '@/hooks/use-theme';
 import type { ProfileSummary, CommunitySummary, FeedItem } from '../types/feed-types';
 import { PostItem } from '../components/post-item';
+import { openPostDetail } from '../utils/post-detail-seed';
+import { Avatar } from '../components/avatar';
 import { MediaImage } from '../components/media-image';
 import { timeAgo } from '../utils/time-ago';
 import { ApiError } from '@/core/api/api-error';
@@ -138,9 +140,7 @@ export default function ExploreScreen() {
     const name = item.displayName ?? item.username;
     return (
       <View style={[s.row, { borderBottomColor: theme.border }]}>
-        <View style={[s.avatar, { backgroundColor: BrandColors.primarySurface }]}>
-          <ThemedText style={[s.avatarLetter, { color: BrandColors.primary }]}>{name[0].toUpperCase()}</ThemedText>
-        </View>
+        <Avatar name={name} mediaId={item.avatarMediaId} userId={item.id} size={44} />
         <View style={s.personInfo}>
           <ThemedText style={s.personName}>{name}</ThemedText>
           <ThemedText style={s.personMeta} themeColor="textSecondary">@{item.username}</ThemedText>
@@ -202,8 +202,8 @@ export default function ExploreScreen() {
     if (cat === 'people') return <PersonRow item={item as ProfileSummary} />;
     if (cat === 'communities') return <CommunityRow item={item as CommunitySummary} />;
     if (cat === 'posts') return <PostItem item={item as FeedItem}
-      onPress={() => router.push(`/(app)/posts/${(item as FeedItem).sourceId}` as never)}
-      onComment={() => router.push(`/(app)/posts/${(item as FeedItem).sourceId}` as never)}
+      onPress={() => openPostDetail(router, item as FeedItem)}
+      onComment={() => openPostDetail(router, item as FeedItem)}
       onReact={r => void feedApi.react((item as FeedItem).sourceId, r)}
       onSave={() => { const it = item as FeedItem; void (it.saved ? feedApi.unsave(it.sourceId) : feedApi.save(it.sourceId)); }} />;
     return <ReelCard item={item as FeedItem} />;
