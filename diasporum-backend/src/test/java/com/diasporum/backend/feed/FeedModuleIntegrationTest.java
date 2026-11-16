@@ -107,10 +107,19 @@ class FeedModuleIntegrationTest {
         // would otherwise block direct vote deletes).
         for (String t : new String[]{"idempotency_keys", "user_follows", "user_blocks",
                 "feed_posts", "feed_tags", "media_objects", "user_content_views",
-                "community_memberships", "external_identities", "profiles",
-                "communities", "country_categories", "airports", "countries"}) {
+                "billing_usage_records", "community_memberships", "external_identities",
+                "profiles", "communities", "country_categories", "airports", "countries"}) {
             jdbc.update("DELETE FROM " + t);
         }
+        // Reset the targeting entitlements this test class toggles on the FREE
+        // plan — these rows are global catalog data, not covered by the
+        // per-test DELETEs above, so leaving one test's enable() in place
+        // would leak into later tests regardless of execution order.
+        jdbc.update("UPDATE billing_plan_entitlements SET enabled=false"
+                + " WHERE feature_id IN (SELECT id FROM billing_features"
+                + " WHERE feature_key IN ('TARGET_ALL_SAME_ORIGIN_COMMUNITIES',"
+                + "'TARGET_ALL_SAME_CURRENT_COUNTRY_COMMUNITIES',"
+                + "'POST_IN_SAME_ORIGIN_COMMUNITY','POST_IN_DIFF_ORIGIN_COMMUNITY'))");
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES"
                 + "('Ethiopia','ET','ETH'),('Germany','DE','DEU')");
         origin = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='ET'",
@@ -759,5 +768,187 @@ class FeedModuleIntegrationTest {
     private void blockUser(UUID a, UUID b) {
         jdbc.update("INSERT INTO user_blocks(blocker_user_id,blocked_user_id)"
                 + " VALUES(?,?)", a, b);
+    }
+
+    // ---- multi-community targeting (target_mode) ----
+
+    private void enableFreePlanEntitlement(String featureKey) {
+        jdbc.update("INSERT INTO billing_plan_entitlements(plan_id,feature_id,enabled)"
+                + " SELECT p.id,f.id,true FROM billing_plans p,billing_features f"
+                + " WHERE p.plan_key='FREE' AND f.feature_key=?"
+                + " ON CONFLICT(plan_id,feature_id) DO UPDATE SET enabled=true",
+                featureKey);
+    }
+
+    private UUID communityB, communityDiffOrigin;
+    private UUID u3;
+
+    /** A second same-origin community (different destination) + a different-origin one. */
+    private void setupMultiCommunityFixtures() {
+        jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES"
+                + "('United Kingdom','GB','GBR'),('France','FR','FRA')");
+        var gb = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='GB'", UUID.class);
+        var fr = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='FR'", UUID.class);
+        var de = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='DE'", UUID.class);
+        jdbc.update("INSERT INTO communities(name,slug,origin_country_id,"
+                + "destination_country_id) VALUES('ET in GB','et-in-gb',?,?),"
+                + "('FR in DE','fr-in-de',?,?)", origin, gb, fr, de);
+        communityB = jdbc.queryForObject(
+                "SELECT id FROM communities WHERE slug='et-in-gb'", UUID.class);
+        communityDiffOrigin = jdbc.queryForObject(
+                "SELECT id FROM communities WHERE slug='fr-in-de'", UUID.class);
+        // u1 picks up a SECONDARY membership in communityB (same origin ET,
+        // different destination — u1's current country stays DE).
+        communityService.join(u1, communityB);
+        // u3: different origin (FR), joins communityDiffOrigin as PRIMARY.
+        u3 = user("f3");
+        jdbc.update("UPDATE profiles SET origin_country_id=?,"
+                + " current_country_id=? WHERE id=?", fr, de, u3);
+        communityService.join(u3, communityDiffOrigin);
+    }
+
+    @Test
+    void targetModeDefaultsToSingleCommunity() {
+        UUID id = makePost(u1, "GENERAL");
+        assertEquals("SINGLE_COMMUNITY", service.getPost(u1, id).targetMode());
+    }
+
+    @Test
+    void ctaValidation() {
+        assertThrows(ResponseStatusException.class,               // label w/o url
+                () -> service.createPost(u1, community, "GENERAL", "t", "b", null,
+                        "COMMUNITY", category, null, null, "SINGLE_COMMUNITY", null,
+                        "Learn more", null));
+        assertThrows(ResponseStatusException.class,               // url w/o label
+                () -> service.createPost(u1, community, "GENERAL", "t", "b", null,
+                        "COMMUNITY", category, null, null, "SINGLE_COMMUNITY", null,
+                        null, "https://example.com"));
+        assertThrows(ResponseStatusException.class,               // bad scheme
+                () -> service.createPost(u1, community, "GENERAL", "t", "b", null,
+                        "COMMUNITY", category, null, null, "SINGLE_COMMUNITY", null,
+                        "Learn more", "ftp://example.com"));
+        var p = service.createPost(u1, community, "GENERAL", "t", "b", null,
+                "COMMUNITY", category, null, null, "SINGLE_COMMUNITY", null,
+                "Learn more", "https://example.com");
+        assertEquals("Learn more", service.getPost(u1, p.id()).ctaLabel());
+        assertEquals("https://example.com", service.getPost(u1, p.id()).ctaUrl());
+    }
+
+    @Test
+    void selectedCommunitiesChargesSecondaryTargetOnly() {
+        setupMultiCommunityFixtures();
+        enableFreePlanEntitlement("POST_IN_SAME_ORIGIN_COMMUNITY");
+        var p = service.createPost(u1, community, "GENERAL", "t", "b", null,
+                "COMMUNITY", category, null, null, "SELECTED_COMMUNITIES",
+                List.of(community, communityB), null, null);
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM feed_post_communities"
+                + " WHERE post_id=?", Integer.class, p.id()));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records"
+                + " WHERE user_id=? AND feature_id=(SELECT id FROM billing_features"
+                + " WHERE feature_key='POST_IN_SAME_ORIGIN_COMMUNITY')",
+                Integer.class, u1));             // community (PRIMARY) stays free
+    }
+
+    @Test
+    void selectedCommunitiesRequiresMembershipAndNonEmptyTargets() {
+        setupMultiCommunityFixtures();
+        // u1 is not a member of communityDiffOrigin (different origin country).
+        assertThrows(ResponseStatusException.class,               // not a member
+                () -> service.createPost(u1, community, "GENERAL", "t", "b", null,
+                        "COMMUNITY", category, null, null, "SELECTED_COMMUNITIES",
+                        List.of(communityDiffOrigin), null, null));
+        assertThrows(ResponseStatusException.class,               // empty targets
+                () -> service.createPost(u1, community, "GENERAL", "t", "b", null,
+                        "COMMUNITY", category, null, null, "SELECTED_COMMUNITIES",
+                        List.of(), null, null));
+    }
+
+    @Test
+    void communityFeedResolvesSelectedCommunities() {
+        setupMultiCommunityFixtures();
+        enableFreePlanEntitlement("POST_IN_SAME_ORIGIN_COMMUNITY");
+        var p = service.createPost(u1, community, "GENERAL", "t", "b", null,
+                "COMMUNITY", category, null, null, "SELECTED_COMMUNITIES",
+                List.of(community, communityB), null, null);
+        var inCommunity = service.communityFeed(u2, community, null, null, null, 10);
+        assertEquals(1, inCommunity.items().size());
+        assertEquals("FEED_POST:" + p.id(), inCommunity.items().get(0).itemId());
+        var inCommunityB = service.communityFeed(u1, communityB, null, null, null, 10);
+        assertEquals(1, inCommunityB.items().size());
+        var inOther = service.communityFeed(u3, communityDiffOrigin, null, null, null, 10);
+        assertEquals(0, inOther.items().size());
+    }
+
+    @Test
+    void allSameOriginFailsClosedThenSucceedsOnceConfigured() {
+        setupMultiCommunityFixtures();
+        var denied = assertThrows(ResponseStatusException.class,
+                () -> service.createPost(u1, community, "GENERAL", "t", "b", null,
+                        "COMMUNITY", category, null, null, "ALL_SAME_ORIGIN", null,
+                        null, null));
+        assertTrue(denied.getReason() != null
+                && denied.getReason().contains("ENTITLEMENT_NOT_CONFIGURED"));
+        enableFreePlanEntitlement("TARGET_ALL_SAME_ORIGIN_COMMUNITIES");
+        var p = service.createPost(u1, community, "GENERAL", "t", "b", null,
+                "COMMUNITY", category, null, null, "ALL_SAME_ORIGIN", null, null, null);
+        assertEquals(1, service.communityFeed(u2, community, null, null, null, 10)
+                .items().size());                              // same origin, in community
+        assertEquals(1, service.communityFeed(u1, communityB, null, null, null, 10)
+                .items().size());                              // same origin, communityB
+        assertEquals(0, service.communityFeed(u3, communityDiffOrigin, null, null, null, 10)
+                .items().size());                              // different origin, excluded
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records"
+                + " WHERE user_id=? AND feature_id=(SELECT id FROM billing_features"
+                + " WHERE feature_key='TARGET_ALL_SAME_ORIGIN_COMMUNITIES')",
+                Integer.class, u1));
+    }
+
+    @Test
+    void allSameCurrentCountryResolvesByDestinationCountry() {
+        setupMultiCommunityFixtures();
+        enableFreePlanEntitlement("TARGET_ALL_SAME_CURRENT_COUNTRY_COMMUNITIES");
+        service.createPost(u1, community, "GENERAL", "t", "b", null,
+                "COMMUNITY", category, null, null, "ALL_SAME_CURRENT_COUNTRY", null,
+                null, null);
+        assertEquals(1, service.communityFeed(u2, community, null, null, null, 10)
+                .items().size());                 // community's destination == u1's current (DE)
+        assertEquals(0, service.communityFeed(u1, communityB, null, null, null, 10)
+                .items().size());                 // communityB's destination is GB, not DE
+    }
+
+    @Test
+    void followingFeedShowsBroadcastAndSelectedPostsAcrossCommunities() {
+        setupMultiCommunityFixtures();
+        enableFreePlanEntitlement("TARGET_ALL_SAME_ORIGIN_COMMUNITIES");
+        enableFreePlanEntitlement("POST_IN_SAME_ORIGIN_COMMUNITY");
+        // u4: same origin as u1 (ET), never joins u1's home community.
+        UUID u4 = user("f4");
+        var gb = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='GB'", UUID.class);
+        jdbc.update("UPDATE profiles SET origin_country_id=?,"
+                + " current_country_id=? WHERE id=?", origin, gb, u4);
+        communityService.join(u4, communityB);     // PRIMARY there, not in `community`
+        socialFollow(u4, u1);
+        service.createPost(u1, community, "GENERAL", "t", "b", null,
+                "COMMUNITY", category, null, null, "ALL_SAME_ORIGIN", null, null, null);
+        var broadcastFeed = service.followingFeed(u4, null, 10);
+        assertEquals(1, broadcastFeed.items().size());
+
+        var selected = service.createPost(u1, community, "GENERAL", "t2", "b2", null,
+                "COMMUNITY", category, null, null, "SELECTED_COMMUNITIES",
+                List.of(community, communityB), null, null);
+        var afterSelected = service.followingFeed(u4, null, 10);
+        assertTrue(afterSelected.items().stream()
+                .anyMatch(i -> i.itemId().equals("FEED_POST:" + selected.id())));
+    }
+
+    @Test
+    void impressionsAccumulatePerCommunityPerDay() {
+        UUID id = makePost(u1, "GENERAL");
+        service.communityFeed(u2, community, null, null, null, 10);
+        service.communityFeed(u2, community, null, null, null, 10);
+        service.communityFeed(u2, community, null, null, null, 10);
+        assertEquals(3L, jdbc.queryForObject("SELECT impressions_count"
+                + " FROM feed_post_community_stats WHERE post_id=? AND community_id=?"
+                + " AND metric_date=CURRENT_DATE", Long.class, id, community));
     }
 }

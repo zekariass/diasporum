@@ -1,5 +1,6 @@
 package com.diasporum.backend.feed.internal.application;
 
+import com.diasporum.backend.billing.BillingApi;
 import com.diasporum.backend.community.CommunityApi;
 import com.diasporum.backend.feed.internal.api.rest.PollResponses.PollOptionResponse;
 import com.diasporum.backend.feed.internal.api.rest.PollResponses.PollResponse;
@@ -47,6 +48,11 @@ public class FeedService {
     private static final Set<String> HELP_KINDS = Set.of("REQUEST", "OFFER");
     private static final Set<String> OPEN_HELP_TRANSITIONS = Set.of("PAUSED",
             "RESOLVED", "CLOSED");
+    private static final Set<String> TARGET_MODES = Set.of("SINGLE_COMMUNITY",
+            "SELECTED_COMMUNITIES", "ALL_SAME_ORIGIN", "ALL_SAME_CURRENT_COUNTRY");
+    private static final java.util.regex.Pattern CTA_URL =
+            java.util.regex.Pattern.compile("^https?://.*",
+                    java.util.regex.Pattern.CASE_INSENSITIVE);
     private static final int DEFAULT_PAGE = 20;
     private static final int MAX_PAGE = 50;
 
@@ -57,6 +63,7 @@ public class FeedService {
     private final MediaApi media;
     private final TaxonomyApi taxonomy;
     private final ModerationApi moderation;
+    private final BillingApi billing;
     private static final java.util.regex.Pattern HASHTAG =
             java.util.regex.Pattern.compile("#([\\p{L}\\p{N}_]{2,50})");
     private static final java.util.regex.Pattern TAG_KEY_OK =
@@ -71,7 +78,7 @@ public class FeedService {
 
     public FeedService(JdbcTemplate jdbc, IdentityApi identity,
             CommunityApi community, SocialApi social, MediaApi media,
-            TaxonomyApi taxonomy, ModerationApi moderation,
+            TaxonomyApi taxonomy, ModerationApi moderation, BillingApi billing,
             @Value("${diasporum.feed.polls.create-per-hour:10}") int pollCreatePerHour,
             @Value("${diasporum.feed.polls.vote-per-minute:120}") int pollVotePerMinute,
             @Value("${diasporum.feed.tags.max-per-post:10}") int tagMaxPerPost,
@@ -85,6 +92,7 @@ public class FeedService {
         this.media = media;
         this.taxonomy = taxonomy;
         this.moderation = moderation;
+        this.billing = billing;
         this.pollCreatePerHour = Math.max(1, pollCreatePerHour);
         this.pollVotePerMinute = Math.max(1, pollVotePerMinute);
         this.tagMaxPerPost = Math.max(1, tagMaxPerPost);
@@ -100,7 +108,9 @@ public class FeedService {
             String title, String body, String linkUrl, UUID categoryId,
             boolean commentsEnabled,
             int commentCount, int reactionCount, int shareCount,
-            Instant publishedAt, Instant createdAt) {
+            Instant publishedAt, Instant createdAt, String targetMode,
+            UUID authorOriginCountryId, UUID authorCurrentCountryId,
+            String ctaLabel, String ctaUrl) {
     }
 
     public record CommentRow(UUID id, UUID postId, UUID authorId,
@@ -120,7 +130,11 @@ public class FeedService {
                 rs.getBoolean("comments_enabled"),
                 rs.getInt("comment_count"), rs.getInt("reaction_count"),
                 rs.getInt("share_count"),
-                ts(rs, "published_at"), ts(rs, "created_at"));
+                ts(rs, "published_at"), ts(rs, "created_at"),
+                rs.getString("target_mode"),
+                rs.getObject("author_origin_country_id", UUID.class),
+                rs.getObject("author_current_country_id", UUID.class),
+                rs.getString("cta_label"), rs.getString("cta_url"));
     }
 
     private static Instant ts(java.sql.ResultSet rs, String col)
@@ -131,7 +145,8 @@ public class FeedService {
 
     private static final String POST_COLS = "id,author_id,community_id,country_id,"
             + "post_type,status::text,visibility_scope::text,title,body,link_url,"
-            + "category_id,comments_enabled,comment_count,reaction_count,share_count,published_at,created_at";
+            + "category_id,comments_enabled,comment_count,reaction_count,share_count,published_at,created_at,"
+            + "target_mode,author_origin_country_id,author_current_country_id,cta_label,cta_url";
 
     private PostRow requirePost(UUID id) {
         return jdbc.query("SELECT " + POST_COLS + " FROM feed_posts WHERE id=?",
@@ -183,10 +198,32 @@ public class FeedService {
                 scope, categoryId, mediaIds, tags, false);
     }
 
+    /** Full-featured overload — multi-community targeting + CTA. */
+    @Transactional
+    public PostRow createPost(UUID authorId, UUID communityId, String type,
+            String title, String body, String linkUrl, String scope,
+            UUID categoryId, List<UUID> mediaIds, List<String> tags,
+            String targetMode, List<UUID> targetCommunityIds,
+            String ctaLabel, String ctaUrl) {
+        return createPost(authorId, communityId, type, title, body, linkUrl,
+                scope, categoryId, mediaIds, tags, false, targetMode,
+                targetCommunityIds, ctaLabel, ctaUrl);
+    }
+
     private PostRow createPost(UUID authorId, UUID communityId, String type,
             String title, String body, String linkUrl, String scope,
             UUID categoryId, List<UUID> mediaIds, List<String> tags,
             boolean pollWorkflow) {
+        return createPost(authorId, communityId, type, title, body, linkUrl,
+                scope, categoryId, mediaIds, tags, pollWorkflow,
+                "SINGLE_COMMUNITY", null, null, null);
+    }
+
+    private PostRow createPost(UUID authorId, UUID communityId, String type,
+            String title, String body, String linkUrl, String scope,
+            UUID categoryId, List<UUID> mediaIds, List<String> tags,
+            boolean pollWorkflow, String targetMode, List<UUID> targetCommunityIds,
+            String ctaLabel, String ctaUrl) {
         if (!POST_TYPES.contains(type)) {
             throw bad("INVALID_POST_TYPE");
         }
@@ -200,6 +237,19 @@ public class FeedService {
                 && !community.isModeratorOrAbove(authorId, communityId)) {
             throw forbidden("MODERATOR_REQUIRED");
         }
+        String mode = targetMode == null ? "SINGLE_COMMUNITY" : targetMode;
+        if (!TARGET_MODES.contains(mode)) {
+            throw bad("INVALID_TARGET_MODE");
+        }
+        if ("SELECTED_COMMUNITIES".equals(mode)
+                && (targetCommunityIds == null || targetCommunityIds.isEmpty())) {
+            throw bad("SELECTED_COMMUNITIES_REQUIRES_TARGETS");
+        }
+        if (!"SELECTED_COMMUNITIES".equals(mode)
+                && targetCommunityIds != null && !targetCommunityIds.isEmpty()) {
+            throw bad("TARGET_COMMUNITIES_NOT_ALLOWED_FOR_MODE");
+        }
+        validateCta(ctaLabel, ctaUrl);
         String module = "COMMUNITY_HELP".equals(type) ? "COMMUNITY_HELP"
                 : "REEL".equals(type) ? "REELS" : "FEED";
         community.requireModule(authorId, communityId, module);
@@ -213,6 +263,8 @@ public class FeedService {
         if ("REEL".equals(type) && (mediaIds == null || mediaIds.isEmpty())) {
             throw bad("REEL_REQUIRES_VIDEO");
         }
+        var authorProfile = identity.profileSummary(authorId).orElseThrow(
+                () -> bad("AUTHOR_PROFILE_NOT_FOUND"));
         UUID id = UUID.randomUUID();
         // POLL/COMMUNITY_HELP must start DRAFT: the publish trigger requires
         // their child rows (options / help metadata) to already exist. REEL
@@ -222,14 +274,20 @@ public class FeedService {
                 || "REEL".equals(type);
         jdbc.update("INSERT INTO feed_posts(id,country_id,community_id,"
                         + "visibility_scope,author_id,category_id,post_type,title,"
-                        + "body,link_url,status,published_at) VALUES(?,?,?,?::"
-                        + "visibility_scope,?,?,?,?,?,?,?::content_status,?)",
+                        + "body,link_url,status,published_at,target_mode,"
+                        + "author_origin_country_id,author_current_country_id,"
+                        + "cta_label,cta_url) VALUES(?,?,?,?::"
+                        + "visibility_scope,?,?,?,?,?,?,?::content_status,?,?,?,?,?,?)",
                 id, c.destinationCountryId(), communityId, scope, authorId,
                 categoryId, type, title, body == null ? "" : body, linkUrl,
                 draftFirst ? "DRAFT" : "PUBLISHED",
-                draftFirst ? null : java.sql.Timestamp.from(Instant.now()));
+                draftFirst ? null : java.sql.Timestamp.from(Instant.now()),
+                mode, authorProfile.originCountryId(),
+                authorProfile.currentCountryId(), ctaLabel, ctaUrl);
         attachMedia(id, authorId, type, mediaIds);
         syncTags(id, authorId, tags, body);
+        applyTargeting(authorId, id, communityId, mode, targetCommunityIds,
+                authorProfile);
         if ("REEL".equals(type)) {
             publish(id);    // DRAFT -> PUBLISHED; the integrity trigger now
                             // sees the attached READY FEED_VIDEO asset
@@ -241,10 +299,70 @@ public class FeedService {
             community.consumeExtendedAction(authorId, communityId,
                     "EXTENDED_FEED_POST_PUBLISH", "extended-feed-publish:" + id);
         }
-        return new PostRow(id, authorId, communityId, c.destinationCountryId(),
-                type, draftFirst ? "DRAFT" : "PUBLISHED", scope, title, body,
-                linkUrl, categoryId, true, 0, 0, 0,
-                draftFirst ? null : Instant.now(), Instant.now());
+        return requirePost(id);
+    }
+
+    private static void validateCta(String label, String url) {
+        boolean hasLabel = label != null && !label.isBlank();
+        boolean hasUrl = url != null && !url.isBlank();
+        if (hasLabel != hasUrl) {
+            throw bad("CTA_LABEL_AND_URL_REQUIRED_TOGETHER");
+        }
+        if (hasLabel && label.length() > 60) {
+            throw bad("CTA_LABEL_TOO_LONG");
+        }
+        if (hasUrl && !CTA_URL.matcher(url).matches()) {
+            throw bad("INVALID_CTA_URL");
+        }
+    }
+
+    /**
+     * SINGLE_COMMUNITY: no-op — the existing EXTENDED_* charge above already
+     * covers posting into a secondary community. SELECTED_COMMUNITIES:
+     * validates membership and charges POST_IN_SAME_ORIGIN_COMMUNITY /
+     * POST_IN_DIFF_ORIGIN_COMMUNITY per non-primary target, then records
+     * feed_post_communities rows. ALL_SAME_ORIGIN / ALL_SAME_CURRENT_COUNTRY:
+     * one broadcast charge against the posting community, no stored rows —
+     * the audience is resolved dynamically at read time.
+     */
+    private void applyTargeting(UUID authorId, UUID postId, UUID homeCommunityId,
+            String mode, List<UUID> targetCommunityIds,
+            IdentityApi.ProfileSummary authorProfile) {
+        switch (mode) {
+            case "SINGLE_COMMUNITY" -> { }
+            case "SELECTED_COMMUNITIES" -> {
+                for (UUID targetId : new java.util.LinkedHashSet<>(targetCommunityIds)) {
+                    if (!community.isActiveMember(authorId, targetId)) {
+                        throw forbidden("NOT_A_MEMBER");
+                    }
+                    var membership = community.membershipOf(authorId, targetId)
+                            .orElseThrow(() -> forbidden("NOT_A_MEMBER"));
+                    if (!"PRIMARY".equals(membership.membershipType())) {
+                        var targetCommunity = taxonomy.findCommunityById(targetId)
+                                .orElseThrow(() -> bad("COMMUNITY_NOT_FOUND"));
+                        boolean sameOrigin = targetCommunity.originCountryId()
+                                .equals(authorProfile.originCountryId());
+                        String featureKey = sameOrigin
+                                ? "POST_IN_SAME_ORIGIN_COMMUNITY"
+                                : "POST_IN_DIFF_ORIGIN_COMMUNITY";
+                        String prefix = sameOrigin ? "post-in-origin:" : "post-in-diff:";
+                        billing.consume(new BillingApi.ConsumptionCommand(authorId, null,
+                                featureKey, 1, "COMMUNITY", targetId,
+                                prefix + postId + ":" + targetId));
+                    }
+                    jdbc.update("INSERT INTO feed_post_communities(post_id,community_id)"
+                            + " VALUES(?,?) ON CONFLICT DO NOTHING", postId, targetId);
+                }
+            }
+            case "ALL_SAME_ORIGIN" -> billing.consume(new BillingApi.ConsumptionCommand(
+                    authorId, null, "TARGET_ALL_SAME_ORIGIN_COMMUNITIES", 1,
+                    "COMMUNITY", homeCommunityId, "target-all-origin:" + postId));
+            case "ALL_SAME_CURRENT_COUNTRY" -> billing.consume(new BillingApi.ConsumptionCommand(
+                    authorId, null, "TARGET_ALL_SAME_CURRENT_COUNTRY_COMMUNITIES", 1,
+                    "COMMUNITY", homeCommunityId,
+                    "target-all-current-country:" + postId));
+            default -> throw bad("INVALID_TARGET_MODE");
+        }
     }
 
     private void attachMedia(UUID postId, UUID ownerId, String postType,
@@ -297,6 +415,16 @@ public class FeedService {
     @Transactional
     public PostRow updatePost(UUID actor, UUID postId, String title,
             String body, String linkUrl, UUID categoryId, List<String> tags) {
+        return updatePost(actor, postId, title, body, linkUrl, categoryId, tags,
+                null, null, null, null);
+    }
+
+    /** Full-featured overload — target_mode/CTA editing included. */
+    @Transactional
+    public PostRow updatePost(UUID actor, UUID postId, String title,
+            String body, String linkUrl, UUID categoryId, List<String> tags,
+            String targetMode, List<UUID> targetCommunityIds,
+            String ctaLabel, String ctaUrl) {
         var p = requirePost(postId);
         if (!p.authorId().equals(actor)
                 && !community.isModeratorOrAbove(actor, p.communityId())) {
@@ -309,14 +437,37 @@ public class FeedService {
                 "COMMUNITY_HELP".equals(p.postType()) ? "COMMUNITY_HELP" : "FEED")) {
             throw bad("INVALID_CATEGORY");
         }
+        if (ctaLabel != null || ctaUrl != null) {
+            validateCta(ctaLabel != null ? ctaLabel : p.ctaLabel(),
+                    ctaUrl != null ? ctaUrl : p.ctaUrl());
+        }
         jdbc.update("UPDATE feed_posts SET title=COALESCE(?,title),"
                 + " body=COALESCE(?,body), link_url=COALESCE(?,link_url),"
                 + " category_id=COALESCE(?,category_id),"
+                + " cta_label=COALESCE(?,cta_label), cta_url=COALESCE(?,cta_url),"
                 + " updated_at=now() WHERE id=?", title, normalizedBody, linkUrl,
-                categoryId, postId);
+                categoryId, ctaLabel, ctaUrl, postId);
         if (tags != null || normalizedBody != null) {
             syncTags(postId, actor, tags,
                     normalizedBody != null ? normalizedBody : p.body());
+        }
+        if (targetMode != null) {
+            if (!TARGET_MODES.contains(targetMode)) {
+                throw bad("INVALID_TARGET_MODE");
+            }
+            if ("SELECTED_COMMUNITIES".equals(targetMode)
+                    && (targetCommunityIds == null || targetCommunityIds.isEmpty())) {
+                throw bad("SELECTED_COMMUNITIES_REQUIRES_TARGETS");
+            }
+            var authorProfile = identity.profileSummary(p.authorId()).orElseThrow(
+                    () -> bad("AUTHOR_PROFILE_NOT_FOUND"));
+            // Atomic replace: clear any prior SELECTED_COMMUNITIES rows before
+            // re-applying targeting for the new mode/target list.
+            jdbc.update("DELETE FROM feed_post_communities WHERE post_id=?", postId);
+            jdbc.update("UPDATE feed_posts SET target_mode=?, updated_at=now()"
+                    + " WHERE id=?", targetMode, postId);
+            applyTargeting(p.authorId(), postId, p.communityId(), targetMode,
+                    targetCommunityIds, authorProfile);
         }
         return requirePost(postId);
     }
@@ -486,19 +637,43 @@ public class FeedService {
 
     // =================== eligibility + feeds ===================
 
-    /** Eligible = published + viewer not blocked with author + (scope
-     * COUNTRY or viewer is member of post's community). */
-    private boolean eligible(UUID viewer, PostRow p,
-            Map<UUID, Boolean> membershipCache) {
+    /**
+     * Eligible = published + viewer not blocked with author + audience match.
+     * When {@code viewedCommunityId} is non-null (called from communityFeed),
+     * the SQL that selected {@code posts} has already proven audience
+     * membership for that specific community — this only re-confirms
+     * status/scope, not a second duplicate check. When null (followingFeed/
+     * myPosts, which have no single community context), the mode-specific
+     * checks below are the SOLE gate.
+     */
+    private boolean eligible(UUID viewer, PostRow p, UUID viewedCommunityId,
+            UUID viewerOriginCountryId, UUID viewerCurrentCountryId,
+            Map<UUID, Boolean> membershipCache,
+            Map<UUID, Boolean> selectedCommunityCache) {
         if (!"PUBLISHED".equals(p.status())) {
             return false;
         }
-        if (!"COUNTRY".equals(p.scope())
-                && !membershipCache.computeIfAbsent(p.communityId(),
-                        c -> community.isActiveMember(viewer, c))) {
-            return false;
+        if ("COUNTRY".equals(p.scope())) {
+            return true;
         }
-        return true;
+        if (viewedCommunityId != null) {
+            return true;   // audience already proven by communityFeed's SQL
+        }
+        return switch (p.targetMode()) {
+            case "SELECTED_COMMUNITIES" ->
+                    selectedCommunityCache.getOrDefault(p.id(), false);
+            case "ALL_SAME_ORIGIN" -> java.util.Objects.equals(
+                    viewerOriginCountryId, p.authorOriginCountryId());
+            // Viewer-vs-author current-country match is a deliberate, safe-
+            // direction approximation here (no single community context to
+            // check real membership against): it can only ever ADD visibility
+            // a fully correct check would also grant, never leak to someone
+            // who wouldn't otherwise qualify.
+            case "ALL_SAME_CURRENT_COUNTRY" -> java.util.Objects.equals(
+                    viewerCurrentCountryId, p.authorCurrentCountryId());
+            default -> membershipCache.computeIfAbsent(p.communityId(),
+                    c -> community.isActiveMember(viewer, c));
+        };
     }
 
     public record MediaAttachment(UUID id, String purpose, String mimeType,
@@ -510,10 +685,18 @@ public class FeedService {
             String title, String body, List<UUID> mediaIds,
             List<MediaAttachment> media, List<String> tags, int commentCount,
             int reactionCount, int shareCount, String viewerReaction,
-            boolean viewed, boolean saved, Map<String, Object> payload) {
+            boolean viewed, boolean saved, Map<String, Object> payload,
+            String targetMode, List<UUID> targetCommunityIds,
+            String ctaLabel, String ctaUrl) {
     }
 
-    private List<FeedItem> toItems(UUID viewer, List<PostRow> posts) {
+    /**
+     * @param viewedCommunityId the single community whose feed is being
+     *     listed (communityFeed), or null when there is no single community
+     *     context (followingFeed/myPosts) — see {@link #eligible}.
+     */
+    private List<FeedItem> toItems(UUID viewer, List<PostRow> posts,
+            UUID viewedCommunityId) {
         if (posts.isEmpty()) {
             return List.of();
         }
@@ -579,10 +762,51 @@ public class FeedService {
                         "t", rs.getString(2)), postIds.toArray())
                 .forEach(r -> tagsByPost.computeIfAbsent((UUID) r.get("p"),
                         k -> new ArrayList<>()).add((String) r.get("t")));
+        // Batch-resolve SELECTED_COMMUNITIES target lists — needed both to
+        // expose them on FeedItem and (when there's no single viewed
+        // community) to decide eligibility.
+        var selectedModePosts = posts.stream()
+                .filter(p -> "SELECTED_COMMUNITIES".equals(p.targetMode()))
+                .map(PostRow::id).toList();
+        var targetCommunitiesByPost = new LinkedHashMap<UUID, List<UUID>>();
+        if (!selectedModePosts.isEmpty()) {
+            var selPh = String.join(",", java.util.Collections.nCopies(
+                    selectedModePosts.size(), "?::uuid"));
+            jdbc.query("SELECT post_id,community_id FROM feed_post_communities"
+                            + " WHERE post_id IN (" + selPh + ")",
+                    (rs, i) -> Map.of("p", rs.getObject(1, UUID.class),
+                            "c", rs.getObject(2, UUID.class)),
+                    selectedModePosts.toArray())
+                    .forEach(r -> targetCommunitiesByPost.computeIfAbsent(
+                            (UUID) r.get("p"), k -> new ArrayList<>())
+                            .add((UUID) r.get("c")));
+        }
+        UUID viewerOriginCountryId = null;
+        UUID viewerCurrentCountryId = null;
+        var selectedCommunityCache = new java.util.HashMap<UUID, Boolean>();
+        if (viewedCommunityId == null) {
+            var viewerProfile = identity.profileSummary(viewer).orElse(null);
+            if (viewerProfile != null) {
+                viewerOriginCountryId = viewerProfile.originCountryId();
+                viewerCurrentCountryId = viewerProfile.currentCountryId();
+            }
+            if (!selectedModePosts.isEmpty()) {
+                var memberCommunityIds = community.membershipsOf(viewer).stream()
+                        .map(CommunityApi.MembershipView::communityId)
+                        .collect(java.util.stream.Collectors.toSet());
+                for (UUID postId : selectedModePosts) {
+                    var targets = targetCommunitiesByPost.getOrDefault(postId, List.of());
+                    selectedCommunityCache.put(postId,
+                            targets.stream().anyMatch(memberCommunityIds::contains));
+                }
+            }
+        }
         var cache = new java.util.HashMap<UUID, Boolean>();
         var out = new ArrayList<FeedItem>();
         for (var p : posts) {
-            if (hidden.contains(p.authorId()) || !eligible(viewer, p, cache)) {
+            if (hidden.contains(p.authorId()) || !eligible(viewer, p,
+                    viewedCommunityId, viewerOriginCountryId,
+                    viewerCurrentCountryId, cache, selectedCommunityCache)) {
                 continue;
             }
             var reaction = reactions.stream()
@@ -610,7 +834,9 @@ public class FeedService {
                     p.publishedAt(), p.title(), p.body(), ids, attachments,
                     tagsByPost.getOrDefault(p.id(), List.of()),
                     p.commentCount(), p.reactionCount(), p.shareCount(), reaction,
-                    viewed.contains(p.id()), saved.contains(p.id()), payload));
+                    viewed.contains(p.id()), saved.contains(p.id()), payload,
+                    p.targetMode(), targetCommunitiesByPost.getOrDefault(
+                            p.id(), List.of()), p.ctaLabel(), p.ctaUrl()));
         }
         return out;
     }
@@ -648,11 +874,17 @@ public class FeedService {
         if (!community.isActiveMember(viewer, communityId)) {
             throw forbidden("NOT_A_MEMBER");
         }
+        var viewedCommunity = taxonomy.findCommunityById(communityId)
+                .orElseThrow(() -> bad("COMMUNITY_NOT_FOUND"));
         boolean latest = "LATEST".equalsIgnoreCase(mode);
         int limit = clamp(size);
         var args = new ArrayList<Object>();
         args.add(viewer);                                   // ucv.user_id=?
-        args.add(communityId);                              // fp.community_id=?
+        // Audience match params, one set per target_mode branch below.
+        args.add(communityId);
+        args.add(communityId);
+        args.add(viewedCommunity.originCountryId());
+        args.add(viewedCommunity.destinationCountryId());
         // CAST(0 AS int) — a constant for LATEST; a bare "0" is read by
         // Postgres as ORDER-BY column position and is invalid SQL.
         String flag = latest ? "CAST(0 AS int)"
@@ -687,8 +919,16 @@ public class FeedService {
                         + " FROM feed_posts fp"
                         + " LEFT JOIN user_content_views ucv ON ucv.user_id=?"
                         + " AND ucv.content_type='FEED_POST' AND ucv.content_id=fp.id"
-                        + " WHERE fp.community_id=? AND fp.status='PUBLISHED'"
-                        + " AND fp.deleted_at IS NULL" + extra
+                        + " WHERE fp.status='PUBLISHED' AND fp.deleted_at IS NULL AND ("
+                        + "   (fp.target_mode='SINGLE_COMMUNITY' AND fp.community_id=?)"
+                        + "   OR (fp.target_mode='SELECTED_COMMUNITIES' AND EXISTS ("
+                        + "       SELECT 1 FROM feed_post_communities fpc"
+                        + "       WHERE fpc.post_id=fp.id AND fpc.community_id=?))"
+                        + "   OR (fp.target_mode='ALL_SAME_ORIGIN'"
+                        + "       AND fp.author_origin_country_id=?)"
+                        + "   OR (fp.target_mode='ALL_SAME_CURRENT_COUNTRY'"
+                        + "       AND fp.author_current_country_id=?)"
+                        + " )" + extra
                         + " ORDER BY " + flag + ", fp.published_at DESC,"
                         + " fp.id DESC LIMIT ?",
                 (rs, i) -> new Ranked(post(rs, i), rs.getInt("flag")),
@@ -705,7 +945,26 @@ public class FeedService {
             next = encode(tail.flag(), tail.post().publishedAt(),
                     tail.post().id());
         }
-        return new FeedPage(toItems(viewer, posts), next);
+        var items = toItems(viewer, posts, communityId);
+        recordImpressions(communityId, items.stream()
+                .map(FeedItem::sourceId).toList());
+        return new FeedPage(items, next);
+    }
+
+    /** Batched impressions upsert — one statement per page, not per post. */
+    private void recordImpressions(UUID communityId, List<UUID> postIds) {
+        if (postIds.isEmpty()) {
+            return;
+        }
+        var batch = postIds.stream()
+                .map(id -> new Object[]{id, communityId})
+                .toList();
+        jdbc.batchUpdate("INSERT INTO feed_post_community_stats"
+                + "(post_id,community_id,metric_date,impressions_count)"
+                + " VALUES(?,?,CURRENT_DATE,1)"
+                + " ON CONFLICT (post_id,community_id,metric_date) DO UPDATE"
+                + " SET impressions_count=feed_post_community_stats.impressions_count+1,"
+                + " updated_at=now()", batch);
     }
 
     private record Ranked(PostRow post, int flag) {
@@ -784,7 +1043,7 @@ public class FeedService {
             var last = rows.get(rows.size() - 1);
             next = encode(0, last.publishedAt(), last.id());
         }
-        return new MinePage(toItems(viewer, rows), next, total);
+        return new MinePage(toItems(viewer, rows, null), next, total);
     }
 
     /** Reels — same feed modes, post_type filter. Nearby deferred (no geo col). */
@@ -817,7 +1076,7 @@ public class FeedService {
             var last = rows.get(rows.size() - 1);
             next = encode(flag, last.publishedAt(), last.id());
         }
-        return new FeedPage(toItems(viewer, rows), next);
+        return new FeedPage(toItems(viewer, rows, null), next);
     }
 
     private static String encode(int flag, Instant ts, UUID id) {

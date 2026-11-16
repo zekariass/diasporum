@@ -91,7 +91,10 @@ public class FeedController {
                         (String) b.get("postType"), (String) b.get("title"),
                         (String) b.get("body"), (String) b.get("linkUrl"),
                         (String) b.getOrDefault("visibilityScope", "COMMUNITY"),
-                        uuid(b, "categoryId"), uuids(b, "mediaIds"), strings(b, "tags")));
+                        uuid(b, "categoryId"), uuids(b, "mediaIds"), strings(b, "tags"),
+                        (String) b.getOrDefault("targetMode", "SINGLE_COMMUNITY"),
+                        uuids(b, "targetCommunityIds"),
+                        (String) b.get("ctaLabel"), (String) b.get("ctaUrl")));
     }
 
     @GetMapping("/posts/{postId}")
@@ -105,7 +108,9 @@ public class FeedController {
             @RequestBody Map<String, Object> b) {
         return service.updatePost(principal.userId(), postId, (String) b.get("title"),
                 (String) b.get("body"), (String) b.get("linkUrl"),
-                uuid(b, "categoryId"), strings(b, "tags"));
+                uuid(b, "categoryId"), strings(b, "tags"),
+                (String) b.get("targetMode"), uuids(b, "targetCommunityIds"),
+                (String) b.get("ctaLabel"), (String) b.get("ctaUrl"));
     }
 
     @DeleteMapping("/posts/{postId}")
