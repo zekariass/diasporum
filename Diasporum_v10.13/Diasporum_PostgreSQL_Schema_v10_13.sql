@@ -94,7 +94,6 @@ CREATE TYPE spare_bag_price_unit AS ENUM ('PER_KG','PER_PARCEL');
 CREATE TYPE spare_bag_contact_status AS ENUM ('PENDING','ACCEPTED','DECLINED','CANCELLED','EXPIRED','CLOSED');
 CREATE TYPE address_visibility AS ENUM ('PUBLIC','PRIVATE','AUTHORISED_USERS');
 CREATE TYPE matchmaking_profile_status AS ENUM ('DRAFT','ACTIVE','PAUSED','SUSPENDED','DELETED');
-CREATE TYPE matchmaking_field_visibility AS ENUM ('VISIBLE','BLURRED','HIDDEN');
 CREATE TYPE matchmaking_verification_status AS ENUM ('NOT_VERIFIED','PENDING','VERIFIED','REJECTED','REVOKED');
 CREATE TYPE matchmaking_swipe_action AS ENUM ('LIKE','PASS');
 CREATE TYPE matchmaking_swipe_status AS ENUM ('ACTIVE','WITHDRAWN','REWOUND');
@@ -2534,8 +2533,10 @@ CREATE TABLE matchmaking_genders (
     is_active boolean NOT NULL DEFAULT true,
     sort_order integer NOT NULL DEFAULT 0
 );
+-- Exactly two dating genders are supported; discovery automatically matches
+-- each user with the opposite gender, so no gender preference is selectable.
 INSERT INTO matchmaking_genders(gender_key,display_name,sort_order) VALUES
- ('WOMAN','Woman',10),('MAN','Man',20),('NON_BINARY','Non-binary',30),('OTHER','Other',40),('PREFER_NOT_TO_SAY','Prefer not to say',90)
+ ('FEMALE','Woman',10),('MALE','Man',20)
 ON CONFLICT(gender_key) DO NOTHING;
 
 CREATE TABLE matchmaking_religions (
@@ -2570,18 +2571,18 @@ CREATE TABLE matchmaking_profiles (
     long_distance_relationship boolean,
     religion_importance text CHECK(religion_importance IS NULL OR religion_importance IN ('DEAL_BREAKER','VERY_IMPORTANT','SOMEWHAT_IMPORTANT','NOT_IMPORTANT')),
     willing_to_relocate boolean,
-    photo_media_id uuid REFERENCES media_objects(id) ON DELETE SET NULL,
-    blurred_photo_media_id uuid REFERENCES media_objects(id) ON DELETE SET NULL,
-    name_visibility matchmaking_field_visibility NOT NULL DEFAULT 'BLURRED',
-    photo_visibility matchmaking_field_visibility NOT NULL DEFAULT 'BLURRED',
+    -- Photos live in matchmaking_profile_photos (originals only; blurred
+    -- renditions are generic media derivatives resolved per viewer). These two
+    -- settings control what other members see before a mutual match.
+    blur_photos_until_match boolean NOT NULL DEFAULT true,
+    hide_name_until_match boolean NOT NULL DEFAULT true,
     anonymous_alias text NOT NULL DEFAULT 'Diasporum member' CHECK(length(trim(anonymous_alias)) BETWEEN 1 AND 80),
     verification_status matchmaking_verification_status NOT NULL DEFAULT 'NOT_VERIFIED',
     status matchmaking_profile_status NOT NULL DEFAULT 'DRAFT',
     activated_at timestamptz,
     last_active_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    CHECK(photo_media_id IS NULL OR blurred_photo_media_id IS NULL OR photo_media_id <> blurred_photo_media_id)
+    updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_matchmaking_profiles_active ON matchmaking_profiles(status,gender_key,verification_status,updated_at DESC) WHERE status='ACTIVE';
 CREATE INDEX ix_matchmaking_profiles_religion ON matchmaking_profiles(religion_id,status) WHERE status='ACTIVE';
@@ -2599,12 +2600,27 @@ CREATE TABLE matchmaking_preferences (
     updated_at timestamptz NOT NULL DEFAULT now(),
     CHECK(max_age >= min_age)
 );
-CREATE TABLE matchmaking_preference_genders (
-    user_id uuid NOT NULL REFERENCES matchmaking_preferences(user_id) ON DELETE CASCADE,
-    gender_key text NOT NULL REFERENCES matchmaking_genders(gender_key) ON DELETE RESTRICT,
+-- Ordered photo collection for one matchmaking profile. media_id references
+-- the original image only; the maximum count is enforced by the backend via
+-- configuration (diasporum.matchmaking.max-profile-photos), not a hardcoded
+-- database limit, so administrators can raise or lower it without a migration.
+CREATE TABLE matchmaking_profile_photos (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL REFERENCES matchmaking_profiles(user_id) ON DELETE CASCADE,
+    media_id uuid NOT NULL REFERENCES media_objects(id) ON DELETE RESTRICT,
+    sort_order integer NOT NULL DEFAULT 0,
+    is_primary boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY(user_id,gender_key)
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_matchmaking_profile_photos_media UNIQUE(user_id, media_id)
 );
+-- At most one primary photo per profile.
+CREATE UNIQUE INDEX ux_matchmaking_profile_photos_primary
+    ON matchmaking_profile_photos(user_id) WHERE is_primary;
+-- Deterministic ordering positions within a profile.
+CREATE UNIQUE INDEX ux_matchmaking_profile_photos_order
+    ON matchmaking_profile_photos(user_id, sort_order);
+CREATE INDEX ix_matchmaking_profile_photos_media ON matchmaking_profile_photos(media_id);
 CREATE TABLE matchmaking_preference_religions (
     user_id uuid NOT NULL REFERENCES matchmaking_preferences(user_id) ON DELETE CASCADE,
     religion_id uuid NOT NULL REFERENCES matchmaking_religions(id) ON DELETE RESTRICT,
@@ -2734,10 +2750,7 @@ SELECT EXISTS (
  SELECT 1 FROM distances d
  WHERE d.a_id<>d.b_id
    AND matchmaking_user_is_eligible(d.a_id) AND matchmaking_user_is_eligible(d.b_id)
-   AND (NOT EXISTS(SELECT 1 FROM matchmaking_preference_genders g WHERE g.user_id=d.a_id)
-        OR EXISTS(SELECT 1 FROM matchmaking_preference_genders g WHERE g.user_id=d.a_id AND g.gender_key=d.b_gender))
-   AND (NOT EXISTS(SELECT 1 FROM matchmaking_preference_genders g WHERE g.user_id=d.b_id)
-        OR EXISTS(SELECT 1 FROM matchmaking_preference_genders g WHERE g.user_id=d.b_id AND g.gender_key=d.a_gender))
+   AND d.a_gender IN ('MALE','FEMALE') AND d.b_gender IN ('MALE','FEMALE') AND d.a_gender<>d.b_gender
    AND d.b_age BETWEEN d.a_min AND d.a_max AND d.a_age BETWEEN d.b_min AND d.b_max
    AND (d.a_children_pref='ANY' OR (d.a_children_pref='YES' AND d.b_children IS TRUE) OR (d.a_children_pref='NO' AND d.b_children IS FALSE))
    AND (d.b_children_pref='ANY' OR (d.b_children_pref='YES' AND d.a_children IS TRUE) OR (d.b_children_pref='NO' AND d.a_children IS FALSE))
@@ -2760,13 +2773,21 @@ $$;
 
 CREATE OR REPLACE FUNCTION validate_matchmaking_profile()
 RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE v_owner uuid; v_purpose text; v_media_status media_status; v_address_visibility address_visibility;
+DECLARE v_owner uuid; v_address_visibility address_visibility;
 BEGIN
     IF NEW.status='ACTIVE' AND NOT matchmaking_account_is_adult(NEW.user_id) THEN
         RAISE EXCEPTION 'Matchmaking requires an active account, confirmed date of birth and age 18+' USING ERRCODE='23514';
     END IF;
+    IF NEW.status='ACTIVE' AND NEW.gender_key NOT IN ('MALE','FEMALE') THEN
+        RAISE EXCEPTION 'Matchmaking gender must be MALE or FEMALE' USING ERRCODE='23514';
+    END IF;
     IF NEW.status='ACTIVE' AND NOT EXISTS (SELECT 1 FROM matchmaking_preferences pref WHERE pref.user_id=NEW.user_id) THEN
         RAISE EXCEPTION 'Matchmaking preferences must be configured before profile activation' USING ERRCODE='23514';
+    END IF;
+    IF NEW.status='ACTIVE' AND NOT EXISTS (
+        SELECT 1 FROM matchmaking_profile_photos pp JOIN media_objects m ON m.id=pp.media_id
+        WHERE pp.user_id=NEW.user_id AND pp.is_primary AND m.status='READY') THEN
+        RAISE EXCEPTION 'An active matchmaking profile requires a READY primary photo' USING ERRCODE='23514';
     END IF;
     IF NEW.address_id IS NOT NULL THEN
         SELECT visibility,owner_user_id INTO v_address_visibility,v_owner FROM addresses WHERE id=NEW.address_id;
@@ -2782,36 +2803,45 @@ BEGIN
     ) AND NOT EXISTS (SELECT 1 FROM user_discovery_locations dl WHERE dl.user_id=NEW.user_id) THEN
         RAISE EXCEPTION 'A profile using distance-based matchmaking requires an opted-in approximate discovery location' USING ERRCODE='23514';
     END IF;
-    IF NEW.photo_media_id IS NOT NULL THEN
-        SELECT owner_user_id,purpose,status INTO v_owner,v_purpose,v_media_status FROM media_objects WHERE id=NEW.photo_media_id;
-        IF v_owner IS DISTINCT FROM NEW.user_id OR v_purpose <> 'MATCHMAKING_PROFILE_PHOTO' THEN
-            RAISE EXCEPTION 'Matchmaking profile photo must be owned by the user and use MATCHMAKING_PROFILE_PHOTO purpose' USING ERRCODE='23514';
-        END IF;
-        IF NEW.status='ACTIVE' AND NEW.photo_visibility='VISIBLE' AND v_media_status<>'READY' THEN
-            RAISE EXCEPTION 'Visible matchmaking photo must be READY' USING ERRCODE='23514';
-        END IF;
-    END IF;
-    IF NEW.blurred_photo_media_id IS NOT NULL THEN
-        SELECT owner_user_id,purpose,status INTO v_owner,v_purpose,v_media_status FROM media_objects WHERE id=NEW.blurred_photo_media_id;
-        IF v_owner IS DISTINCT FROM NEW.user_id OR v_purpose <> 'MATCHMAKING_PROFILE_BLURRED' THEN
-            RAISE EXCEPTION 'Blurred rendition must be owned by the user and use MATCHMAKING_PROFILE_BLURRED purpose' USING ERRCODE='23514';
-        END IF;
-        IF NEW.status='ACTIVE' AND NEW.photo_visibility='BLURRED' AND v_media_status<>'READY' THEN
-            RAISE EXCEPTION 'Blurred matchmaking photo must be READY' USING ERRCODE='23514';
-        END IF;
-    END IF;
-    IF NEW.status='ACTIVE' AND NEW.photo_visibility='BLURRED' AND NEW.blurred_photo_media_id IS NULL THEN
-        RAISE EXCEPTION 'BLURRED photo visibility requires a server-generated blurred rendition' USING ERRCODE='23514';
-    END IF;
-    IF NEW.status='ACTIVE' AND NEW.photo_visibility='VISIBLE' AND NEW.photo_media_id IS NULL THEN
-        RAISE EXCEPTION 'VISIBLE photo visibility requires a profile photo' USING ERRCODE='23514';
+    RETURN NEW;
+END;
+$$;
+
+-- Photo media must be the owner's own MATCHMAKING_PROFILE_PHOTO asset.
+CREATE OR REPLACE FUNCTION validate_matchmaking_profile_photo()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_owner uuid; v_purpose text;
+BEGIN
+    SELECT owner_user_id,purpose INTO v_owner,v_purpose FROM media_objects WHERE id=NEW.media_id;
+    IF v_owner IS DISTINCT FROM NEW.user_id OR v_purpose <> 'MATCHMAKING_PROFILE_PHOTO' THEN
+        RAISE EXCEPTION 'Matchmaking profile photo must be owned by the user and use MATCHMAKING_PROFILE_PHOTO purpose' USING ERRCODE='23514';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+-- Deleting the primary photo promotes the next photo in deterministic order so
+-- a profile with remaining photos is never left without a primary.
+CREATE OR REPLACE FUNCTION matchmaking_photo_promote_primary()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.is_primary THEN
+        UPDATE matchmaking_profile_photos SET is_primary=true
+        WHERE id = (SELECT id FROM matchmaking_profile_photos
+                    WHERE user_id=OLD.user_id ORDER BY sort_order, created_at LIMIT 1);
+    END IF;
+    RETURN OLD;
 END;
 $$;
 DROP TRIGGER IF EXISTS trg_matchmaking_profile_integrity ON matchmaking_profiles;
 CREATE TRIGGER trg_matchmaking_profile_integrity BEFORE INSERT OR UPDATE ON matchmaking_profiles
 FOR EACH ROW EXECUTE FUNCTION validate_matchmaking_profile();
+CREATE TRIGGER trg_matchmaking_profile_photo_integrity BEFORE INSERT OR UPDATE ON matchmaking_profile_photos
+FOR EACH ROW EXECUTE FUNCTION validate_matchmaking_profile_photo();
+CREATE TRIGGER trg_matchmaking_photo_promote_primary AFTER DELETE ON matchmaking_profile_photos
+FOR EACH ROW EXECUTE FUNCTION matchmaking_photo_promote_primary();
+CREATE TRIGGER trg_matchmaking_profile_photos_updated_at BEFORE UPDATE ON matchmaking_profile_photos
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE OR REPLACE FUNCTION validate_matchmaking_preferences()
 RETURNS trigger LANGUAGE plpgsql AS $$

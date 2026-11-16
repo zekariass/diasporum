@@ -1,3 +1,33 @@
+# Diasporum Web
+
+Next.js 16 / React 19 / Tailwind CSS 4 / TypeScript 5 — web frontend for the
+Diasporum platform. **Early stage** — only an events discovery page exists,
+currently backed by mock data (`lib/events/mock-events.ts`).
+
+## Current state
+
+- `app/` — Next.js App Router pages: `/` redirects to `/events`, `/events` is the discovery page, `/events/[id]` is the detail page
+- `components/events/` — event-specific UI components (cards, filters, header, footer)
+- `lib/events/` — mock data, types, formatting utilities
+- No API integration yet — all data is local mock data
+- No tests configured
+
+## Structure
+
+```
+app/                    ← pages and layouts (App Router)
+components/             ← reusable UI components
+lib/                    ← data, types, utilities
+  events/               ← event discovery domain
+```
+
+## Conventions
+
+- Server Components by default; `'use client'` only where interactivity requires it
+- Tailwind CSS 4 for styling
+- Types in `lib/{domain}/types.ts`
+- Match backend API types when integrating (UUIDs as strings, ISO-8601 timestamps, `{status, code, message}` error shape)
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

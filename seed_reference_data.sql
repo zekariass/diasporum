@@ -212,5 +212,157 @@ INSERT INTO languages(language_code,display_name,sort_order) VALUES
 ON CONFLICT(language_code) DO UPDATE SET
   display_name=EXCLUDED.display_name, sort_order=EXCLUDED.sort_order;
 
+-- Service marketplace hierarchical category catalogue (parents group the
+-- selectable services; English translations drive the app pickers).
+INSERT INTO service_categories(category_key,sort_order) VALUES
+('HOME_MAINTENANCE',1),
+('HOME_IMPROVEMENT',2),
+('AUTOMOTIVE',3),
+('WELLNESS_BEAUTY',4),
+('EDUCATION_TUTORING',5),
+('EVENTS_CREATIVE',6),
+('BUSINESS_DIGITAL',7),
+('CARE_SUPPORT',8),
+('MOVING_TRANSPORT',9)
+ON CONFLICT(category_key) DO NOTHING;
+
+INSERT INTO service_categories(category_key,parent_id,sort_order)
+SELECT v.category_key, p.id, v.sort_order
+FROM (VALUES
+    ('GARDENING','HOME_MAINTENANCE',1),
+    ('PEST_CONTROL','HOME_MAINTENANCE',2),
+    ('HOUSE_CLEANING','HOME_MAINTENANCE',3),
+    ('HANDYMAN','HOME_MAINTENANCE',4),
+    ('PLUMBING','HOME_MAINTENANCE',5),
+    ('ELECTRICAL_WORK','HOME_MAINTENANCE',6),
+    ('HEATING_COOLING','HOME_MAINTENANCE',7),
+    ('WINDOW_CLEANING','HOME_MAINTENANCE',8),
+    ('PAINTING_DECORATION_INTERIOR','HOME_IMPROVEMENT',1),
+    ('CCTV_INSTALLATION_DOMESTIC','HOME_IMPROVEMENT',2),
+    ('CARPENTRY_JOINERY','HOME_IMPROVEMENT',3),
+    ('FLOORING_TILING','HOME_IMPROVEMENT',4),
+    ('ROOFING_GUTTERING','HOME_IMPROVEMENT',5),
+    ('KITCHEN_BATHROOM_FITTING','HOME_IMPROVEMENT',6),
+    ('PLASTERING_RENDERING','HOME_IMPROVEMENT',7),
+    ('RENOVATION_CONVERSION','HOME_IMPROVEMENT',8),
+    ('MOBILE_MECHANIC','AUTOMOTIVE',1),
+    ('CAR_WASH_DETAILING','AUTOMOTIVE',2),
+    ('TYRES_BATTERIES','AUTOMOTIVE',3),
+    ('AUTO_ELECTRICAL','AUTOMOTIVE',4),
+    ('HAIRDRESSING','WELLNESS_BEAUTY',1),
+    ('BARBERING','WELLNESS_BEAUTY',2),
+    ('MASSAGE_THERAPY','WELLNESS_BEAUTY',3),
+    ('NAILS_BEAUTY','WELLNESS_BEAUTY',4),
+    ('PERSONAL_TRAINING','WELLNESS_BEAUTY',5),
+    ('PHYSIOTHERAPY','WELLNESS_BEAUTY',6),
+    ('LANGUAGE_TUTORING','EDUCATION_TUTORING',1),
+    ('ACADEMIC_TUTORING','EDUCATION_TUTORING',2),
+    ('MUSIC_LESSONS','EDUCATION_TUTORING',3),
+    ('DRIVING_LESSONS','EDUCATION_TUTORING',4),
+    ('EXAM_PREPARATION','EDUCATION_TUTORING',5),
+    ('PHOTOGRAPHY','EVENTS_CREATIVE',1),
+    ('VIDEOGRAPHY','EVENTS_CREATIVE',2),
+    ('EVENT_CATERING','EVENTS_CREATIVE',3),
+    ('DJ_LIVE_MUSIC','EVENTS_CREATIVE',4),
+    ('EVENT_PLANNING','EVENTS_CREATIVE',5),
+    ('WEB_APP_DEVELOPMENT','BUSINESS_DIGITAL',1),
+    ('GRAPHIC_DESIGN','BUSINESS_DIGITAL',2),
+    ('DIGITAL_MARKETING','BUSINESS_DIGITAL',3),
+    ('ACCOUNTING_BOOKKEEPING','BUSINESS_DIGITAL',4),
+    ('LEGAL_SERVICES','BUSINESS_DIGITAL',5),
+    ('TRANSLATION_INTERPRETING','BUSINESS_DIGITAL',6),
+    ('CHILDCARE_BABYSITTING','CARE_SUPPORT',1),
+    ('ELDERLY_CARE','CARE_SUPPORT',2),
+    ('PET_CARE_DOG_WALKING','CARE_SUPPORT',3),
+    ('HOUSE_SITTING','CARE_SUPPORT',4),
+    ('REMOVALS_MOVING','MOVING_TRANSPORT',1),
+    ('DELIVERY_COURIER','MOVING_TRANSPORT',2),
+    ('VAN_MAN_HIRE','MOVING_TRANSPORT',3)
+) AS v(category_key,parent_key,sort_order)
+JOIN service_categories p ON p.category_key=v.parent_key
+ON CONFLICT(category_key) DO NOTHING;
+
+-- Third level: selectable services that sit under an intermediate category.
+INSERT INTO service_categories(category_key,parent_id,sort_order)
+SELECT v.category_key, p.id, v.sort_order
+FROM (VALUES
+    ('LOFT_CONVERSION','RENOVATION_CONVERSION',1),
+    ('GARAGE_CONVERSION','RENOVATION_CONVERSION',2),
+    ('BASEMENT_CONVERSION','RENOVATION_CONVERSION',3)
+) AS v(category_key,parent_key,sort_order)
+JOIN service_categories p ON p.category_key=v.parent_key
+ON CONFLICT(category_key) DO NOTHING;
+
+INSERT INTO service_category_translations(service_category_id,language_id,display_name,description)
+SELECT c.id, l.id, v.display_name, v.description
+FROM (VALUES
+    ('HOME_MAINTENANCE','Home Maintenance','Repairs, upkeep and recurring home services'),
+    ('HOME_IMPROVEMENT','Home Improvements','Renovation, installation and finishing work'),
+    ('AUTOMOTIVE','Automotive & Vehicles','Vehicle repair, cleaning and roadside services'),
+    ('WELLNESS_BEAUTY','Wellness & Beauty','Health, fitness and personal care services'),
+    ('EDUCATION_TUTORING','Education & Tutoring','Lessons, tutoring and skills training'),
+    ('EVENTS_CREATIVE','Events & Creative','Event services, media and entertainment'),
+    ('BUSINESS_DIGITAL','Business & Digital','Professional, digital and business services'),
+    ('CARE_SUPPORT','Care & Support','Family, elderly and pet care services'),
+    ('MOVING_TRANSPORT','Moving & Transport','Removals, courier and transport help'),
+    ('GARDENING','Gardening','Lawn care, planting, pruning and garden tidy-ups'),
+    ('PEST_CONTROL','Pest Control','Inspection and removal of household pests'),
+    ('HOUSE_CLEANING','House Cleaning','Regular, deep and end-of-tenancy cleaning'),
+    ('HANDYMAN','Handyman','Small repairs, mounting and odd jobs'),
+    ('PLUMBING','Plumbing','Leaks, taps, pipes, toilets and drainage'),
+    ('ELECTRICAL_WORK','Electrical Work','Wiring, sockets, lighting and fault finding'),
+    ('HEATING_COOLING','Heating & Cooling','Boiler, radiator and air-conditioning work'),
+    ('WINDOW_CLEANING','Window Cleaning','Interior and exterior window cleaning'),
+    ('PAINTING_DECORATION_INTERIOR','Painting & Decoration - Interior','Interior painting, wallpaper and finishing'),
+    ('CCTV_INSTALLATION_DOMESTIC','CCTV Installation - Domestic','Home security camera supply and installation'),
+    ('CARPENTRY_JOINERY','Carpentry & Joinery','Custom woodwork, doors, shelves and repairs'),
+    ('FLOORING_TILING','Flooring & Tiling','Laminate, hardwood, vinyl and tile fitting'),
+    ('ROOFING_GUTTERING','Roofing & Guttering','Roof repairs, gutter cleaning and replacement'),
+    ('KITCHEN_BATHROOM_FITTING','Kitchen & Bathroom Fitting','Full kitchen and bathroom installation'),
+    ('PLASTERING_RENDERING','Plastering & Rendering','Walls, ceilings and exterior rendering'),
+    ('RENOVATION_CONVERSION','Renovation & Conversion','Structural conversions and space renovations'),
+    ('LOFT_CONVERSION','Loft Conversion','Dormer, Velux and attic-to-room conversions'),
+    ('GARAGE_CONVERSION','Garage Conversion','Garage-to-living-space conversions'),
+    ('BASEMENT_CONVERSION','Basement Conversion','Cellar and basement renovation and tanking'),
+    ('MOBILE_MECHANIC','Mobile Mechanic','On-site vehicle diagnostics and repair'),
+    ('CAR_WASH_DETAILING','Car Wash & Detailing','Exterior wash, interior valeting and detailing'),
+    ('TYRES_BATTERIES','Tyres & Batteries','Fitting, puncture repair and replacements'),
+    ('AUTO_ELECTRICAL','Auto Electrical','Vehicle wiring, alarms and diagnostics'),
+    ('HAIRDRESSING','Hairdressing','Cuts, colouring and styling at home or salon'),
+    ('BARBERING','Barbering','Men''s cuts, fades and beard grooming'),
+    ('MASSAGE_THERAPY','Massage Therapy','Relaxation, sports and therapeutic massage'),
+    ('NAILS_BEAUTY','Nails & Beauty','Manicure, pedicure, lashes and beauty treatments'),
+    ('PERSONAL_TRAINING','Personal Training','One-to-one fitness coaching and plans'),
+    ('PHYSIOTHERAPY','Physiotherapy','Injury rehabilitation and mobility treatment'),
+    ('LANGUAGE_TUTORING','Language Tutoring','Conversation and exam-focused language lessons'),
+    ('ACADEMIC_TUTORING','Academic Tutoring','School subject support and homework help'),
+    ('MUSIC_LESSONS','Music Lessons','Instrument and vocal tuition'),
+    ('DRIVING_LESSONS','Driving Lessons','Learner driving instruction and test prep'),
+    ('EXAM_PREPARATION','Exam Preparation','Structured revision for school and entry exams'),
+    ('PHOTOGRAPHY','Photography','Portrait, event and product photography'),
+    ('VIDEOGRAPHY','Videography','Event filming, editing and highlight reels'),
+    ('EVENT_CATERING','Event Catering','Food preparation and service for events'),
+    ('DJ_LIVE_MUSIC','DJ & Live Music','DJs, bands and performers for events'),
+    ('EVENT_PLANNING','Event Planning','Coordination of parties, weddings and functions'),
+    ('WEB_APP_DEVELOPMENT','Web & App Development','Websites, apps and custom software'),
+    ('GRAPHIC_DESIGN','Graphic Design','Logos, branding and marketing materials'),
+    ('DIGITAL_MARKETING','Digital Marketing','Social media, ads and content support'),
+    ('ACCOUNTING_BOOKKEEPING','Accounting & Bookkeeping','Accounts, tax returns and bookkeeping'),
+    ('LEGAL_SERVICES','Legal Services','Contracts, immigration and general legal help'),
+    ('TRANSLATION_INTERPRETING','Translation & Interpreting','Document translation and live interpreting'),
+    ('CHILDCARE_BABYSITTING','Childcare & Babysitting','Babysitting, nannying and after-school care'),
+    ('ELDERLY_CARE','Elderly Care','Companionship and non-medical home care'),
+    ('PET_CARE_DOG_WALKING','Pet Care & Dog Walking','Walking, sitting and feeding pets'),
+    ('HOUSE_SITTING','House Sitting','Home and pet care while you are away'),
+    ('REMOVALS_MOVING','Removals & Moving','House moves, packing and furniture transport'),
+    ('DELIVERY_COURIER','Delivery & Courier','Parcel, document and goods delivery'),
+    ('VAN_MAN_HIRE','Van & Man Hire','Driver with van for collections and drop-offs')
+) AS v(category_key,display_name,description)
+JOIN service_categories c ON c.category_key=v.category_key
+CROSS JOIN languages l
+WHERE l.language_code='en'
+ON CONFLICT(service_category_id,language_id) DO NOTHING;
+
 SELECT count(*) AS countries FROM countries;
 SELECT count(*) AS languages FROM languages;
+SELECT count(*) AS service_categories FROM service_categories;

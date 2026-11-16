@@ -2,7 +2,7 @@ DIASPORUM / FULL SYSTEM DESIGN / V10.13
 
 DIASPORUM
 Full System Design -- v10.13
-Product scope · Architecture · Domain model · PostgreSQL · APIs · Realtime · Security · Operations
+Product scope ï¿½ Architecture ï¿½ Domain model ï¿½ PostgreSQL ï¿½ APIs ï¿½ Realtime ï¿½ Security ï¿½ Operations
 
 Document control Version Date Status
 Baseline material
@@ -17,7 +17,7 @@ v10.12 identity, product and architecture baseline carried forward; v10.13 adds 
 Design proposal only. No marketplace migration has been executed; the supplied v10.12 SQL remains a clean-install candidate and was not modified by this design update.
 Spring Boot modular monolith, PostgreSQL/PostGIS, Expo/React Native, Next.js admin/informational site, Ably, Cloudflare R2; Stripe Connect and Shippo are proposed provider integrations.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -33,7 +33,7 @@ catalogue, inventory, mixed-seller carts, checkout, orders, payment transfers, s
 23.8 Shop Marketplace
  Verify individual and Business Account seller ownership, seller-to-shop linkage, Business Account role enforcement and immediate access revocation. Multiple shops under one legal seller must be able to share one connected payment account.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -50,16 +50,16 @@ Page
  Verify product/shop reviews require eligible purchases; reports, moderation, featured placements and contextual messages use existing module contracts and enforce ownership/visibility.
  Run mobile Seller Workspace accessibility, offline/retry, deep-link, large-text and permission tests; run moduleboundary tests proving no direct access to other modules' internal repositories.
 24. Delivery roadmap 25. Architecture decisions and open launch gates 26. Global Shop Marketplace
-· Appendix A. Historical v10.8 schema inventory (superseded by Appendix K) · Appendix B. Historical lifecycle and API conventions (superseded where inconsistent with Appendix K) · Appendix C. Historical source artifacts and limits · Appendix D. Historical v10.0 updates: marketplaces, visibility and billing
-· Appendix E. Historical v10.2 follow-up decisions
-· Appendix F. Historical v10.3 feed discovery, featured items and view tracking
-· Appendix G. v10.5 schema update and change summary (historical baseline)
-· Appendix H. v10.6 billing quota behaviour and deferred feature (carried forward)
-· Appendix I. Historical v10.7/v10.8 service marketplace, messaging contexts and temporary voice comments (superseded where inconsistent with Appendix K)
-· Appendix J. Historical v10.8 shared PostGIS distance and nearby discovery
-· Appendix K. v10.9 consolidated batch update: social graph, voice lifecycle, moderation, polls, featured placements, business accounts and push notifications · Appendix L. v10.10 Reels short-video feature: feed modes, current-address Nearby sorting, media and publication integrity · Appendix M. v10.11 Community Help & Offers: structured requests/offers, lifecycle and contextual responses · Appendix N. v10.12 first-party authentication, account identity, sessions, token security and role model Page numbers are intentionally omitted from this static contents list; Word navigation pane is enabled by the heading styles.
+ï¿½ Appendix A. Historical v10.8 schema inventory (superseded by Appendix K) ï¿½ Appendix B. Historical lifecycle and API conventions (superseded where inconsistent with Appendix K) ï¿½ Appendix C. Historical source artifacts and limits ï¿½ Appendix D. Historical v10.0 updates: marketplaces, visibility and billing
+ï¿½ Appendix E. Historical v10.2 follow-up decisions
+ï¿½ Appendix F. Historical v10.3 feed discovery, featured items and view tracking
+ï¿½ Appendix G. v10.5 schema update and change summary (historical baseline)
+ï¿½ Appendix H. v10.6 billing quota behaviour and deferred feature (carried forward)
+ï¿½ Appendix I. Historical v10.7/v10.8 service marketplace, messaging contexts and temporary voice comments (superseded where inconsistent with Appendix K)
+ï¿½ Appendix J. Historical v10.8 shared PostGIS distance and nearby discovery
+ï¿½ Appendix K. v10.9 consolidated batch update: social graph, voice lifecycle, moderation, polls, featured placements, business accounts and push notifications ï¿½ Appendix L. v10.10 Reels short-video feature: feed modes, current-address Nearby sorting, media and publication integrity ï¿½ Appendix M. v10.11 Community Help & Offers: structured requests/offers, lifecycle and contextual responses ï¿½ Appendix N. v10.12 first-party authentication, account identity, sessions, token security and role model Page numbers are intentionally omitted from this static contents list; Word navigation pane is enabled by the heading styles.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -80,7 +80,7 @@ Diasporum is a mobile-first diaspora community and practical-support platform. I
 1.2 Product rules that shape the architecture
  Exactly one permanent General Chat Room per community. There is no permanent General Voice Room.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -123,7 +123,7 @@ Event-specific categories, time zone, RSVP, capacity, venue/address or online de
 Job taxonomy, source and employment details, location, application route, saves, internal applications
 Airports, route/date matching, sender requests, passenger offers, contact requests, safety reports
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -158,7 +158,7 @@ product capability.  No two voice SFU providers for the same session. One provid
 3.1 Community identity
 A community is identified by `(origin_country_id, destination_country_id)`, for example Ethiopians in the UK. City is an optional profile/location filter, not a default top-level community dimension. The same destinationcountry practical categories may be reused across communities in that country.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -232,7 +232,7 @@ Explicit choice at creation; queries and response DTOs must apply country, statu
 
 Feed posts, Events and Jobs use destination/current country as the content market. Property and vehicle listings use their explicit country and audience scope. Spare Bag uses the country of the origin/departure airport as the listing market. Category choice never broadens scope. Airport references remain in `airports` rather than being flattened into address records.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -276,7 +276,7 @@ Support workflows with least privilege; access is case-specific, justified and a
  Use immutable audit entries for role assignment/revocation, moderation action, verification decision and sensitive support access.
  Platform moderators may override user-level protections only through explicit emergency/admin paths that record the actor and reason.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -316,7 +316,7 @@ Filter by category, employment type, schedule, workplace, location and source; d
 
 Matchmaking
 
-Adult-gated onboarding, preferences, LIKE/PASS cards and explicit display-name/photo visibility settings. Mutual likes produce a match and standard chat.
+Adult-gated onboarding, preferences, multi-photo profile gallery, LIKE/PASS cards and until-match name/photo privacy toggles. Mutual likes produce a match and standard chat.
 
 Spare Bag
 
@@ -332,7 +332,7 @@ Mobile seller management from Profile: shop switching, overview, catalogue, inve
  Provide explicit empty, loading, offline, permission-denied, removed-content and retry states.  Use optimistic UI only where the operation can be rolled back cleanly; never treat optimistic state as
 authoritative for matching, capacity or moderation.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -401,7 +401,7 @@ Stripe Connect (proposed) for connected seller accounts, customer payments and s
 
 Retries, expiry, push, media processing and lifecycle reconciliation.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -435,7 +435,7 @@ Ably token issuance, event envelope, outbox publication, event deduplication and
 R2 upload grants, validation, media processing, thumbnails, blurred renditions and access grants
 In-app notification state, delivery preferences, device tokens, push retries and reminders
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -467,7 +467,7 @@ Individual/business sellers, shops, global product catalogue, variants and price
 3. The same database transaction records an outbox event describing the committed message.
 4. After commit, a worker publishes the event to the authorised Ably channel and marks the outbox delivery state.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -496,7 +496,7 @@ content is discoverable only in the relevant destination country and subject to 
 limits and ownership.  Content removed or hidden by moderation must not leak through search, saved lists, media URLs,
 notification previews or cached feed pages.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -524,7 +524,7 @@ Because one PostgreSQL foreign key cannot target different tables based on a dis
 
 reference has no direct FK to the domain table. The backend must validate that the target exists, the type matches, the target is published/eligible, and the user is allowed to see it. It must also recheck country/community scope,
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -544,7 +544,7 @@ Apply content-type-specific relevance: events should reflect start date, attenda
 Direct messaging is one shared system for personal users and Business Accounts. Relationship-based GENERAL conversations use the recipient's privacy policy; context-based enquiries are linked to a specific item and may start as accepted conversations after all context/privacy/block/contact/billing checks. A pending stranger message request may contain exactly one initial message; ordinary follow-up messaging begins only after acceptance. A mutual matchmaking match creates/reuses the normal GENERAL conversation and a match-origin friendship.  `direct_conversations` stores the canonical participant identities, optional Business Account identities on either
 side, a context type/resource ID and inbox activity fields. Its uniqueness key includes both participant identities and the context, so the same two parties have separate conversations for different listings or jobs but reuse the thread for the same context.  `direct_conversation_participants` stores per-user inbox/read/archive/mute state for each side. For a Business Account side, active accepted members are associated with that side; authorization is rechecked on every request and business membership changes update conversation access.  `direct_messages.sequence_no` is allocated monotonically within its conversation. The sender identity records both the acting user and optional Business Account identity. For a REQUESTED GENERAL conversation, only one initial message linked to the pending request may be sent until it is accepted.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -587,7 +587,7 @@ Equivalent room-scoped sequence mechanism for community chat.
 Per-user, per-room read cursor for unread calculations.
 
 Read state is a cursor per user per conversation/room--not a row per message read. Per-message read receipts can be added only if the product later needs "seen by each member" functionality.
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -633,7 +633,7 @@ Employment arrangement
 
 Permanent, fixed-term, contract, temporary, casual, zero-hours, seasonal, apprenticeship, internship, volunteer, freelance, commission, self-employed, other/unspecified
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -669,7 +669,7 @@ The service marketplace connects customers with independent personal or business
 12.4.1 Provider profiles and discovery
 `service_providers` has exactly one owner: a personal profile or a Business Account. Each provider chooses service categories and maintains one editable base location plus `radius_km`; no separate provider-location or coverage-
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -708,7 +708,7 @@ Listing lifecycle: DRAFT  optional PENDING_REVIEW  PUBLISHED  PAUSED/MATCHED/CLO
 13.2 Airport, address and matching rules
  Use `airports` as the authoritative airport catalog with IATA code, name, city, country, timezone and optional coordinates.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -727,19 +727,19 @@ New v9 design This model replaces the previous anonymous matchmaking request/can
 This model replaces the previous anonymous matchmaking request/candidate/interest/reveal-consent workflow. Matchmaking uses opt-in profiles, preferences, LIKE/PASS decisions and reciprocal likes. A successful match enables ordinary direct chat; there is no separate reveal-consent step.
 
 14.1 Main records
-Table `matchmaking_profiles` `matchmaking_preferences` `matchmaking_preference_genders` `matchmaking_preference_religions` `matchmaking_preference_languages` `matchmaking_swipes`
+Table `matchmaking_profiles` `matchmaking_profile_photos` `matchmaking_preferences` `matchmaking_preference_religions` `matchmaking_preference_languages` `matchmaking_swipes`
 `matchmaking_swipe_history`
 
 Responsibility
-One opt-in matchmaking profile per user; profile attributes, status, verification state and name/photo visibility settings.
+One opt-in matchmaking profile per user; profile attributes, status, verification state and the `blur_photos_until_match`/`hide_name_until_match` privacy settings.
+Ordered multi-photo collection per profile: original media references only, one primary photo, deterministic `sort_order`, automatic primary promotion on delete. Blurred renditions are generic server-side media derivatives, not stored fields.
 One preference record per user: age, distance, verified-only, children preferences and multi-select criteria.
-User-selected genders eligible for discovery.
 User-selected religion preferences.
 User-selected language preferences.
 Current directional LIKE/PASS decision and ACTIVE/WITHDRAWN/REWOUND state; current state is paired with append-only history events.
 Append-only SWIPE, LIKE_CANCELLED and REWOUND events; a single-reversal index prevents reversing the same event twice.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -773,9 +773,9 @@ Preference
 
 Evaluation rule
 
-`interested_in_gender` `min_age` / `max_age`
+candidate gender `min_age` / `max_age`
 
-Candidate's permitted matchmaking gender must be in the user's selected set, unless the product explicitly defines "any".
+Automatic opposite-gender rule: MALE profiles discover FEMALE profiles and FEMALE profiles discover MALE profiles. The catalogue is restricted to MALE/FEMALE, gender is not a selectable preference and both directions must satisfy the same rule.
 Candidate must meet inclusive age range, with age calculated on the server from date of birth.
 
 `max_distance_km` `show_verified_only`
@@ -787,7 +787,7 @@ If enabled, candidate must meet the product's defined profileverification thresh
 
 Apply defined tri-state semantics: ANY, YES or NO; missing/unknown must not silently be treated as a match.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -808,36 +808,26 @@ The backend applies preferences in both directions. User A fitting User B's crit
 4. On reciprocal ACTIVE LIKE, the backend creates one canonical match and creates or activates one accepted `direct_conversations` row in a transaction or equivalent idempotent workflow.
 5. Before a mutual match, the sender may cancel an outgoing LIKE. Rewind may undo only the latest eligible unreversed swipe. Both actions write the current state and history atomically and are checked against blocks and matches.
 6. Either participant can unmatch. The backend marks the match UNMATCHED with closed_at/closed_by/close_reason, closes or disables the linked GENERAL conversation, preserves its history, leaves independent follows untouched, and removes the Matched badge. Rematching after unmatch is not supported.
-14.5 Name and photo visibility
+14.5 Name and photo privacy
 
 Setting
 
-Value
+Behaviour when enabled
 
-Response behaviour
+`blur_photos_until_match` `hide_name_until_match`
 
-Name visibility
+Unauthorised viewers receive only server-generated blurred derivative URLs for each gallery photo â€” never the original media ID, object key or a derivable URL.
+Viewers see the anonymous alias rather than the display name; the real name is omitted from every DTO field, including hidden metadata and analytics payloads.
 
-VISIBLE
+Both settings default to enabled and are independent. One central visibility service resolves every public projection (swipe cards, browse, profile details, incoming likes, match listings, previews) so no endpoint maintains separate privacy logic.
 
-Return display name if the rest of the profile policy allows it.
+Reveal lifecycle
+1. Normal discovery: the viewer sees the blurred rendition and/or alias according to the owner's settings, plus the remaining authorised attributes.
+2. Incoming active LIKE: the recipient sees the sender's primary photo in original rendition. The sender's remaining gallery stays blurred and a hidden name stays hidden; sending a LIKE grants the sender no reciprocal access.
+3. Mutual match: both users see the authorised display name and the complete original gallery. Matching is the only gallery/name reveal condition â€” no additional reveal-consent step exists.
+4. Unmatch revokes match-based reveal; blocking in either direction revokes all access and returns no protected data. All reveal decisions are computed server-side and never inferred from client-supplied state.
 
-Name visibility Name visibility Photo visibility
-
-BLURRED HIDDEN VISIBLE
-
-Return a masked/anonymised representation, not the unmasked name in another DTO field.
-Omit the actual name; do not include it in hidden metadata or analytics payloads.
-Return an authorised original/normal rendition URL.
-
-Photo visibility Photo visibility
-
-BLURRED HIDDEN
-
-Return a server-generated blurred rendition only. Do not return the original object key/URL.
-Do not return a photo URL, media ID or original path that reveals the protected photo.
-
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -883,7 +873,7 @@ Per-join participation record, role, `joined_at`, `left_at`, connection state an
 
 Numbered stage positions, each AVAILABLE/OCCUPIED/LOCKED, capped by `max_speakers`.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -903,7 +893,7 @@ Ephemeral session-scoped comments; delete on ENDED/EXPIRED, retain through recov
 
 A `voice_rooms` row is persistent and discoverable while ACTIVE or LOCKED unless `is_discoverable`, visibility and community policies say otherwise. Each live broadcast creates a separate `voice_room_sessions` row with a new session ID. Ending, expiring or recovering a session does not expire or delete the room. Only explicit archive or suspension changes the durable room lifecycle. A room owner is independent from the HOST role for the current session.
 15.3 Capacity and stage rules
- `max_speakers` is stage capacity (1­30); `max_participants` is total room capacity (2­1000). Configure total capacity greater than speaker capacity.
+ `max_speakers` is stage capacity (1ï¿½30); `max_participants` is total room capacity (2ï¿½1000). Configure total capacity greater than speaker capacity.
  The current session HOST counts toward the speaker limit and occupies a speaker seat. The persistent room owner is a separate role and does not automatically become HOST in every session. Listener count is total active participants minus stage occupants.
  Create numbered seat rows when a session is initialised. Seat number cannot exceed the configured room speaker limit.
  Admission and speaker promotion must serialize at session level or use equivalent concurrency-safe transactions. Concurrent joins/promotions must not overrun capacity.
@@ -926,7 +916,7 @@ Mark inactive, remove from discovery and start `grace_expires_at`; private defau
 Lock/recheck state; if not expired and authorization remains valid, resume same session and clear deadline.
 Worker rechecks under lock and ends/expires session; keep necessary audit/history metadata under retention policy.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -966,7 +956,7 @@ Identity / profile
 
 Spring Boot creates/identifies users, verifies social tokens, applies verified-email linking rules and issues Diasporum tokens. `users.id` is the account identity; profiles are optional. Private fields require ownprofile authorization.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1017,7 +1007,7 @@ method, employment type and category.
 
 Route/date eligibility, listing visibility and sensitive handover details.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1061,7 +1051,7 @@ One checkout currency; mixed-shop cart becomes one parent order plus one seller 
  Use explicit API DTOs/allowlists. Do not serialize database entities directly; omit protected fields by construction.
  Use consistent UTC timestamps (`timestamptz`) and explicit IANA timezones for user-facing scheduled events.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1112,7 +1102,7 @@ commit. Do not permit untrusted client publishing to durable message channels un
 { "eventId": "uuid", "eventType": "chat.message.created", "schemaVersion": 1, "occurredAt": "2026-10-18T12:00:00Z", "aggregateType": "chat_message", "aggregateId": "uuid", "communityId": "uuid-or-null", "payload": { "messageId": "uuid", "roomId": "uuid", "sequenceNo": 123, "sender": {}, "body": "..." }
 }
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1147,7 +1137,7 @@ Chat / direct messaging
 
 chat_rooms; chat_messages; chat_room_user_state; chat_message_mentions; chat_message_media; direct_conversations (context and personal/business sides); direct_conversation_participants; direct_messages; direct_message_media; message_requests; room/community chat restrictions in user_mutes
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1170,7 +1160,7 @@ event_categories; events; event_rsvps; event_saves; event_media
 job_categories; job_listings; job_listing_categories; job_media; job_saves; job_applications
 property_types; country_property_types; property_listings; property_listing_communities; property_listing_media; property_amenities; property_listing_amenities; property_listing_saves; property_listing_contacts; vehicle_categories; vehicle_makes; vehicle_models; vehicle_variants; vehicle_listings; vehicle_listing_communities; vehicle_listing_media; vehicle_listing_features; vehicle_listing_saves; vehicle_listing_contacts. Both listing tables store validated category-specific additional_attributes as JSONB.
 airports; spare_bag_categories; spare_bag_listings; spare_bag_listing_categories; spare_bag_listing_media; spare_bag_listing_saves; spare_bag_contact_requests
-matchmaking_genders; matchmaking_religions; matchmaking_profiles; matchmaking_preferences; matchmaking_preference_genders; matchmaking_preference_religions; matchmaking_preference_languages; matchmaking_swipes; matchmaking_matches, matchmaking_swipe_history
+matchmaking_genders; matchmaking_religions; matchmaking_profiles; matchmaking_preferences; matchmaking_profile_photos; matchmaking_preference_religions; matchmaking_preference_languages; matchmaking_swipes; matchmaking_matches, matchmaking_swipe_history
 
 Notifications / trust / operations
 
@@ -1180,7 +1170,7 @@ Service marketplace
 
 service_categories; service_category_translations; service_providers; service_provider_services; service_requests; service_request_media; service_request_responses; service_lead_access; service_reviews; service_reports;
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1207,7 +1197,7 @@ publication state and moderation are service-layer obligations because content_i
 multiple domain tables.  Featured impression events use an idempotency key and require qualified visibility; retention/partitioning is
 volume-dependent.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1246,9 +1236,9 @@ Call the operation through a transaction with retries and safe idempotency; prev
  Never assume a client-supplied MIME type or extension proves a file is safe. Enforce size limits, content type/signature checks and malware/safety policy.
  Strip EXIF/GPS metadata from public image renditions where appropriate; create thumbnails and image variants through the processing pipeline.
  Keep source and processed objects distinguishable, with lifecycle cleanup for abandoned uploads and orphaned media.
- Matchmaking hidden/blurred photos require separately generated, separately referenced renditions. Never hand out original object URLs for a hidden/blurred profile.
+ Matchmaking blurred photos are generic server-side media derivatives generated per original media object. Never hand out original object URLs or media IDs to a viewer who is not authorised for the original rendition.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1276,7 +1266,7 @@ For user-generated video, decide between worker-based FFmpeg processing and a ma
  Provide policy version acceptance records for relevant community rules, privacy terms and Spare Bag conditions.
  Define retention windows for messages, reports, deleted profiles, resumes, private media and audit logs. Build privacy export/deletion workflows that respect lawful audit-retention obligations.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1309,7 +1299,7 @@ Expire unplaced checkout quotes, release reservations, apply order deadlines and
  If RTC provider join fails, the API reports a retryable/terminal reason and does not leave a phantom active participant. A reconciliation worker repairs drift.
  Workers are idempotent and safe under duplicate scheduling. State is determined by database timestamps and persisted transitions, not mobile timers.
  Use bounded retries, exponential backoff, poison-message handling, dead-letter/manual replay procedures and alert thresholds for growing outbox backlog.
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026 Page
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026 Page
 
 DIASPORUM / FULL SYSTEM DESIGN / V10.13
 
@@ -1354,7 +1344,7 @@ Normal REST API
 
 p95 below 400 ms for typical non-search reads/writes at normal load; exclude upload and RTC setup.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1392,7 +1382,7 @@ Release is blocked until schema installation, security, privacy, concurrency and
  Insert community and direct messages concurrently; prove sequences are assigned uniquely and monotonically within each room/conversation.
  Reject backwards read-cursor updates and cursor values beyond the allocated sequence; prove unread counts exclude the reader's own messages according to product policy.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1426,7 +1416,7 @@ combinations.
 23.6 Media, accessibility and operations
  Test signed upload expiry, MIME/signature mismatch, oversized upload, orphan cleanup, EXIF removal, blurred rendition ACLs and private attachment access.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1468,7 +1458,7 @@ Discoverability, follow/friend graph, blocks, message requests, direct conversat
 
 Privacy, block, duplicate-message and nonparticipant access tests pass.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1528,7 +1518,7 @@ Ably for app realtime; PostgreSQL/outbox for durability
 
 Avoid custom WebSocket operations and recover messages via REST after outages/reconnects.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1585,7 +1575,7 @@ One multi-shop checkout is convenient for the buyer while preserving seller-spec
 Use Stripe Connect and a tax provider behind server-side adapters. Persist payment, transfer, payout, liability and tax snapshots; do not build a speculative global tax rules engine.
 Reuse Business Account authorisation, countries, addresses, media, Billing entitlements,
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1617,7 +1607,7 @@ shipping-label payer, return-label policy and supported checkout currencies.  Ap
 downloads/digital delivery into physical shipment workflows.  Run the actual repository Flyway inventory and deployed database schema review; assign the next migration
 version only after confirming the current baseline and rehearsing an additive migration.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1637,7 +1627,7 @@ Individual seller authorisation is derived from the authenticated user. Business
 26.4 Catalogue, categories and product prices
 Create one global hierarchical `product_categories` taxonomy with multilingual translations. Keep it separate from Business Directory, Jobs, Service Marketplace and Feed categories. Category attribute definitions specify data type, validation, filterability and whether an attribute applies to product or variant. Product-level flexible attributes may
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1662,7 +1652,7 @@ For a mixed-seller checkout, the proposed flow is one platform PaymentIntent/cha
 
 A transfer moves funds from the platform balance to a connected-account balance; a payout moves funds from that connected account to the seller's bank. They are separate states. Connect is not escrow. The proposed default is transfer when the customer charge has succeeded and funds are eligible/available, subject to final Stripe and legal
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1680,7 +1670,7 @@ Product reviews link to eligible purchased order items; shop reviews link to an 
 26.11 Mobile navigation and Seller Workspace
 Marketplace is a buyer-facing mobile surface for discovery, product detail, cart, checkout, orders, wishlists, reviews and seller contact. Seller Workspace is a separate management area entered from Profile, not a new bottom tab and not the same as Business Workspace. It includes overview, shop selector, products, inventory, orders, shipping, earnings/transfers/payouts, promotions, returns, reviews, settings and Connect onboarding. Multiple shops are switched within the workspace. Business-owned shop permissions reuse Business Account membership and policies.
 26.12 Backend module and integration boundaries
-Add a `shopmarketplace` root module in the Spring Boot modular monolith. It owns catalogue, seller, inventory, cart/checkout, orders, shipping, returns and marketplace financial records. Controllers call application services; Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Add a `shopmarketplace` root module in the Spring Boot modular monolith. It owns catalogue, seller, inventory, cart/checkout, orders, shipping, returns and marketplace financial records. Controllers call application services; Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 Page
 
 DIASPORUM / FULL SYSTEM DESIGN / V10.13
@@ -1730,7 +1720,7 @@ participant ordering and context uniqueness.  Extend `notification_type` for new
 low-stock events.  Extend `billing_products.target_type` for SHOP/PRODUCT only if paid featured placements are launched.  Add `shopmarketplace` module-boundary tests, provider webhook processing and marketplace outbox event
 contracts.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1770,7 +1760,7 @@ Fraud/moderation, accounting and customer-support processes tested.
 balance allocation.  Transfer release timing and commission calculation base; Stripe fee treatment and who funds
 shipping/discounts.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1811,7 +1801,7 @@ Voice rooms
 
 voice_room_categories, voice_rooms, voice_room_sessions, voice_room_participants, voice_room_seats, voice_room_speaker_requests, voice_room_invites, voice_room_moderation_actions, session-ephemeral voice_room_messages
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1826,11 +1816,11 @@ Primary records
 business_categories, business_listings, business_locations, business_hours, business_media, business_reviews, business_saves, event_categories, events, event_rsvps, event_saves, event_media
 job_categories, job_listings, job_listing_categories, job_media, job_saves, job_applications
 property_types, country_property_types, property_listings, property_listing_communities, property_listing_media, property_amenities, property_listing_amenities, property_listing_saves, property_listing_contacts, vehicle_categories, vehicle_makes, vehicle_models, vehicle_variants, vehicle_listings, vehicle_listing_communities, vehicle_listing_media, vehicle_listing_features, vehicle_listing_saves, vehicle_listing_contacts; JSONB additional_attributes plus dedicated core filter columns.
-airports, spare_bag_categories, spare_bag_listings, spare_bag_listing_categories, spare_bag_listing_media, spare_bag_listing_saves, spare_bag_contact_requests, matchmaking_genders, matchmaking_religions, matchmaking_profiles, matchmaking_preferences, matchmaking_preference_genders, matchmaking_preference_religions, matchmaking_preference_languages, matchmaking_swipes, matchmaking_matches, matchmaking_swipe_history
+airports, spare_bag_categories, spare_bag_listings, spare_bag_listing_categories, spare_bag_listing_media, spare_bag_listing_saves, spare_bag_contact_requests, matchmaking_genders, matchmaking_religions, matchmaking_profiles, matchmaking_profile_photos, matchmaking_preferences, matchmaking_preference_religions, matchmaking_preference_languages, matchmaking_swipes, matchmaking_matches, matchmaking_swipe_history
 notifications, notification_preferences, device_tokens, reports, moderation_actions, audit_logs, feature_flags, feature_access_rules, app_settings, idempotency_keys, outbox_events, media_processing_jobs, analytics_events
 service_categories, service_category_translations, service_providers, service_provider_services, service_requests, service_request_media, service_request_responses, service_lead_access, service_reviews, service_reports, service_moderation_actions
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1859,7 +1849,7 @@ The v9.0 base design was prepared using the existing Diasporum Full System Desig
  Pricing and plan limits for Ably, RTC, R2 and hosting are intentionally not guaranteed in this document; re-check provider details at procurement and before production.
 Final implementation warning: Before production, execute the v10.6 SQL on a clean PostgreSQL staging instance; repair runtime findings; produce migrations from the actual deployed database if upgrading an existing deployment; configure grants, secrets, backups and monitoring; and pass the concurrency, security, privacy, accessibility, JSONB-validation and restore tests described in this document.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1882,7 +1872,7 @@ D.5 Configurable billing model
 Billing is centralised and entitlement-driven. Plans grant ongoing feature permissions and quotas; one-time products grant a specific action/credit or time-limited benefit; usage records track quota consumption where required. Feature modules ask the central entitlement service whether an action is allowed and do not implement their own payment logic.
 Illustrative personal plans: FREE, SILVER and GOLD. Illustrative business plans: BUSINESS_FREE, BUSINESS_SILVER and BUSINESS_GOLD. The business subscription belongs to the Business Account, not each public business profile. A personal account may manage a business account without its personal plan being replaced. A listing purchase can be purchased independently of a subscription if configured. Listing publication and featured promotion are distinct products.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1896,7 +1886,7 @@ D.8 V10 static-review limits
 The v10.2 SQL is a clean-install candidate derived from the v9.0 baseline and subsequent additive revisions; it has not been executed against a PostgreSQL server. Before launch, run it on a clean PostgreSQL staging instance, resolve all SQL/constraint/function/trigger findings, validate selected-community country consistency under concurrent writes, verify all existing scope constraints, and run security, entitlement, refund, webhook idempotency, quota concurrency and restore tests. Prepare a migration from the actually deployed database separately; do not apply this clean-install candidate over an existing database.
 Historical v10.2 principal schema records included business_accounts, business_account_members, property_types, country_property_types, property_listings and supporting media/amenity/contact/save/audience tables, vehicle_makes, vehicle_models, vehicle_variants, vehicle_categories, vehicle_features, vehicle_listings and supporting media/feature/contact/save/audience tables, business/event/job/matchmaking selected-community mappings, billing plans and entitlements. The current v10.5 table inventory is in Section 18 and Appendix G.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -1908,7 +1898,7 @@ Property listings, vehicle listings, events and job listings no longer duplicate
 Linked addresses now use ON DELETE RESTRICT for property, vehicle, event and workplace/job references. This avoids silently detaching a listing from its location. Address visibility and entity authorization remain mandatory: the existence of an address UUID never grants permission to reveal a private address. The address country must match the listing/event/job country; retain or strengthen the existing service/trigger validation for that invariant.
 Indexes support country/city lookup through addresses and address-to-listing joins. Business listings retain their top-level city field intentionally because a business profile can represent a service/base area while its business_locations table holds multiple branch addresses; it is not a one-to-one duplicate of a single address. Profile city and airport city are also separate domain attributes, not duplicate listing address columns.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2014,7 +2004,7 @@ QUOTA
 
 Per-plan configurable
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2038,7 +2028,7 @@ Decision gates before selection: compare total cost at expected monthly tracked 
 
 Official references checked on 19 October 2026:
 
- RevenueCat Expo setup: https://www.revenuecat.com/docs/getting-started/installation/expo Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+ RevenueCat Expo setup: https://www.revenuecat.com/docs/getting-started/installation/expo Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2058,7 +2048,7 @@ F.2 Featured placement data contract
 The discriminator/reference pair intentionally uses a polymorphic reference rather than a direct foreign key. This is extensible but weaker than a true FK, so application services must validate target existence/type on create/update and before feed delivery. Do not trust stored feature status alone: each read must also verify target publication state, expiry/availability, country/community audience scope, blocking and moderation. Cleanup or lifecycle workers should end/cancel placements for removed content.
 Where a paid promotion consumes a subscription quota or one-time purchase, record entitlement usage or billingorder-item targeting through the existing billing records. Payment confirmation, refund/cancellation and promotion
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2081,7 +2071,7 @@ Historical status: the v10.5 changes below were incorporated into the v10.5 clea
 G.1 Guides module removed
 The v10.5 baseline removed the Guides feature; v10.6 retains that removal. Guide tables, review/revision/search/translation functions and triggers, guide community mappings, guide-specific type values,
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2109,19 +2099,19 @@ G.6 Feature access policies remain distinct from rollout flags
 community-specific scope, optional usage limits/reset periods and role-specific policies.  The backend resolves community rules before country rules before global rules, validates subscription/plan
 entitlements and roles, and enforces usage limits for every protected operation. Database rows are configuration; they do not replace endpoint authorization.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
 DIASPORUM / FULL SYSTEM DESIGN / V10.13
 G.7 Clean-install verification and release gates
- Run the v10.8 strict clean-install SQL only against a brand-new empty PostgreSQL 15+ staging database with PostGIS installed. v10.4­v10.6 remain unchanged historical baselines.
+ Run the v10.8 strict clean-install SQL only against a brand-new empty PostgreSQL 15+ staging database with PostGIS installed. v10.4ï¿½v10.6 remain unchanged historical baselines.
  Verify that no Guides tables, Guide-specific enum labels or Guide-specific functions/triggers remain; verify the nine removed matchmaking fields and `insurance_group` are absent.
  Test mutual LIKE creation, cancel-like before match, rewind of the latest eligible swipe, rewind rejection for older/already-reversed swipes, unmatch, block precedence, and denial of messages after unmatch.
  Test JSONB category validation, unknown-key rejection, typed display, filterable-key allow-lists, and query plans for core columns and supported JSONB containment filters.
  The v10.10 package receives static source validation and Word rendering review only; the SQL has not been executed against a PostgreSQL server in this environment. Live staging execution remains mandatory.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2140,7 +2130,7 @@ Replaced DIRECT_MESSAGE_START with DIRECT_MESSAGE_SEND. Quota scope is PER_RECIP
 quantity_limit NULL means unlimited when the entitlement is enabled; 0 means no usage is allowed; positive values are caps. reset_period is configurable per plan entitlement.
 Deferred for a later schema update; intentionally not present in v10.6.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2158,7 +2148,7 @@ SAVE_CONTENT is recorded as a future requirement for normal/personal users to sa
 H.4 v10.6 validation gates
 The v10.12 smoke test checks first-party authentication tables and identity relationships in addition to carriedforward Follow/mutual connection integrity, voice-room/session lifecycle, moderation, poll rules, featured placements, Business Account membership/lifecycle, push delivery, service marketplace constraints and PostGIS discovery.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2175,7 +2165,7 @@ Use the shared `billing_features`, `billing_plan_entitlements` and `billing_usag
 I.4 Reviews, reporting and moderation
 No booking is required, but a review requires a recorded interaction between the request customer and the provider (lead access or a response). It is not labelled as proof of completed work. Self-review by the request customer acting as provider owner/business member is rejected. Service reports target a request, provider or review; the polymorphic target type/ID must be validated. Report status/assignment/resolution is separate from `service_moderation_actions`, which records admin actions and reason/metadata. Apply rate limits and preserve audit records under the documented retention policy.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2189,9 +2179,9 @@ I.6 Voice-room comments are ephemeral
 `voice_room_messages` stores comments by `session_id`, not merely room ID. Only an active session participant may add a comment, and only while the session status is ACTIVE. Insert the durable comment and a `VOICE_ROOM_COMMENT_CREATED` outbox event in one transaction; the worker publishes to the authorised Ably session channel. Clients must fetch current history through the API rather than treating realtime delivery as the durable source of truth.
 When a host disconnects and a session is temporarily INACTIVE/within grace, keep comments for possible recovery. On a definitive session transition to ENDED or EXPIRED, delete all session comments and pending undelivered comment-created outbox events, then enqueue `VOICE_ROOM_COMMENTS_CLEARED` so clients clear cached/inmemory comments. Closing/expiring the room closes its associated live/inactive session so the cleanup trigger runs. A new session starts with no comments. Moderation/audit actions remain separate. Test comment/session-close concurrency and the publisher/clear-event ordering in the application.
 I.7 v10.8 verification limits
-The v10.8 deliverables were statically inspected and smoke-test assertions were written; they were not executed against a live PostgreSQL/PostGIS server in this environment. Before release, run the strict clean-install SQL on a fresh PostgreSQL 15+ database with PostGIS available; execute smoke tests and automated API/service integration tests for the paths in Sections 23.2­23.7. Review DDL/function behavior, concurrency, query plans, event retries and data-retention cleanup before production. The schema is a clean-install candidate, not an in-place migration.
+The v10.8 deliverables were statically inspected and smoke-test assertions were written; they were not executed against a live PostgreSQL/PostGIS server in this environment. Before release, run the strict clean-install SQL on a fresh PostgreSQL 15+ database with PostGIS available; execute smoke tests and automated API/service integration tests for the paths in Sections 23.2ï¿½23.7. Review DDL/function behavior, concurrency, query plans, event retries and data-retention cleanup before production. The schema is a clean-install candidate, not an in-place migration.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2221,7 +2211,7 @@ Use opted-in approximate discovery points; enforce profile visibility, allow_peo
 Compare two users' discovery points with ST_Distance and enforce max_distance_km bilaterally. If either user requires a distance limit but a point is missing, that pair fails distance compatibility.
 Filter published jobs by workplace address location only for physical/field-based workplaces; remote jobs are not nearby physical jobs.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2249,7 +2239,7 @@ J.6 Validation and release gates
  The precision_radius_m field records intended approximation precision; the backend must actually produce an approximate point before storing it.
  This package was statically reviewed; it has not been executed against a live PostgreSQL/PostGIS server in this environment.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2271,14 +2261,14 @@ K.3 General chat restrictions
 `user_mutes` supports scoped restrictions with action `MUTE` or `BAN`, optional room or community scope, reason, start/end times, revocation and an audit entry. Room scope is allowed only for CHAT and is constrained to a specific room. A mute prevents sending while reading may remain allowed; a ban can additionally block join/history access according to the application policy. The database guard blocks new CHAT/ALL-restricted message inserts. Spring Boot must also enforce all read/join/send policies and moderator authority. `chat_room_user_state.notifications_muted_until` is self-service notification preference only.
 Moderator permission checks must use active community membership with MODERATOR/COMMUNITY_ADMIN role for scoped actions; global restrictions require an explicitly authorized platform-moderation context. Every
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
 DIASPORUM / FULL SYSTEM DESIGN / V10.13
 enforcement path must check expiry and revocation. The room policy/audit model must not rely on client button visibility.
 K.4 Poll authoring, voting and privacy
- A poll is represented by `feed_posts` with `post_type=POLL`, `feed_polls`, `feed_poll_options` and `feed_poll_votes`. Configure `max_options` in the range 2­20 (default 10); published polls require at least two options.
+ A poll is represented by `feed_posts` with `post_type=POLL`, `feed_polls`, `feed_poll_options` and `feed_poll_votes`. Configure `max_options` in the range 2ï¿½20 (default 10); published polls require at least two options.
  Creation contract: insert the post as DRAFT; create the `feed_polls` row and at least two options; then publish the post. A direct insert/update of a published POLL without its complete poll setup is rejected.
  Voting validates poll openness and option count; advisory locking plus the poll row lock protects competing votes. Single-choice duplicate ballots are rejected. `allow_vote_change` controls changing an existing selection; `allow_vote_withdraw` controls user-initiated deletion before close.
  Once voting starts, option text/order cannot change and no options may be added or deleted. Poll voting/privacy policy and max_options are also frozen after the first vote; max_options cannot be lowered below the current option count. Retain the option set so percentages and previous votes remain meaningful. Parent poll/post deletion for an authorized retention operation is a cascade, not user withdrawal.
@@ -2293,7 +2283,7 @@ K.6 Business Accounts: lifecycle and authorization
  Membership identity (account/user) is stable. Invite, accept, expire, revoke and role changes are audited. Reinvites/rejoins reactivate an existing relationship under policy rather than creating ambiguous duplicate membership history.
  Use fixed Java role-policy classes in the `businessaccounts` module to define capabilities for `OWNER`, `ADMINISTRATOR`, `EDITOR`, `LISTING_MANAGER` and `BILLING_MANAGER`. Check active account, accepted/unrevoked membership and resource ownership on every protected request. Do not add a databasedriven permission matrix.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2316,7 +2306,7 @@ K.9 Billing, feature flags and service boundaries
  `feature_flags` controls rollout/availability. `feature_access_rules` and subscription entitlements control eligibility and quotas. Do not use one mechanism as a substitute for another or for authorization.
  The backend remains a Spring Boot REST API modular monolith and owns first-party authentication. Next.js is the admin/web client; Expo/React Native is mobile; PostgreSQL/PostGIS is the source of truth; Cloudflare R2 stores bytes; Ably handles realtime; Google and Apple provide external identity verification only.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2335,7 +2325,7 @@ K.10 v10.9 release acceptance checklist
 K.11 Validation status and migration warning
 The v10.12 SQL is a greenfield clean-install baseline. It must not be run over an existing v10.8 or v10.9 database. Existing deployments need a separately reviewed data migration with a schema inventory, backfill, duplicate/invalid data checks, rehearsed rollback or forward-fix path and verified backups. In this package, SQL was statically inspected, version/object/reference assertions were run, and the DOCX was rendered for layout QA. A live PostgreSQL/PostGIS execution was not available; staging execution remains a release gate.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2353,7 +2343,7 @@ L.2 Current address and Nearby semantics
  Use addresses.location for this narrowly-scoped authenticated server-side ranking query and add a GiST index on addresses.location. This is a privacy-sensitive internal use: feed DTOs must not include either address, formatted address, raw coordinates or numeric distance; access logs and analytics must not record exact points.
  Existing addresses.visibility and entity-level access rules still protect address retrieval. The Nearby service uses the address only to calculate ordering; it does not grant the viewer access to the address record. Do not add an allow_my_reels_in_nearby setting, use_current_address_for_nearby_reels setting, or include_in_nearby column. Community visibility, blocks, moderation and active-account checks determine content eligibility.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2391,7 +2381,7 @@ L.4 Reel authoring and publication lifecycle
  feed_posts.published_at is set on first publication and is preserved through ordinary edits, hiding and restoration. It is used for chronological ordering and cursor pagination. Use a stable (published_at DESC, id DESC) key.
  Video processing continues through the existing R2/media_objects/media_processing_jobs pathway. Before production, define maximum upload size/duration, allowed codecs/container, thumbnail/transcode profile, playback authorization, retention and egress-cost monitoring.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2432,7 +2422,7 @@ L.7 Reels acceptance checks
  Test Community, Nearby and Following feed audience eligibility, mutual blocks, moderation, pagination stability, absent address and no-candidate fallback, optional radius, and ordering ties.
  The current clean-install SQL and strict clean-install SQL contain equivalent schema bodies. Execute the strict script and smoke tests on a disposable PostgreSQL/PostGIS instance before claiming live validation.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2456,7 +2446,7 @@ M.3 Lifecycle and database integrity
  A Spring Boot/Quartz scheduled task transitions due OPEN/PAUSED records to EXPIRED when expires_at <= now(). A NULL expires_at means no scheduled expiry. The active Community Help browse query returns only PUBLISHED, non-deleted parent posts whose help_status is OPEN and whose expiry is absent or in the future.
  A PAUSED or terminal help post is excluded from active Community Help discovery and cannot open new response conversations. If its parent remains published in the general feed, show the current help status and disable new responses. Existing conversations remain accessible subject to normal messaging permissions.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2483,7 +2473,7 @@ M.7 Acceptance checks
 5. Test that only PUBLISHED/OPEN targets create new contextual conversations, that the author is a participant, and that pair/context uniqueness reuses existing conversations.
 6. Test visibility, blocks, moderation, notifications and existing conversation history after a help post is resolved/closed/expired. No community_help_responses table should exist.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2514,7 +2504,7 @@ Google token is consumed as identity evidence only. Spring Boot creates/loads th
  Resolve a known external identity by the unique `(issuer, subject)` mapping before examining email. This remains the login key if the provider later changes the email it returns.
  For a new Google/Apple subject, a matching normalized email may attach to an existing account only when the existing account email is verified and the new provider email is verified with sufficient assurance. Require an extra email challenge or authenticated proof when provider assurance for a non-provider-owned mailbox is insufficient.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2554,7 +2544,7 @@ Responsibility
 Permanent account identity, primary email, generated normalized email, verification state and account lifecycle. Optional one-to-one profile extension; shared UUID PK/FK to users. Optional local password credential; store only the Argon2id PHC hash. Google, Apple and future identityprovider mapping by issuer + subject; now references users.id. Per-device/client session, authentication method (PASSWORD, GOOGLE, APPLE; KEYCLOAK reserved for future migration), last use, absolute expiry and revocation.
 SHA-256 hashes of high-entropy opaque refresh tokens, token family, rotation lineage, consumed/revoked state. Single-use, expiring hashed token for initial email verification and email changes. Single-use, expiring hashed password-recovery token. Encrypted provider credentials needed for lifecycle operations, initially Apple refresh-token revocation; encryption key remains outside PostgreSQL. Platform role assignment with GLOBAL/COUNTRY/COMMUNITY scope; PLATFORM_ADMIN is globalonly. Community membership and community-specific role. Business account membership and
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2599,7 +2589,7 @@ MEMBER; TRUSTED_HELPER; MODERATOR; COMMUNITY_ADMIN OWNER; ADMINISTRATOR;
 Storage and limits
 `global_user_roles`; scope is GLOBAL, COUNTRY or COMMUNITY. PLATFORM_ADMIN must be GLOBAL. Community role never grants platform authority. `community_memberships`; applies only to the associated community. `business_account_members`;
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 
@@ -2633,7 +2623,7 @@ N.9 v10.12 delivery and validation gates
  For an existing v10.11 deployment, rehearse a separate migration that preserves each profiles.id as users.id, backfills verified email/provider mappings, moves account lifecycle fields and repoints every user foreign key.
  Validate the install and smoke assertions against PostgreSQL 15+ with PostGIS, then test email verification, Google/Apple signatures and nonce/audience, verified-email linking and different-email separation, Apple relay handling, password recovery, refresh replay/concurrency, session revocation, account restrictions and role escalation. No live database validation is claimed by this package.
 
-Architecture baseline aligned to PostgreSQL schema v10.13 · 4 November 2026
+Architecture baseline aligned to PostgreSQL schema v10.13 ï¿½ 4 November 2026
 
 Page
 

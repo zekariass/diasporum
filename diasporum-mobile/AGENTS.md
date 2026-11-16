@@ -1,4 +1,57 @@
-This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
+# Diasporum Mobile
+
+Expo ~58 / React Native 0.88 / React 19 — iOS and Android companion app for the
+Diasporum platform. Communicates with the Spring Boot backend REST API.
+
+## Project structure
+
+```
+src/
+  app/                        ← Expo Router file-based routes
+    (auth)/                   ← auth flow (login, register, onboarding)
+    (app)/                    ← authenticated tab navigator
+      (tabs)/                 ← main tab screens
+      {feature}/              ← feature-specific screens/stacks
+  features/{domain}/          ← feature modules (mirrors backend modules)
+    components/               ← feature-specific UI components
+    hooks/                    ← feature-specific React hooks
+    screens/                  ← screen components (referenced by app/)
+    services/                 ← API service functions (createXxxApi factory)
+    types/                    ← TypeScript types/interfaces
+    utils/                    ← feature-specific utilities
+  core/
+    api/                      ← HTTP client (auth injection, token refresh)
+    auth/                     ← auth provider, session management
+    config/                   ← env config
+    navigation/               ← navigation utilities
+    session/                  ← session state
+  shared/                     ← shared UI components, theme, utilities
+  hooks/                      ← global React hooks
+  constants/                  ← app constants
+  types/                      ← shared TypeScript types
+  __tests__/                  ← test files (mirrors src/features/ structure)
+  __mocks__/                  ← jest module mocks
+```
+
+**Feature services pattern:** each feature exports a `createXxxApi(client: ApiClient)`
+factory that wraps the shared `core/api/api-client.ts` — this handles Bearer token
+injection, proactive token refresh, and 401-retry-once.
+
+**Types pattern:** `types/{feature}-types.ts` for shared interfaces; API response
+types match backend `*Api` record structures.
+
+## API conventions
+
+- Backend: `POST/GET/PUT/PATCH/DELETE /api/v1/...` — always use `apiClient` from `core/api/`
+- Error shape: `{status, code, message, path, timestamp, fieldErrors}` — map to `ApiError`
+- IDs are UUID strings
+- Timestamps are ISO-8601 strings
+
+## Testing
+
+- `jest-expo` preset; tests in `src/__tests__/{core|features}/...`
+- `jest-expo` handles React Native mocks; `src/__mocks__/` for custom mocks
+- `npm test` to run
 
 ## Expo has changed — do not trust your training data
 
