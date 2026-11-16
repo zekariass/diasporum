@@ -86,7 +86,7 @@ export default function ProviderCollectionScreen({ mode }: { mode: "mine" | "dis
   return (
     <ThemedView style={serviceStyles.root}>
       <SafeAreaView style={serviceStyles.root} edges={["top", "left", "right"]}>
-        <ScreenHeader back title={mode === "mine" ? "My provider profiles"
+        <ScreenHeader back menu title={mode === "mine" ? "My provider profiles"
           : mode === "matching" ? "Matching providers" : "Browse providers"} />
         <FlatList
           data={items}

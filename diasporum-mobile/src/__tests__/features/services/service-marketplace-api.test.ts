@@ -14,10 +14,18 @@ beforeEach(() => jest.clearAllMocks());
 
 describe("serviceMarketplaceApi", () => {
   it("encodes provider discovery filters and cursor", async () => {
-    await api.discoverProviders({
-      categoryId: "category 1", originLatitude: 52.52, originLongitude: 13.405,
-      radiusKm: 25, q: "nurse & midwife", sort: "DISTANCE",
-    }, "cursor/1", 10);
+    await api.discoverProviders(
+      {
+        categoryId: "category 1",
+        originLatitude: 52.52,
+        originLongitude: 13.405,
+        radiusKm: 25,
+        q: "nurse & midwife",
+        sort: "DISTANCE",
+      },
+      "cursor/1",
+      10,
+    );
     expect(client.get).toHaveBeenCalledWith(
       "/api/v1/service/providers?categoryId=category%201&originLatitude=52.52&originLongitude=13.405&radiusKm=25&q=nurse%20%26%20midwife&sort=DISTANCE&cursor=cursor%2F1&size=10",
       auth,
@@ -25,29 +33,63 @@ describe("serviceMarketplaceApi", () => {
   });
 
   it("encodes request filters and owned status pagination", async () => {
-    await api.discoverRequests({
-      serviceProviderId: "provider-1", countryId: "country-1", city: "Addis Ababa",
-      currencyCode: "EUR", maxDistanceKm: 100, sort: "PRICE_ASC",
-    }, "next cursor", 15);
+    await api.discoverRequests(
+      {
+        serviceProviderId: "provider-1",
+        countryId: "country-1",
+        city: "Addis Ababa",
+        currencyCode: "EUR",
+        maxDistanceKm: 100,
+        sort: "PRICE_ASC",
+      },
+      "next cursor",
+      15,
+    );
     await api.myRequests("OPEN", "mine/1", 5);
     expect(client.get).toHaveBeenCalledWith(
       "/api/v1/service/requests?serviceProviderId=provider-1&countryId=country-1&city=Addis%20Ababa&currencyCode=EUR&maxDistanceKm=100&sort=PRICE_ASC&cursor=next%20cursor&size=15",
       auth,
     );
     expect(client.get).toHaveBeenCalledWith(
-      "/api/v1/service/requests/mine?status=OPEN&cursor=mine%2F1&size=5", auth,
+      "/api/v1/service/requests/mine?status=OPEN&cursor=mine%2F1&size=5",
+      auth,
     );
   });
 
   it("uses canonical provider and request lifecycle endpoints", async () => {
+    await api.configuration();
+    await api.submitProviderOnboarding("provider-1");
     await api.closeProvider("provider-1");
+    await api.repost("request-1");
     await api.pause("request-1");
     await api.resume("request-1");
     await api.close("request-1");
     await api.cancel("request-1");
-    expect(client.post).toHaveBeenCalledWith("/api/v1/service/providers/provider-1/close", {}, auth);
+    expect(client.get).toHaveBeenCalledWith(
+      "/api/v1/service/configuration",
+      auth,
+    );
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/providers/provider-1/submit-onboarding",
+      {},
+      auth,
+    );
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/providers/provider-1/close",
+      {},
+      auth,
+    );
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/requests/request-1/repost",
+      {},
+      auth,
+    );
     for (const action of ["pause", "resume", "close", "cancel"]) {
-      expect(client.post).toHaveBeenCalledWith(`/api/v1/service/requests/request-1/${action}`, {}, auth);
+      expect(client.post).toHaveBeenCalledWith(
+        `/api/v1/service/requests/request-1/${action}`,
+        {},
+        auth,
+      );
     }
   });
 
@@ -57,14 +99,30 @@ describe("serviceMarketplaceApi", () => {
     await api.acceptResponse("response-1");
     await api.declineResponse("response-1");
     await api.withdrawResponse("response-1");
-    expect(client.post).toHaveBeenCalledWith("/api/v1/service/requests/request-1/responses", {
-      serviceProviderId: "provider-1", responseType: "INTEREST", message: "I can help",
-    }, auth);
-    expect(client.put).toHaveBeenCalledWith("/api/v1/service/responses/response-1", {
-      serviceProviderId: "provider-1", responseType: "CONTACT", message: "Updated",
-    }, auth);
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/requests/request-1/responses",
+      {
+        serviceProviderId: "provider-1",
+        responseType: "INTEREST",
+        message: "I can help",
+      },
+      auth,
+    );
+    expect(client.put).toHaveBeenCalledWith(
+      "/api/v1/service/responses/response-1",
+      {
+        serviceProviderId: "provider-1",
+        responseType: "CONTACT",
+        message: "Updated",
+      },
+      auth,
+    );
     for (const action of ["accept", "decline", "withdraw"]) {
-      expect(client.post).toHaveBeenCalledWith(`/api/v1/service/responses/response-1/${action}`, {}, auth);
+      expect(client.post).toHaveBeenCalledWith(
+        `/api/v1/service/responses/response-1/${action}`,
+        {},
+        auth,
+      );
     }
   });
 
@@ -73,26 +131,147 @@ describe("serviceMarketplaceApi", () => {
     await api.requestLead("request-1", "provider-1");
     await api.accessLead("request-1", "provider-1", true, true);
     expect(client.get).toHaveBeenCalledWith(
-      "/api/v1/service/responses/me?serviceProviderId=provider-1&cursor=cursor-1&size=20", auth,
+      "/api/v1/service/responses/me?serviceProviderId=provider-1&cursor=cursor-1&size=20",
+      auth,
     );
     expect(client.get).toHaveBeenCalledWith(
-      "/api/v1/service/requests/request-1/lead-access?serviceProviderId=provider-1", auth,
+      "/api/v1/service/requests/request-1/lead-access?serviceProviderId=provider-1",
+      auth,
     );
-    expect(client.post).toHaveBeenCalledWith("/api/v1/service/requests/request-1/lead-access", {
-      serviceProviderId: "provider-1", enableChat: true, unlockContactDetails: true,
-    }, auth);
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/requests/request-1/lead-access",
+      {
+        serviceProviderId: "provider-1",
+        enableChat: true,
+        unlockContactDetails: true,
+      },
+      auth,
+    );
   });
 
-  it("submits interaction reviews and canonical service reports", async () => {
-    await api.createReview("request-1", "provider-1", 5, " Clear communication ");
-    await api.report("SERVICE_PROVIDER", "provider-1", "OTHER", "Requires review");
-    expect(client.post).toHaveBeenCalledWith("/api/v1/service/requests/request-1/reviews", {
-      serviceProviderId: "provider-1", rating: 5, reviewText: " Clear communication ",
-    }, auth);
-    expect(client.post).toHaveBeenCalledWith("/api/v1/service/reports", {
-      targetType: "SERVICE_PROVIDER", targetId: "provider-1",
-      reasonCode: "OTHER", description: "Requires review",
-    }, auth);
+  it("submits structured quotes and controls the service engagement", async () => {
+    await api.submitQuote("request-1", {
+      serviceProviderId: "provider-1",
+      supersedesQuoteId: "quote-1",
+      title: "Repaired heating",
+      scopeOfWork: "Parts and labour",
+      amount: 150,
+      currencyCode: "EUR",
+      estimatedDurationValue: 2,
+      estimatedDurationUnit: "DAY",
+      items: [
+        {
+          description: "Complete repair",
+          quantity: 1,
+          unitLabel: "job",
+          unitAmount: 150,
+        },
+      ],
+    });
+    await api.requestQuotes("request-1");
+    await api.acceptQuote("quote-2");
+    await api.declineQuote("quote-2");
+    await api.withdrawQuote("quote-2");
+    await api.requestEngagement("request-1");
+    await api.transitionEngagement(
+      "engagement-1",
+      "SUBMIT_COMPLETION",
+      "Finished",
+    );
+    await api.transitionEngagement(
+      "engagement-1",
+      "RAISE_ISSUE",
+      undefined,
+      "Damage found",
+    );
+
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/requests/request-1/quotes",
+      {
+        serviceProviderId: "provider-1",
+        supersedesQuoteId: "quote-1",
+        title: "Repaired heating",
+        scopeOfWork: "Parts and labour",
+        amount: 150,
+        currencyCode: "EUR",
+        estimatedDurationValue: 2,
+        estimatedDurationUnit: "DAY",
+        items: [
+          {
+            description: "Complete repair",
+            quantity: 1,
+            unitLabel: "job",
+            unitAmount: 150,
+          },
+        ],
+      },
+      auth,
+    );
+    expect(client.get).toHaveBeenCalledWith(
+      "/api/v1/service/requests/request-1/quotes",
+      auth,
+    );
+    for (const action of ["accept", "decline", "withdraw"]) {
+      expect(client.post).toHaveBeenCalledWith(
+        `/api/v1/service/quotes/quote-2/${action}`,
+        {},
+        auth,
+      );
+    }
+    expect(client.get).toHaveBeenCalledWith(
+      "/api/v1/service/requests/request-1/engagement",
+      auth,
+    );
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/engagements/engagement-1/transitions",
+      {
+        action: "SUBMIT_COMPLETION",
+        note: "Finished",
+      },
+      auth,
+    );
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/engagements/engagement-1/transitions",
+      {
+        action: "RAISE_ISSUE",
+        reason: "Damage found",
+      },
+      auth,
+    );
+  });
+
+  it("submits completed-service reviews and canonical service reports", async () => {
+    await api.createReview(
+      "request-1",
+      "provider-1",
+      5,
+      " Clear communication ",
+    );
+    await api.report(
+      "SERVICE_PROVIDER",
+      "provider-1",
+      "OTHER",
+      "Requires review",
+    );
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/requests/request-1/reviews",
+      {
+        serviceProviderId: "provider-1",
+        rating: 5,
+        reviewText: " Clear communication ",
+      },
+      auth,
+    );
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/service/reports",
+      {
+        targetType: "SERVICE_PROVIDER",
+        targetId: "provider-1",
+        reasonCode: "OTHER",
+        description: "Requires review",
+      },
+      auth,
+    );
   });
 
   it("loads matching providers and authorized media URLs", async () => {
@@ -103,7 +282,8 @@ describe("serviceMarketplaceApi", () => {
       auth,
     );
     expect(client.get).toHaveBeenCalledWith(
-      "/api/v1/service/requests/request-1/media/media-1/download-url", auth,
+      "/api/v1/service/requests/request-1/media/media-1/download-url",
+      auth,
     );
   });
 });

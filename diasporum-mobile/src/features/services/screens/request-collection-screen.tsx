@@ -58,7 +58,7 @@ export default function RequestCollectionScreen({ mode }: { mode: "mine" | "disc
   return (
     <ThemedView style={serviceStyles.root}>
       <SafeAreaView style={serviceStyles.root} edges={["top", "left", "right"]}>
-        <ScreenHeader back title={mode === "mine" ? "My service requests" : "Open service requests"} />
+        <ScreenHeader back menu title={mode === "mine" ? "My service requests" : "Open service requests"} />
         <FlatList
           data={items}
           keyExtractor={(item) => item.id}

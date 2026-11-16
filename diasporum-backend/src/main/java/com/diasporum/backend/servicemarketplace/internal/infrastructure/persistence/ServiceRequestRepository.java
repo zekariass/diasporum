@@ -22,7 +22,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class ServiceRequestRepository {
     private static final String COLS = "sr.id,sr.customer_user_id,sr.service_category_id,"
-            + "COALESCE(ct.display_name,c.category_key) AS category_display_name,sr.country_id,"
+            + "COALESCE(ct.display_name,c.category_key) AS category_display_name,"
+            + "sr.reposted_from_request_id,sr.country_id,"
             + "sr.address_id,ST_Y(sr.location::geometry) AS latitude,"
             + "ST_X(sr.location::geometry) AS longitude,sr.title,sr.description,sr.budget_min,"
             + "sr.budget_max,sr.currency_code,sr.preferred_date,sr.status,sr.expires_at,"
@@ -48,6 +49,21 @@ public class ServiceRequestRepository {
                 in.longitude(), in.latitude(), in.title().trim(), in.description().trim(),
                 in.budgetMin(), in.budgetMax(), upper(in.currencyCode()), in.preferredDate(),
                 in.expiresAt() == null ? null : Timestamp.from(in.expiresAt()));
+        replaceMedia(id, in.mediaIds());
+        return find(id).orElseThrow();
+    }
+
+    public ServiceRequest insertRepost(UUID id, UUID customerUserId, RequestInput in,
+            UUID sourceRequestId) {
+        jdbc.update("INSERT INTO service_requests(id,customer_user_id,service_category_id,country_id,"
+                + "address_id,location,title,description,budget_min,budget_max,currency_code,"
+                + "preferred_date,status,published_at,expires_at,reposted_from_request_id) "
+                + "VALUES(?,?,?,?,?,ST_SetSRID(ST_MakePoint(?,?),4326)::geography,"
+                + "?,?,?,?,?,?,'OPEN',now(),?,?)", id, customerUserId,
+                in.serviceCategoryId(), in.countryId(), in.addressId(), in.longitude(), in.latitude(),
+                in.title(), in.description(), in.budgetMin(), in.budgetMax(), in.currencyCode(),
+                in.preferredDate(), in.expiresAt() == null ? null : Timestamp.from(in.expiresAt()),
+                sourceRequestId);
         replaceMedia(id, in.mediaIds());
         return find(id).orElseThrow();
     }
@@ -123,6 +139,7 @@ public class ServiceRequestRepository {
         StringBuilder sql = new StringBuilder("SELECT " + COLS + distanceSelect + FROM);
         List<Object> args = new ArrayList<>();
         sql.append("JOIN service_providers sp ON sp.id=? AND sp.status='ACTIVE' "
+                + "AND sp.onboarding_status='APPROVED' "
                 + "JOIN service_provider_services sps ON sps.service_provider_id=sp.id "
                 + "AND sps.service_category_id=sr.service_category_id ");
         args.add(providerId);
@@ -261,7 +278,9 @@ public class ServiceRequestRepository {
         return new ServiceRequest(rs.getObject("id", UUID.class),
                 rs.getObject("customer_user_id", UUID.class), null,
                 rs.getObject("service_category_id", UUID.class),
-                rs.getString("category_display_name"), rs.getObject("country_id", UUID.class),
+                rs.getString("category_display_name"),
+                rs.getObject("reposted_from_request_id", UUID.class),
+                rs.getObject("country_id", UUID.class),
                 rs.getObject("address_id", UUID.class), rs.getObject("latitude", Double.class),
                 rs.getObject("longitude", Double.class), rs.getString("title"),
                 rs.getString("description"), rs.getBigDecimal("budget_min"),

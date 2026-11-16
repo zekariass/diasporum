@@ -73,7 +73,9 @@ public class ServiceProviderService {
     public Provider get(UUID actorUserId, UUID providerId) {
         support.requireActive(actorUserId);
         Provider provider = support.requireProvider(providerId);
-        if (!"ACTIVE".equals(provider.status()) && !support.canManage(actorUserId, provider)) {
+        if (!("ACTIVE".equals(provider.status())
+                && "APPROVED".equals(provider.onboardingStatus()))
+                && !support.canManage(actorUserId, provider)) {
             throw notFound("SERVICE_PROVIDER_NOT_FOUND");
         }
         return support.enrich(actorUserId, provider);
@@ -232,8 +234,8 @@ public class ServiceProviderService {
             throw badRequest("INVALID_RADIUS");
         }
         for (UUID categoryId : in.categoryIds()) {
-            if (!repository.activeCategory(categoryId)) {
-                throw badRequest("CATEGORY_NOT_AVAILABLE");
+            if (!repository.activeLeafCategory(categoryId)) {
+                throw badRequest("LEAF_SERVICE_CATEGORY_REQUIRED");
             }
         }
     }

@@ -25,7 +25,9 @@ public class ServiceProviderRepository {
     private static final String COLS = "sp.id,sp.owner_user_id,sp.business_account_id,"
             + "sp.display_name,sp.description,ST_Y(sp.base_location::geometry) AS latitude,"
             + "ST_X(sp.base_location::geometry) AS longitude,sp.radius_km,sp.status,"
-            + "sp.verification_status,sp.created_at,sp.updated_at";
+            + "sp.verification_status,sp.onboarding_status,sp.onboarding_submitted_at,"
+            + "sp.onboarding_reviewed_at,sp.onboarding_reviewed_by_user_id,"
+            + "sp.onboarding_rejection_reason,sp.created_at,sp.updated_at";
 
     private final JdbcTemplate jdbc;
 
@@ -56,6 +58,11 @@ public class ServiceProviderRepository {
         return bool("SELECT EXISTS(SELECT 1 FROM service_categories WHERE id=? AND is_active=true)", id);
     }
 
+    public boolean activeLeafCategory(UUID id) {
+        return bool("SELECT EXISTS(SELECT 1 FROM service_categories "
+                + "WHERE id=? AND parent_id IS NOT NULL AND is_active=true)", id);
+    }
+
     public boolean activeCountry(UUID id) {
         return bool("SELECT EXISTS(SELECT 1 FROM countries WHERE id=? AND is_active=true)", id);
     }
@@ -73,7 +80,8 @@ public class ServiceProviderRepository {
     public Provider update(UUID id, ProviderInput in) {
         jdbc.update("UPDATE service_providers SET display_name=?,description=?,"
                 + "base_location=ST_SetSRID(ST_MakePoint(?,?),4326)::geography,"
-                + "radius_km=?,updated_at=now() WHERE id=?", in.displayName().trim(),
+                + "radius_km=?,onboarding_status=CASE WHEN onboarding_status IN('DRAFT','REJECTED') "
+                + "THEN 'IN_PROGRESS' ELSE onboarding_status END,updated_at=now() WHERE id=?", in.displayName().trim(),
                 trim(in.description()), in.baseLongitude(), in.baseLatitude(), in.radiusKm(), id);
         replaceCategories(id, in.categoryIds());
         return find(id).orElseThrow();
@@ -110,6 +118,51 @@ public class ServiceProviderRepository {
 
     public void setStatus(UUID id, String status) {
         jdbc.update("UPDATE service_providers SET status=?,updated_at=now() WHERE id=?", status, id);
+    }
+
+    public boolean submitOnboarding(UUID id) {
+        return jdbc.update("UPDATE service_providers SET onboarding_status='SUBMITTED',"
+                + "onboarding_submitted_at=now(),onboarding_reviewed_at=NULL,"
+                + "onboarding_reviewed_by_user_id=NULL,onboarding_rejection_reason=NULL,"
+                + "updated_at=now() WHERE id=? AND onboarding_status IN('DRAFT','IN_PROGRESS','REJECTED')", id) == 1;
+    }
+
+    public boolean reviewOnboarding(UUID id, String status, UUID reviewerId, String reason) {
+        return jdbc.update("UPDATE service_providers SET onboarding_status=?,"
+                + "onboarding_reviewed_at=now(),onboarding_reviewed_by_user_id=?,"
+                + "onboarding_rejection_reason=?,updated_at=now() "
+                + "WHERE id=? AND onboarding_status='SUBMITTED'",
+                status, reviewerId, trim(reason), id) == 1;
+    }
+
+    public List<Provider> onboardingQueue(String status, Cursor cursor, int limit) {
+        StringBuilder sql = new StringBuilder("SELECT " + COLS
+                + " FROM service_providers sp WHERE sp.onboarding_status=?");
+        List<Object> args = new ArrayList<>();
+        args.add(status);
+        if (cursor != null) {
+            sql.append(" AND (sp.onboarding_submitted_at,sp.id)<(?,?)");
+            args.add(Timestamp.from(Instant.parse(cursor.primary())));
+            args.add(cursor.id());
+        }
+        sql.append(" ORDER BY sp.onboarding_submitted_at DESC,sp.id DESC LIMIT ?");
+        args.add(limit + 1);
+        return jdbc.query(sql.toString(), ServiceProviderRepository::provider, args.toArray());
+    }
+
+    public Optional<Provider> eligibleProviderForRequest(UUID actorUserId, UUID requestId) {
+        return jdbc.query("SELECT " + COLS + " FROM service_providers sp "
+                + "JOIN service_requests sr ON sr.id=? "
+                + "JOIN service_provider_services sps ON sps.service_provider_id=sp.id "
+                + "AND sps.service_category_id=sr.service_category_id "
+                + "WHERE sp.status='ACTIVE' AND sp.onboarding_status='APPROVED' "
+                + "AND ST_DWithin(sr.location,sp.base_location,sp.radius_km*1000) "
+                + "AND (sp.owner_user_id=? OR EXISTS(SELECT 1 FROM business_account_members m "
+                + "WHERE m.business_account_id=sp.business_account_id AND m.user_id=? "
+                + "AND m.accepted_at IS NOT NULL AND m.revoked_at IS NULL "
+                + "AND m.role_key IN('OWNER','ADMINISTRATOR','EDITOR','LISTING_MANAGER'))) "
+                + "ORDER BY sp.created_at,sp.id LIMIT 1", ServiceProviderRepository::provider,
+                requestId, actorUserId, actorUserId).stream().findFirst();
     }
 
     public List<Provider> owned(UUID ownerUserId, List<UUID> businessIds, String status,
@@ -156,7 +209,8 @@ public class ServiceProviderRepository {
         String distanceSql = distance ? "ST_Distance(sp.base_location," + point + ")"
                 : "NULL::double precision";
         StringBuilder sql = new StringBuilder("SELECT " + COLS + "," + distanceSql
-                + " AS distance_meters FROM service_providers sp WHERE sp.status='ACTIVE'");
+                + " AS distance_meters FROM service_providers sp "
+                + "WHERE sp.status='ACTIVE' AND sp.onboarding_status='APPROVED'");
         List<Object> args = new ArrayList<>();
         if (distance) {
             args.add(search.originLongitude());
@@ -205,7 +259,8 @@ public class ServiceProviderRepository {
                 + "FROM service_providers sp JOIN service_requests sr ON sr.id=? "
                 + "JOIN service_provider_services sps ON sps.service_provider_id=sp.id "
                 + "AND sps.service_category_id=sr.service_category_id "
-                + "WHERE sp.status='ACTIVE' AND ST_DWithin(sp.base_location,sr.location,LEAST(sp.radius_km*1000,?))");
+                + "WHERE sp.status='ACTIVE' AND sp.onboarding_status='APPROVED' "
+                + "AND ST_DWithin(sp.base_location,sr.location,LEAST(sp.radius_km*1000,?))");
         List<Object> args = new ArrayList<>();
         args.add(requestId);
         args.add(maxDistanceKm);
@@ -265,7 +320,11 @@ public class ServiceProviderRepository {
                 rs.getObject("business_account_id", UUID.class), rs.getString("display_name"),
                 rs.getString("description"), rs.getObject("latitude", Double.class),
                 rs.getObject("longitude", Double.class), rs.getBigDecimal("radius_km"),
-                rs.getString("status"), rs.getString("verification_status"), List.of(), distance,
+                rs.getString("status"), rs.getString("verification_status"),
+                rs.getString("onboarding_status"), instant(rs, "onboarding_submitted_at"),
+                instant(rs, "onboarding_reviewed_at"),
+                rs.getObject("onboarding_reviewed_by_user_id", UUID.class),
+                rs.getString("onboarding_rejection_reason"), List.of(), distance,
                 false, instant(rs, "created_at"), instant(rs, "updated_at"));
     }
 

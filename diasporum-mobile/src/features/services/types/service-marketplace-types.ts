@@ -1,4 +1,30 @@
 export type ProviderStatus = "ACTIVE" | "PAUSED" | "SUSPENDED" | "CLOSED";
+export type ProviderOnboardingStatus =
+  | "DRAFT"
+  | "IN_PROGRESS"
+  | "SUBMITTED"
+  | "APPROVED"
+  | "REJECTED";
+export type QuoteStatus =
+  | "SENT"
+  | "ACCEPTED"
+  | "DECLINED"
+  | "WITHDRAWN"
+  | "EXPIRED"
+  | "SUPERSEDED";
+export type EngagementStatus =
+  | "ACCEPTED"
+  | "IN_PROGRESS"
+  | "COMPLETION_SUBMITTED"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "ISSUE_RAISED";
+export type EngagementAction =
+  | "START"
+  | "SUBMIT_COMPLETION"
+  | "COMPLETE"
+  | "RAISE_ISSUE"
+  | "CANCEL";
 export type RequestStatus =
   | "DRAFT"
   | "OPEN"
@@ -30,6 +56,11 @@ export interface ServiceProvider {
   radiusKm: number | null;
   status: ProviderStatus;
   verificationStatus: string;
+  onboardingStatus: ProviderOnboardingStatus;
+  onboardingSubmittedAt: string | null;
+  onboardingReviewedAt: string | null;
+  onboardingReviewedByUserId: string | null;
+  onboardingRejectionReason: string | null;
   categories: ServiceCategory[];
   distanceMeters: number | null;
   canManage: boolean;
@@ -43,6 +74,7 @@ export interface ServiceRequest {
   customerDisplayName: string;
   serviceCategoryId: string;
   categoryDisplayName: string;
+  repostedFromRequestId: string | null;
   countryId: string;
   addressId: string | null;
   latitude: number;
@@ -98,8 +130,95 @@ export interface LeadAccess {
   contactDetailsUnlocked: boolean;
   status: "ACTIVE" | "REVOKED";
   grantedByUserId: string;
+  billingUsageRecordId: string | null;
+  leadPrice: number;
+  leadCurrency: string;
   accessedAt: string;
   contactAddress: ContactAddress | null;
+}
+
+export interface ServiceConfiguration {
+  maxProvidersPerRequest: number;
+  leadPrice: number;
+  leadCurrency: string;
+}
+
+export interface QuoteItemInput {
+  description: string;
+  quantity: number;
+  unitLabel?: string;
+  unitAmount: number;
+}
+
+export interface QuoteInput {
+  serviceProviderId: string;
+  supersedesQuoteId?: string;
+  title: string;
+  scopeOfWork: string;
+  amount: number;
+  currencyCode: string;
+  estimatedDurationValue?: number;
+  estimatedDurationUnit?: "HOUR" | "DAY" | "WEEK" | "MONTH";
+  validUntil?: string;
+  inclusions?: string;
+  exclusions?: string;
+  termsAndConditions?: string;
+  items: QuoteItemInput[];
+}
+
+export interface ServiceQuoteItem {
+  id: string;
+  lineNo: number;
+  description: string;
+  quantity: number;
+  unitLabel: string | null;
+  unitAmount: number;
+  lineAmount: number;
+}
+
+export interface ServiceQuote {
+  id: string;
+  serviceRequestId: string;
+  serviceProviderId: string;
+  providerDisplayName: string;
+  revisionNo: number;
+  supersedesQuoteId: string | null;
+  submittedByUserId: string;
+  title: string;
+  scopeOfWork: string;
+  amount: number;
+  currencyCode: string;
+  estimatedDurationValue: number | null;
+  estimatedDurationUnit: "HOUR" | "DAY" | "WEEK" | "MONTH" | null;
+  validUntil: string | null;
+  inclusions: string | null;
+  exclusions: string | null;
+  termsAndConditions: string | null;
+  status: QuoteStatus;
+  sentAt: string;
+  respondedAt: string | null;
+  items: ServiceQuoteItem[];
+}
+
+export interface ServiceEngagement {
+  id: string;
+  serviceRequestId: string;
+  acceptedQuoteId: string;
+  serviceProviderId: string;
+  providerDisplayName: string;
+  customerUserId: string;
+  status: EngagementStatus;
+  acceptedAt: string;
+  startedAt: string | null;
+  completionSubmittedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  issueRaisedAt: string | null;
+  issueReason: string | null;
+  customerCompletionNote: string | null;
+  providerCompletionNote: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ServiceReview {

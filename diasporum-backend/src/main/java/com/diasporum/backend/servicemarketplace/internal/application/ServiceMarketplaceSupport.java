@@ -10,7 +10,6 @@ import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketpla
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ServiceRequest;
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceProviderRepository;
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceRequestRepository;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -88,12 +87,22 @@ public class ServiceMarketplaceSupport {
     public ServiceRequest requireRequestVisible(UUID actorUserId, UUID requestId) {
         ServiceRequest request = requireRequest(requestId);
         boolean owner = actorUserId.equals(request.customerUserId());
-        boolean publiclyVisible = "OPEN".equals(request.status())
-                && (request.expiresAt() == null || request.expiresAt().isAfter(Instant.now()));
-        if (!owner && !publiclyVisible) {
+        boolean eligibleProvider = !owner
+                && providers.eligibleProviderForRequest(actorUserId, requestId).isPresent();
+        if (!owner && !eligibleProvider) {
             throw notFound("SERVICE_REQUEST_NOT_FOUND");
         }
         return request;
+    }
+
+    public Provider requireApprovedActiveProvider(Provider provider) {
+        if (!"APPROVED".equals(provider.onboardingStatus())) {
+            throw conflict("PROVIDER_ONBOARDING_NOT_APPROVED");
+        }
+        if (!"ACTIVE".equals(provider.status())) {
+            throw conflict("PROVIDER_NOT_ACTIVE");
+        }
+        return provider;
     }
 
     public Provider enrich(UUID actorUserId, Provider provider) {

@@ -17,7 +17,9 @@ import com.diasporum.backend.identity.IdentityTestSupport;
 import com.diasporum.backend.security.DiasporumUserPrincipal;
 import com.diasporum.backend.servicemarketplace.ServiceMarketplaceApi.ServiceConversationContext;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceModerationService;
+import com.diasporum.backend.servicemarketplace.internal.application.ServiceProviderOnboardingService;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceProviderService;
+import com.diasporum.backend.servicemarketplace.internal.application.ServiceQuoteService;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceRequestService;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceResponseService;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceReviewService;
@@ -25,6 +27,9 @@ import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketpla
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Provider;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ProviderInput;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ProviderSearch;
+import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Quote;
+import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.QuoteInput;
+import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.QuoteItemInput;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ReportInput;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.RequestInput;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.RequestSearch;
@@ -71,6 +76,8 @@ class ServiceMarketplaceModuleIntegrationTest {
             DockerImageName.parse("postgis/postgis:17-3.5").asCompatibleSubstituteFor("postgres"));
 
     @Autowired ServiceProviderService providers;
+    @Autowired ServiceProviderOnboardingService onboarding;
+    @Autowired ServiceQuoteService quotes;
     @Autowired ServiceRequestService requests;
     @Autowired ServiceResponseService responses;
     @Autowired ServiceReviewService reviews;
@@ -102,7 +109,11 @@ class ServiceMarketplaceModuleIntegrationTest {
                 + "'SERVICE_QUOTE_SEND'))");
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES('Germany','DE','DEU')");
         country = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='DE'", UUID.class);
-        jdbc.update("INSERT INTO service_categories(category_key,sort_order) VALUES('TEST_SERVICE',1)");
+        jdbc.update("INSERT INTO service_categories(category_key,sort_order) VALUES('TEST_CATEGORY',1)");
+        UUID parentCategory = jdbc.queryForObject("SELECT id FROM service_categories WHERE category_key='TEST_CATEGORY'",
+                UUID.class);
+        jdbc.update("INSERT INTO service_categories(parent_id,category_key,sort_order) VALUES(?,'TEST_SERVICE',1)",
+                parentCategory);
         category = jdbc.queryForObject("SELECT id FROM service_categories WHERE category_key='TEST_SERVICE'",
                 UUID.class);
         jdbc.update("INSERT INTO service_category_translations(service_category_id,language_id,display_name) "
@@ -131,7 +142,17 @@ class ServiceMarketplaceModuleIntegrationTest {
     }
 
     private Provider provider(UUID owner, String name) {
-        return providers.create(owner, providerInput(name));
+        Provider created = providers.create(owner, providerInput(name));
+        jdbc.update("UPDATE service_providers SET onboarding_status='APPROVED',onboarding_reviewed_at=now() WHERE id=?",
+                created.id());
+        return providers.get(owner, created.id());
+    }
+
+    private QuoteInput quoteInput(UUID providerId) {
+        return new QuoteInput(providerId, null, "Complete the requested work", "Labour and materials",
+                new BigDecimal("150.00"), "EUR", 2, "DAY", Instant.now().plus(3, ChronoUnit.DAYS),
+                "All listed work", "Additional repairs", "Agreed directly with the customer",
+                List.of(new QuoteItemInput("Complete service", BigDecimal.ONE, "job", new BigDecimal("150.00"))));
     }
 
     private RequestInput requestInput(String title, List<UUID> mediaIds) {
@@ -180,7 +201,7 @@ class ServiceMarketplaceModuleIntegrationTest {
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history "
                 + "WHERE version='13' AND success", Integer.class));
         String mediaConstraint = jdbc.queryForObject("SELECT pg_get_constraintdef(oid) "
-                + "FROM pg_constraint WHERE conname='media_objects_purpose_check'", String.class);
+                + "FROM pg_constraint WHERE conrelid='media_objects'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%purpose%'", String.class);
         assertTrue(mediaConstraint.contains("SERVICE_REQUEST"));
         assertTrue(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM pg_enum e "
                 + "JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname='notification_type' "
@@ -206,7 +227,7 @@ class ServiceMarketplaceModuleIntegrationTest {
                     Integer.class));
             assertEquals(0, upgradeJdbc.queryForObject("SELECT count(*) FROM service_categories", Integer.class));
             String upgradedConstraint = upgradeJdbc.queryForObject("SELECT pg_get_constraintdef(oid) "
-                    + "FROM pg_constraint WHERE conname='media_objects_purpose_check'", String.class);
+                    + "FROM pg_constraint WHERE conrelid='media_objects'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%purpose%'", String.class);
             assertTrue(upgradedConstraint.contains("SERVICE_REQUEST"));
         }
     }
@@ -284,7 +305,8 @@ class ServiceMarketplaceModuleIntegrationTest {
                 () -> requests.discover(outsider, allRequests(provider.id()), null, 20)).getStatusCode());
 
         ServiceRequest matching = openRequest("Matching request");
-        jdbc.update("INSERT INTO service_categories(category_key,sort_order) VALUES('OTHER_SERVICE',2)");
+        jdbc.update("INSERT INTO service_categories(parent_id,category_key,sort_order) "
+                + "SELECT id,'OTHER_SERVICE',2 FROM service_categories WHERE category_key='TEST_CATEGORY'");
         UUID otherCategory = jdbc.queryForObject("SELECT id FROM service_categories "
                 + "WHERE category_key='OTHER_SERVICE'", UUID.class);
         ServiceRequest otherCategoryRequest = requests.create(customer, new RequestInput(otherCategory,
@@ -309,6 +331,11 @@ class ServiceMarketplaceModuleIntegrationTest {
         Provider businessProvider = providers.create(providerOwner, new ProviderInput(account.id(),
                 "Business discovery provider", "Managed provider", 52.52, 13.405,
                 new BigDecimal("50"), List.of(category)));
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> requests.discover(providerOwner, allRequests(businessProvider.id()), null, 20))
+                .getStatusCode());
+        jdbc.update("UPDATE service_providers SET onboarding_status='APPROVED',onboarding_reviewed_at=now() "
+                + "WHERE id=?", businessProvider.id());
         assertTrue(requests.discover(providerOwner, allRequests(businessProvider.id()), null, 20)
                 .items().isEmpty());
     }
@@ -375,7 +402,8 @@ class ServiceMarketplaceModuleIntegrationTest {
         assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
                 () -> requests.update(customer, paused.id(), moved)).getStatusCode());
 
-        jdbc.update("INSERT INTO service_categories(category_key,sort_order) VALUES('EDIT_CATEGORY',2)");
+        jdbc.update("INSERT INTO service_categories(parent_id,category_key,sort_order) "
+                + "SELECT id,'EDIT_CATEGORY',2 FROM service_categories WHERE category_key='TEST_CATEGORY'");
         UUID otherCategory = jdbc.queryForObject("SELECT id FROM service_categories "
                 + "WHERE category_key='EDIT_CATEGORY'", UUID.class);
         RequestInput recategorized = new RequestInput(otherCategory, pausedUpdate.countryId(), pausedUpdate.addressId(),
@@ -393,10 +421,137 @@ class ServiceMarketplaceModuleIntegrationTest {
     }
 
     @Test
+    void providerOnboardingRequiresAdminReviewAndSupportsCorrectionAndResubmission() {
+        Provider draft = providers.create(providerOwner, providerInput("Onboarding provider"));
+        ServiceRequest request = openRequest("Approval gated request");
+        assertEquals("DRAFT", draft.onboardingStatus());
+        assertTrue(providers.discover(customer, new ProviderSearch(null, null, null, null, null, "NEWEST"),
+                null, 20).items().isEmpty());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> requests.discover(providerOwner, allRequests(draft.id()), null, 20)).getStatusCode());
+        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ResponseStatusException.class,
+                () -> onboarding.review(outsider, draft.id(), "APPROVED", null)).getStatusCode());
+
+        assertEquals("SUBMITTED", onboarding.submit(providerOwner, draft.id()).onboardingStatus());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> onboarding.submit(providerOwner, draft.id())).getStatusCode());
+        UUID admin = user("service-admin");
+        jdbc.update("INSERT INTO global_user_roles(user_id,role_key,scope_type) "
+                + "VALUES(?,'PLATFORM_ADMIN','GLOBAL')", admin);
+        assertEquals(List.of(draft.id()), onboarding.queue(admin, "SUBMITTED", null, 20)
+                .items().stream().map(Provider::id).toList());
+        assertEquals(HttpStatus.BAD_REQUEST, assertThrows(ResponseStatusException.class,
+                () -> onboarding.review(admin, draft.id(), "REJECTED", " ")).getStatusCode());
+        Provider rejected = onboarding.review(admin, draft.id(), "REJECTED", "Add a clearer service description");
+        assertEquals("REJECTED", rejected.onboardingStatus());
+        assertEquals("Add a clearer service description", rejected.onboardingRejectionReason());
+
+        providers.update(providerOwner, draft.id(), new ProviderInput(null, "Corrected provider",
+                "A complete description of the offered service", 52.52, 13.405,
+                new BigDecimal("50"), List.of(category)));
+        assertEquals("SUBMITTED", onboarding.submit(providerOwner, draft.id()).onboardingStatus());
+        Provider approved = onboarding.review(admin, draft.id(), "APPROVED", null);
+        assertEquals("APPROVED", approved.onboardingStatus());
+        assertNull(approved.onboardingRejectionReason());
+        assertEquals(List.of(request.id()), requests.discover(providerOwner, allRequests(draft.id()), null, 20)
+                .items().stream().map(ServiceRequest::id).toList());
+        assertEquals(1, providers.discover(customer,
+                new ProviderSearch(null, null, null, null, null, "NEWEST"), null, 20).items().size());
+    }
+
+    @Test
+    void providerCapacityCountsResponsesQuotesAndLeadsOncePerProvider() {
+        ServiceRequest request = openRequest("Capacity request");
+        List<Provider> engaged = java.util.stream.IntStream.range(0, 5).mapToObj(index -> {
+            UUID owner = user("capacity-provider-" + index);
+            return provider(owner, "Capacity provider " + index);
+        }).toList();
+        responses.respond(engaged.get(0).ownerUserId(), request.id(), responseInput(engaged.get(0).id()));
+        quotes.submit(engaged.get(1).ownerUserId(), request.id(), quoteInput(engaged.get(1).id()));
+        responses.accessLead(engaged.get(2).ownerUserId(), request.id(),
+                new LeadInput(engaged.get(2).id(), true, false));
+        responses.respond(engaged.get(3).ownerUserId(), request.id(), responseInput(engaged.get(3).id()));
+        quotes.submit(engaged.get(4).ownerUserId(), request.id(), quoteInput(engaged.get(4).id()));
+
+        assertEquals("SENT", quotes.submit(engaged.get(0).ownerUserId(), request.id(),
+                quoteInput(engaged.get(0).id())).status());
+        responses.accessLead(engaged.get(1).ownerUserId(), request.id(),
+                new LeadInput(engaged.get(1).id(), true, false));
+        UUID sixthOwner = user("capacity-provider-six");
+        Provider sixth = provider(sixthOwner, "Sixth provider");
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> responses.respond(sixthOwner, request.id(), responseInput(sixth.id()))).getStatusCode());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> quotes.submit(sixthOwner, request.id(), quoteInput(sixth.id()))).getStatusCode());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> responses.accessLead(sixthOwner, request.id(),
+                        new LeadInput(sixth.id(), true, false))).getStatusCode());
+    }
+
+    @Test
+    void repostStartsAnIsolatedOpenRoundAndEngagedRequestsCannotBeReposted() {
+        ServiceRequest original = openRequest("Repost request");
+        Provider provider = provider(providerOwner, "Repost provider");
+        responses.respond(providerOwner, original.id(), responseInput(provider.id()));
+        responses.accessLead(providerOwner, original.id(), new LeadInput(provider.id(), true, true));
+
+        ServiceRequest reposted = requests.repost(customer, original.id());
+        assertEquals("OPEN", reposted.status());
+        assertEquals(original.id(), reposted.repostedFromRequestId());
+        assertEquals("CLOSED", requests.get(customer, original.id()).status());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM service_request_responses "
+                + "WHERE service_request_id=?", Integer.class, original.id()));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM service_request_responses "
+                + "WHERE service_request_id=?", Integer.class, reposted.id()));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM service_lead_access "
+                + "WHERE service_request_id=?", Integer.class, reposted.id()));
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records "
+                + "WHERE user_id=?", Integer.class, customer));
+        assertEquals(List.of(reposted.id()), requests.discover(providerOwner, allRequests(provider.id()), null, 20)
+                .items().stream().map(ServiceRequest::id).toList());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> requests.repost(customer, original.id())).getStatusCode());
+
+        ServiceRequest engagedRequest = openRequest("Engaged repost request");
+        Quote quote = quotes.submit(providerOwner, engagedRequest.id(), quoteInput(provider.id()));
+        quotes.accept(customer, quote.id());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> requests.repost(customer, engagedRequest.id())).getStatusCode());
+    }
+
+    @Test
+    void structuredQuotesValidateTotalsAndCreateImmutableRevisionChains() {
+        ServiceRequest request = openRequest("Quote revision request");
+        Provider provider = provider(providerOwner, "Quote provider");
+        QuoteInput invalid = new QuoteInput(provider.id(), null, "Invalid quote", "Mismatched items",
+                new BigDecimal("150.00"), "EUR", null, null, null, null, null, null,
+                List.of(new QuoteItemInput("Labour", BigDecimal.ONE, "job", new BigDecimal("100.00"))));
+        assertEquals(HttpStatus.BAD_REQUEST, assertThrows(ResponseStatusException.class,
+                () -> quotes.submit(providerOwner, request.id(), invalid)).getStatusCode());
+
+        Quote first = quotes.submit(providerOwner, request.id(), quoteInput(provider.id()));
+        QuoteInput revisionInput = new QuoteInput(provider.id(), first.id(), "Revised quote",
+                "Revised labour and materials", new BigDecimal("175.00"), "EUR", 3, "DAY",
+                Instant.now().plus(3, ChronoUnit.DAYS), "All listed work", "Additional repairs",
+                "Revised terms", List.of(new QuoteItemInput("Complete service", BigDecimal.ONE,
+                        "job", new BigDecimal("175.00"))));
+        Quote revised = quotes.submit(providerOwner, request.id(), revisionInput);
+        assertEquals(2, revised.revisionNo());
+        assertEquals(first.id(), revised.supersedesQuoteId());
+        assertEquals("SUPERSEDED", quotes.quotes(customer, request.id()).stream()
+                .filter(item -> item.id().equals(first.id())).findFirst().orElseThrow().status());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> quotes.submit(providerOwner, request.id(), revisionInput)).getStatusCode());
+        assertEquals("DECLINED", quotes.decline(customer, revised.id()).status());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> quotes.accept(customer, revised.id())).getStatusCode());
+    }
+
+    @Test
     void responsesRejectQuotesEnforceOwnershipAndTransitionOnlyFromSent() {
         ServiceRequest request = openRequest("Response request");
         Provider provider = provider(providerOwner, "Response provider");
-        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ResponseStatusException.class,
+        assertEquals(HttpStatus.NOT_FOUND, assertThrows(ResponseStatusException.class,
                 () -> responses.respond(outsider, request.id(), responseInput(provider.id()))).getStatusCode());
         assertEquals(HttpStatus.BAD_REQUEST, assertThrows(ResponseStatusException.class,
                 () -> responses.respond(providerOwner, request.id(), new ResponseInput(provider.id(), "QUOTE",
@@ -405,7 +560,7 @@ class ServiceMarketplaceModuleIntegrationTest {
         assertEquals("SENT", response.status());
         assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
                 () -> responses.respond(providerOwner, request.id(), responseInput(provider.id()))).getStatusCode());
-        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ResponseStatusException.class,
+        assertEquals(HttpStatus.NOT_FOUND, assertThrows(ResponseStatusException.class,
                 () -> responses.acceptResponse(outsider, response.id())).getStatusCode());
         assertEquals("SENT", responses.updateResponse(providerOwner, response.id(),
                 responseInput(provider.id())).status());
@@ -425,7 +580,7 @@ class ServiceMarketplaceModuleIntegrationTest {
     }
 
     @Test
-    void leadAccessIsIdempotentPrivateAndRevalidatedForMessaging() throws Exception {
+    void freeLeadAccessIsIdempotentPrivateAndRevalidatedForMessaging() throws Exception {
         UUID addressId = UUID.randomUUID();
         jdbc.update("INSERT INTO addresses(id,country_id,address_line_1,city,owner_user_id,location) "
                 + "VALUES(?,?,'Exact private street 1','Berlin',?,"
@@ -445,10 +600,13 @@ class ServiceMarketplaceModuleIntegrationTest {
         var upgraded = responses.accessLead(providerOwner, request.id(), new LeadInput(provider.id(), true, true));
         assertTrue(upgraded.contactDetailsUnlocked());
         assertEquals("Exact private street 1", upgraded.contactAddress().addressLine1());
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records WHERE user_id=?",
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records WHERE user_id=?",
                 Integer.class, providerOwner));
+        assertNull(upgraded.billingUsageRecordId());
+        assertEquals(0, BigDecimal.ZERO.compareTo(upgraded.leadPrice()));
+        assertEquals("USD", upgraded.leadCurrency());
         assertEquals(upgraded.id(), responses.getRequestLead(customer, request.id(), provider.id()).id());
-        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ResponseStatusException.class,
+        assertEquals(HttpStatus.NOT_FOUND, assertThrows(ResponseStatusException.class,
                 () -> responses.getRequestLead(outsider, request.id(), provider.id())).getStatusCode());
 
         var context = new ServiceConversationContext(UUID.randomUUID(), request.id(), customer, null,
@@ -467,7 +625,7 @@ class ServiceMarketplaceModuleIntegrationTest {
     }
 
     @Test
-    void concurrentLeadAccessCreatesOneGrantAndOneBillingRecord() throws Exception {
+    void concurrentFreeLeadAccessCreatesOneGrantWithoutBillingConsumption() throws Exception {
         ServiceRequest request = openRequest("Concurrent lead");
         Provider provider = provider(providerOwner, "Concurrent provider");
         entitlement(providerOwner, "SERVICE_LEAD_ACCESS", 2);
@@ -479,8 +637,10 @@ class ServiceMarketplaceModuleIntegrationTest {
             assertEquals(first.get().id(), second.get().id());
         }
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM service_lead_access", Integer.class));
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records WHERE user_id=?",
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM billing_usage_records WHERE user_id=?",
                 Integer.class, providerOwner));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM service_lead_access "
+                + "WHERE billing_usage_record_id IS NOT NULL", Integer.class));
     }
 
     @Test
@@ -490,7 +650,20 @@ class ServiceMarketplaceModuleIntegrationTest {
         assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
                 () -> reviews.createReview(customer, request.id(), new ReviewInput(provider.id(), 5, "Great")))
                 .getStatusCode());
-        responses.respond(providerOwner, request.id(), responseInput(provider.id()));
+        Quote quote = quotes.submit(providerOwner, request.id(), quoteInput(provider.id()));
+        var engagement = quotes.accept(customer, quote.id());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> reviews.createReview(customer, request.id(), new ReviewInput(provider.id(), 5, "Great")))
+                .getStatusCode());
+        assertEquals("IN_PROGRESS", quotes.transitionEngagement(providerOwner, engagement.id(),
+                "START", null, null).status());
+        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ResponseStatusException.class,
+                () -> quotes.transitionEngagement(customer, engagement.id(),
+                        "SUBMIT_COMPLETION", "Customer cannot submit provider completion", null)).getStatusCode());
+        assertEquals("COMPLETION_SUBMITTED", quotes.transitionEngagement(providerOwner, engagement.id(),
+                "SUBMIT_COMPLETION", "Work finished", null).status());
+        assertEquals("COMPLETED", quotes.transitionEngagement(customer, engagement.id(),
+                "COMPLETE", "Confirmed complete", null).status());
         var review = reviews.createReview(customer, request.id(), new ReviewInput(provider.id(), 5, "Great"));
         assertEquals("Thank you", reviews.respondToReview(providerOwner, review.id(), "Thank you").providerResponse());
         assertEquals(HttpStatus.FORBIDDEN, assertThrows(ResponseStatusException.class,
@@ -517,6 +690,7 @@ class ServiceMarketplaceModuleIntegrationTest {
     @Test
     void httpRequiresAuthenticationAndPreventsIdor() throws Exception {
         ServiceRequest request = openRequest("HTTP request");
+        provider(providerOwner, "HTTP provider");
         mvc.perform(get("/api/v1/service/requests/{id}", request.id())).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/service/requests/{id}", request.id()).with(asUser(providerOwner)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.title").value("HTTP request"));

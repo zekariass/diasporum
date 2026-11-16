@@ -133,3 +133,11 @@ diasporum:
       download-url-ttl: ${R2_DOWNLOAD_URL_TTL:PT2M}
       session-ttl: ${R2_UPLOAD_SESSION_TTL:PT15M}
       max-upload-bytes: ${R2_MAX_UPLOAD_BYTES:26214400}
+  service-marketplace:
+    # Distinct approved providers that may respond, quote or unlock a lead per job round.
+    # Reposting creates a new job round with a fresh capacity allowance.
+    max-providers-per-request: ${DIASPORUM_SERVICE_MAX_PROVIDERS_PER_REQUEST:5}
+    # Zero makes lead access free and skips SERVICE_LEAD_ACCESS consumption.
+    # Positive prices consume that entitlement exactly once per provider/job round.
+    lead-price: ${DIASPORUM_SERVICE_LEAD_PRICE:0}
+    lead-currency: ${DIASPORUM_SERVICE_LEAD_CURRENCY:USD}

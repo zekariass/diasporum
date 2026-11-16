@@ -1,11 +1,15 @@
 package com.diasporum.backend.servicemarketplace.internal.api.rest;
 
 import com.diasporum.backend.security.DiasporumUserPrincipal;
+import com.diasporum.backend.servicemarketplace.internal.application.ServiceMarketplaceProperties;
+import com.diasporum.backend.servicemarketplace.internal.application.ServiceProviderOnboardingService;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceProviderService;
+import com.diasporum.backend.servicemarketplace.internal.application.ServiceQuoteService;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceRequestService;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceResponseService;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceReviewService;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Category;
+import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Engagement;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.LeadAccess;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.LeadInput;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Page;
@@ -13,6 +17,9 @@ import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketpla
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ProviderInput;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ProviderResponse;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ProviderSearch;
+import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Quote;
+import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.QuoteInput;
+import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.QuoteItemInput;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Report;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ReportInput;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.RequestInput;
@@ -57,14 +64,27 @@ public class ServiceMarketplaceController {
     private final ServiceRequestService requests;
     private final ServiceResponseService responses;
     private final ServiceReviewService reviews;
+    private final ServiceProviderOnboardingService onboarding;
+    private final ServiceQuoteService quotes;
+    private final ServiceMarketplaceProperties properties;
 
     public ServiceMarketplaceController(ServiceProviderService providers,
             ServiceRequestService requests, ServiceResponseService responses,
-            ServiceReviewService reviews) {
+            ServiceReviewService reviews, ServiceProviderOnboardingService onboarding,
+            ServiceQuoteService quotes, ServiceMarketplaceProperties properties) {
         this.providers = providers;
         this.requests = requests;
         this.responses = responses;
         this.reviews = reviews;
+        this.onboarding = onboarding;
+        this.quotes = quotes;
+        this.properties = properties;
+    }
+
+    @GetMapping("/configuration")
+    public ServiceConfigurationView configuration() {
+        return new ServiceConfigurationView(properties.maxProvidersPerRequest(),
+                properties.leadPrice(), properties.leadCurrency());
     }
 
     @GetMapping("/categories")
@@ -99,6 +119,12 @@ public class ServiceMarketplaceController {
     public ProviderView createProvider(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @Valid @RequestBody ProviderInputBody body) {
         return providerView(providers.create(principal.userId(), body.domain()));
+    }
+
+    @PostMapping("/providers/{providerId}/submit-onboarding")
+    public ProviderView submitOnboarding(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID providerId) {
+        return providerView(onboarding.submit(principal.userId(), providerId));
     }
 
     @GetMapping("/providers/{providerId}")
@@ -212,6 +238,13 @@ public class ServiceMarketplaceController {
         return requestView(requests.publish(principal.userId(), requestId));
     }
 
+    @PostMapping("/requests/{requestId}/repost")
+    @ResponseStatus(HttpStatus.CREATED)
+    public RequestView repost(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID requestId) {
+        return requestView(requests.repost(principal.userId(), requestId));
+    }
+
     @PostMapping("/requests/{requestId}/pause")
     public RequestView pause(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @PathVariable UUID requestId) {
@@ -234,6 +267,50 @@ public class ServiceMarketplaceController {
     public RequestView cancel(@AuthenticationPrincipal DiasporumUserPrincipal principal,
             @PathVariable UUID requestId) {
         return requestView(requests.cancel(principal.userId(), requestId));
+    }
+
+    @PostMapping("/requests/{requestId}/quotes")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Quote submitQuote(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID requestId, @Valid @RequestBody QuoteInputBody body) {
+        return quotes.submit(principal.userId(), requestId, body.domain());
+    }
+
+    @GetMapping("/requests/{requestId}/quotes")
+    public List<Quote> requestQuotes(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID requestId) {
+        return quotes.quotes(principal.userId(), requestId);
+    }
+
+    @PostMapping("/quotes/{quoteId}/accept")
+    public Engagement acceptQuote(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID quoteId) {
+        return quotes.accept(principal.userId(), quoteId);
+    }
+
+    @PostMapping("/quotes/{quoteId}/decline")
+    public Quote declineQuote(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID quoteId) {
+        return quotes.decline(principal.userId(), quoteId);
+    }
+
+    @PostMapping("/quotes/{quoteId}/withdraw")
+    public Quote withdrawQuote(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID quoteId) {
+        return quotes.withdraw(principal.userId(), quoteId);
+    }
+
+    @GetMapping("/requests/{requestId}/engagement")
+    public Engagement requestEngagement(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID requestId) {
+        return quotes.engagementForRequest(principal.userId(), requestId);
+    }
+
+    @PostMapping("/engagements/{engagementId}/transitions")
+    public Engagement transitionEngagement(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID engagementId, @Valid @RequestBody EngagementTransitionBody body) {
+        return quotes.transitionEngagement(principal.userId(), engagementId,
+                body.action(), body.note(), body.reason());
     }
 
     @PostMapping("/requests/{requestId}/responses")
@@ -372,13 +449,15 @@ public class ServiceMarketplaceController {
         return new ProviderView(p.id(), manage ? p.ownerUserId() : null, p.businessAccountId(),
                 p.displayName(), p.description(), manage ? p.baseLatitude() : null,
                 manage ? p.baseLongitude() : null, manage ? p.radiusKm() : null, p.status(),
-                p.verificationStatus(), p.categories(), p.distanceMeters(), manage,
+                p.verificationStatus(), p.onboardingStatus(), p.onboardingSubmittedAt(),
+                p.onboardingReviewedAt(), manage ? p.onboardingReviewedByUserId() : null,
+                manage ? p.onboardingRejectionReason() : null, p.categories(), p.distanceMeters(), manage,
                 p.createdAt(), p.updatedAt());
     }
 
     private static RequestView requestView(ServiceRequest r) {
         return new RequestView(r.id(), r.customerUserId(), r.customerDisplayName(),
-                r.serviceCategoryId(), r.categoryDisplayName(), r.countryId(),
+                r.serviceCategoryId(), r.categoryDisplayName(), r.repostedFromRequestId(), r.countryId(),
                 r.canManage() ? r.addressId() : null, r.latitude(), r.longitude(), r.title(),
                 r.description(), r.budgetMin(), r.budgetMax(), r.currencyCode(), r.preferredDate(),
                 r.status(), r.expiresAt(), r.publishedAt(), r.mediaIds(), r.distanceMeters(),
@@ -422,17 +501,54 @@ public class ServiceMarketplaceController {
         }
     }
 
+    public record QuoteInputBody(@NotNull UUID serviceProviderId, UUID supersedesQuoteId,
+            @NotBlank @Size(max = 180) String title,
+            @NotBlank @Size(max = 8000) String scopeOfWork,
+            @NotNull @DecimalMin("0") BigDecimal amount,
+            @NotBlank @Size(min = 3, max = 3) String currencyCode,
+            @Min(1) Integer estimatedDurationValue, String estimatedDurationUnit,
+            Instant validUntil, String inclusions, String exclusions, String termsAndConditions,
+            @NotNull @Size(max = 50) List<@Valid QuoteItemInputBody> items) {
+        QuoteInput domain() {
+            return new QuoteInput(serviceProviderId, supersedesQuoteId, title, scopeOfWork,
+                    amount, currencyCode, estimatedDurationValue, estimatedDurationUnit,
+                    validUntil, inclusions, exclusions, termsAndConditions,
+                    items.stream().map(QuoteItemInputBody::domain).toList());
+        }
+    }
+
+    public record QuoteItemInputBody(@NotBlank @Size(max = 500) String description,
+            @NotNull @DecimalMin("0.001") BigDecimal quantity,
+            @Size(max = 40) String unitLabel,
+            @NotNull @DecimalMin("0") BigDecimal unitAmount) {
+        QuoteItemInput domain() {
+            return new QuoteItemInput(description, quantity, unitLabel, unitAmount);
+        }
+    }
+
+    public record EngagementTransitionBody(@NotBlank String action,
+            @Size(max = 4000) String note, @Size(max = 4000) String reason) {
+    }
+
+    public record ServiceConfigurationView(int maxProvidersPerRequest,
+            BigDecimal leadPrice, String leadCurrency) {
+    }
+
     public record ReviewResponseBody(@NotBlank @Size(max = 2000) String response) {
     }
 
     public record ProviderView(UUID id, UUID ownerUserId, UUID businessAccountId,
             String displayName, String description, Double baseLatitude, Double baseLongitude,
-            BigDecimal radiusKm, String status, String verificationStatus, List<Category> categories,
-            Double distanceMeters, boolean canManage, Instant createdAt, Instant updatedAt) {
+            BigDecimal radiusKm, String status, String verificationStatus,
+            String onboardingStatus, Instant onboardingSubmittedAt, Instant onboardingReviewedAt,
+            UUID onboardingReviewedByUserId, String onboardingRejectionReason,
+            List<Category> categories, Double distanceMeters, boolean canManage,
+            Instant createdAt, Instant updatedAt) {
     }
 
     public record RequestView(UUID id, UUID customerUserId, String customerDisplayName,
-            UUID serviceCategoryId, String categoryDisplayName, UUID countryId, UUID addressId,
+            UUID serviceCategoryId, String categoryDisplayName, UUID repostedFromRequestId,
+            UUID countryId, UUID addressId,
             Double latitude, Double longitude, String title, String description,
             BigDecimal budgetMin, BigDecimal budgetMax, String currencyCode, LocalDate preferredDate,
             String status, Instant expiresAt, Instant publishedAt, List<UUID> mediaIds,

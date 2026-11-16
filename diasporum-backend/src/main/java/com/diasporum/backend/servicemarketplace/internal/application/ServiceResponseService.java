@@ -19,6 +19,7 @@ import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketpla
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceCursor;
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceEngagementRepository;
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceProviderRepository;
+import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceRequestRepository;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -37,23 +38,31 @@ public class ServiceResponseService {
     private final ServiceMarketplaceSupport support;
     private final BillingApi billing;
     private final JdbcTemplate jdbc;
+    private final ServiceRequestRepository requests;
+    private final ServiceMarketplaceProperties properties;
 
     public ServiceResponseService(ServiceEngagementRepository repository,
             ServiceProviderRepository providers, ServiceMarketplaceSupport support,
-            BillingApi billing, JdbcTemplate jdbc) {
+            BillingApi billing, JdbcTemplate jdbc, ServiceRequestRepository requests,
+            ServiceMarketplaceProperties properties) {
         this.repository = repository;
         this.providers = providers;
         this.support = support;
         this.billing = billing;
         this.jdbc = jdbc;
+        this.requests = requests;
+        this.properties = properties;
     }
 
     @Transactional
     public ProviderResponse respond(UUID actorUserId, UUID requestId, ResponseInput in) {
-        ServiceRequest request = support.requireRequestVisible(actorUserId, requestId);
+        support.requireRequestVisible(actorUserId, requestId);
         Provider provider = support.requireProvider(in.serviceProviderId());
         support.requireProviderManager(actorUserId, provider);
+        ServiceRequest request = requests.findForUpdate(requestId)
+                .orElseThrow(() -> notFound("SERVICE_REQUEST_NOT_FOUND"));
         validateResponse(request, provider, in);
+        ensureCapacity(requestId, provider.id());
         if (repository.findResponse(requestId, provider.id()).isPresent()) {
             throw conflict("PROVIDER_RESPONSE_ALREADY_EXISTS");
         }
@@ -182,9 +191,7 @@ public class ServiceResponseService {
         ServiceRequest request = support.requireRequestVisible(actorUserId, requestId);
         Provider provider = support.requireProvider(in.serviceProviderId());
         support.requireProviderManager(actorUserId, provider);
-        if (!"ACTIVE".equals(provider.status())) {
-            throw conflict("PROVIDER_NOT_ACTIVE");
-        }
+        support.requireApprovedActiveProvider(provider);
         if (actorUserId.equals(request.customerUserId())) {
             throw conflict("CUSTOMER_CANNOT_PURCHASE_OWN_LEAD");
         }
@@ -196,6 +203,7 @@ public class ServiceResponseService {
         }
         jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Object.class,
                 requestId + ":" + provider.id());
+        requests.findForUpdate(requestId).orElseThrow(() -> notFound("SERVICE_REQUEST_NOT_FOUND"));
         var existing = repository.findLeadForUpdate(requestId, provider.id());
         if (existing.isPresent()) {
             LeadAccess lead = existing.get();
@@ -205,16 +213,18 @@ public class ServiceResponseService {
             return withAddress(actorUserId, repository.upgradeLead(lead.id(),
                     in.enableChat(), in.unlockContactDetails()));
         }
-        UUID billingUser = provider.ownerUserId() != null ? provider.ownerUserId() : actorUserId;
-        UUID businessId = provider.businessAccountId();
-        if (provider.ownerUserId() == null) {
-            billingUser = null;
+        ensureCapacity(requestId, provider.id());
+        UUID usageRecordId = null;
+        if (properties.leadPrice().signum() > 0) {
+            UUID billingUser = provider.ownerUserId() != null ? provider.ownerUserId() : null;
+            QuotaConsumption consumption = billing.consume(new ConsumptionCommand(billingUser,
+                    provider.businessAccountId(), "SERVICE_LEAD_ACCESS", 1, "SERVICE_REQUEST", requestId,
+                    "service-lead-access:" + requestId + ":" + provider.id()));
+            usageRecordId = consumption.usageRecordId();
         }
-        QuotaConsumption consumption = billing.consume(new ConsumptionCommand(billingUser, businessId,
-                "SERVICE_LEAD_ACCESS", 1, "SERVICE_REQUEST", requestId,
-                "service-lead-access:" + requestId + ":" + provider.id()));
         LeadAccess lead = repository.insertLead(UUID.randomUUID(), requestId, provider.id(),
-                actorUserId, consumption.usageRecordId(), in.enableChat(), in.unlockContactDetails());
+                actorUserId, usageRecordId, properties.leadPrice(), properties.leadCurrency(),
+                in.enableChat(), in.unlockContactDetails());
         support.notify(request.customerUserId(), "SERVICE_REQUEST_UPDATE", requestId,
                 "service-lead-access:" + lead.id());
         return withAddress(actorUserId, lead);
@@ -249,13 +259,18 @@ public class ServiceResponseService {
         return lead.withAddress(repository.requestAddress(lead.serviceRequestId()).orElse(null));
     }
 
+    private void ensureCapacity(UUID requestId, UUID providerId) {
+        if (!repository.hasProviderEngagement(requestId, providerId)
+                && repository.engagedProviderCount(requestId) >= properties.maxProvidersPerRequest()) {
+            throw conflict("SERVICE_PROVIDER_CAPACITY_REACHED");
+        }
+    }
+
     private void validateResponse(ServiceRequest request, Provider provider, ResponseInput in) {
         if (!"OPEN".equals(request.status())) {
             throw conflict("REQUEST_NOT_OPEN");
         }
-        if (!"ACTIVE".equals(provider.status())) {
-            throw conflict("PROVIDER_NOT_ACTIVE");
-        }
+        support.requireApprovedActiveProvider(provider);
         if (request.customerUserId().equals(provider.ownerUserId())) {
             throw conflict("CUSTOMER_CANNOT_RESPOND_TO_OWN_REQUEST");
         }
@@ -267,7 +282,7 @@ public class ServiceResponseService {
             throw badRequest("INVALID_PROVIDER_RESPONSE");
         }
         if (in.quotedAmount() != null || in.currencyCode() != null) {
-            throw badRequest("QUOTES_NOT_ENABLED");
+            throw badRequest("USE_STRUCTURED_QUOTES");
         }
     }
 

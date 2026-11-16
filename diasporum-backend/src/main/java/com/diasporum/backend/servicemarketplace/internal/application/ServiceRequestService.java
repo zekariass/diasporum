@@ -16,6 +16,7 @@ import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketpla
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ServiceRequest;
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceCursor;
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceProviderRepository;
+import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceQuoteRepository;
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceRequestRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,15 +42,17 @@ public class ServiceRequestService {
     private final ServiceMarketplaceSupport support;
     private final BillingApi billing;
     private final MediaApi media;
+    private final ServiceQuoteRepository quotes;
 
     public ServiceRequestService(ServiceRequestRepository repository,
             ServiceProviderRepository providers, ServiceMarketplaceSupport support,
-            BillingApi billing, MediaApi media) {
+            BillingApi billing, MediaApi media, ServiceQuoteRepository quotes) {
         this.repository = repository;
         this.providers = providers;
         this.support = support;
         this.billing = billing;
         this.media = media;
+        this.quotes = quotes;
     }
 
     @Transactional
@@ -114,6 +118,37 @@ public class ServiceRequestService {
                 "SERVICE_REQUEST", requestId, "service-job-post:" + requestId));
         repository.setStatus(requestId, "OPEN", true);
         return support.enrich(actorUserId, support.requireRequest(requestId));
+    }
+
+    @Transactional
+    public ServiceRequest repost(UUID actorUserId, UUID requestId) {
+        support.requireActive(actorUserId);
+        ServiceRequest source = repository.findForUpdate(requestId)
+                .orElseThrow(() -> notFound("SERVICE_REQUEST_NOT_FOUND"));
+        requireOwner(actorUserId, source);
+        if (!Set.of("OPEN", "PAUSED", "CLOSED", "EXPIRED").contains(source.status())) {
+            throw conflict("REQUEST_NOT_REPOSTABLE");
+        }
+        if (quotes.engagementForRequest(requestId).isPresent()) {
+            throw conflict("ENGAGED_REQUEST_CANNOT_BE_REPOSTED");
+        }
+        UUID newId = UUID.randomUUID();
+        Instant expiry = source.expiresAt() != null && source.expiresAt().isAfter(Instant.now())
+                ? source.expiresAt() : null;
+        RequestInput input = new RequestInput(source.serviceCategoryId(), source.countryId(),
+                source.addressId(), source.latitude(), source.longitude(), source.title(),
+                source.description(), source.budgetMin(), source.budgetMax(), source.currencyCode(),
+                source.preferredDate(), expiry,
+                repository.mediaFor(List.of(requestId)).getOrDefault(requestId, List.of()));
+        try {
+            repository.setStatus(requestId, "CLOSED", false);
+            ServiceRequest reposted = repository.insertRepost(newId, actorUserId, input, requestId);
+            billing.consume(new ConsumptionCommand(actorUserId, null, "SERVICE_JOB_POST", 1,
+                    "SERVICE_REQUEST", newId, "service-job-post:" + newId));
+            return support.enrich(actorUserId, reposted);
+        } catch (DuplicateKeyException e) {
+            throw conflict("REQUEST_ALREADY_REPOSTED");
+        }
     }
 
     @Transactional
@@ -218,9 +253,7 @@ public class ServiceRequestService {
         if (search.serviceProviderId() != null) {
             Provider provider = support.requireProvider(search.serviceProviderId());
             support.requireProviderManager(actorUserId, provider);
-            if (!"ACTIVE".equals(provider.status())) {
-                throw conflict("PROVIDER_NOT_ACTIVE");
-            }
+            support.requireApprovedActiveProvider(provider);
             if (search.categoryId() != null
                     && !providers.providerOwnsCategory(provider.id(), search.categoryId())) {
                 throw badRequest("PROVIDER_CATEGORY_MISMATCH");
@@ -280,7 +313,7 @@ public class ServiceRequestService {
             throw badRequest("INVALID_SERVICE_REQUEST");
         }
         ServiceProviderService.coordinates(in.latitude(), in.longitude());
-        if (!providers.activeCategory(in.serviceCategoryId())
+        if (!providers.activeLeafCategory(in.serviceCategoryId())
                 || !providers.activeCountry(in.countryId())) {
             throw badRequest("REFERENCE_DATA_NOT_AVAILABLE");
         }

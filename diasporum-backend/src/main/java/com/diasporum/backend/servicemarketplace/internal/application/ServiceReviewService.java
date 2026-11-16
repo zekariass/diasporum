@@ -15,6 +15,7 @@ import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketpla
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ServiceRequest;
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceCursor;
 import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceEngagementRepository;
+import com.diasporum.backend.servicemarketplace.internal.infrastructure.persistence.ServiceQuoteRepository;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -34,11 +35,13 @@ public class ServiceReviewService {
 
     private final ServiceEngagementRepository repository;
     private final ServiceMarketplaceSupport support;
+    private final ServiceQuoteRepository quotes;
 
     public ServiceReviewService(ServiceEngagementRepository repository,
-            ServiceMarketplaceSupport support) {
+            ServiceMarketplaceSupport support, ServiceQuoteRepository quotes) {
         this.repository = repository;
         this.support = support;
+        this.quotes = quotes;
     }
 
     @Transactional
@@ -48,10 +51,8 @@ public class ServiceReviewService {
             throw forbidden("REQUEST_OWNER_REQUIRED");
         }
         Provider provider = support.requireProvider(in.serviceProviderId());
-        boolean interaction = repository.findResponse(requestId, provider.id()).isPresent()
-                || repository.findLead(requestId, provider.id()).isPresent();
-        if (!interaction) {
-            throw conflict("SERVICE_INTERACTION_REQUIRED");
+        if (!quotes.completedEngagementExists(requestId, provider.id(), actorUserId)) {
+            throw conflict("COMPLETED_SERVICE_ENGAGEMENT_REQUIRED");
         }
         validateReview(in);
         try {

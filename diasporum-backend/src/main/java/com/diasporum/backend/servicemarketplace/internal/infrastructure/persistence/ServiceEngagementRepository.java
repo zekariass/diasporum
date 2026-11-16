@@ -9,6 +9,7 @@ import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketpla
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ResponseInput;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Review;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.ReviewInput;
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -27,7 +28,8 @@ public class ServiceEngagementRepository {
             + "p.display_name AS provider_display_name,r.responded_by_user_id,r.response_type,"
             + "r.message,r.quoted_amount,r.currency_code,r.status,r.created_at,r.updated_at";
     private static final String LEAD_COLS = "l.id,l.service_request_id,l.service_provider_id,"
-            + "l.chat_enabled,l.contact_details_unlocked,l.status,l.granted_by_user_id,l.accessed_at";
+            + "l.chat_enabled,l.contact_details_unlocked,l.status,l.granted_by_user_id,"
+            + "l.billing_usage_record_id,l.lead_price,l.lead_currency,l.accessed_at";
     private static final String REVIEW_COLS = "v.id,v.service_request_id,v.service_provider_id,"
             + "v.reviewer_user_id,v.rating,v.review_text,v.status,v.provider_response,"
             + "v.created_at,v.updated_at";
@@ -127,11 +129,29 @@ public class ServiceEngagementRepository {
     }
 
     public LeadAccess insertLead(UUID id, UUID requestId, UUID providerId, UUID grantedBy,
-            UUID usageRecordId, boolean chat, boolean contact) {
+            UUID usageRecordId, BigDecimal price, String currency, boolean chat, boolean contact) {
         jdbc.update("INSERT INTO service_lead_access(id,service_request_id,service_provider_id,"
-                + "granted_by_user_id,billing_usage_record_id,chat_enabled,contact_details_unlocked) "
-                + "VALUES(?,?,?,?,?,?,?)", id, requestId, providerId, grantedBy, usageRecordId, chat, contact);
+                + "granted_by_user_id,billing_usage_record_id,lead_price,lead_currency,"
+                + "chat_enabled,contact_details_unlocked) VALUES(?,?,?,?,?,?,?,?,?)",
+                id, requestId, providerId, grantedBy, usageRecordId, price, currency, chat, contact);
         return findLead(id).orElseThrow();
+    }
+
+    public boolean hasProviderEngagement(UUID requestId, UUID providerId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS("
+                + "SELECT 1 FROM service_request_responses WHERE service_request_id=? AND service_provider_id=? "
+                + "UNION ALL SELECT 1 FROM service_quotes WHERE service_request_id=? AND service_provider_id=? "
+                + "UNION ALL SELECT 1 FROM service_lead_access WHERE service_request_id=? AND service_provider_id=?)",
+                Boolean.class, requestId, providerId, requestId, providerId, requestId, providerId));
+    }
+
+    public int engagedProviderCount(UUID requestId) {
+        Integer count = jdbc.queryForObject("SELECT count(DISTINCT provider_id) FROM ("
+                + "SELECT service_provider_id AS provider_id FROM service_request_responses WHERE service_request_id=? "
+                + "UNION ALL SELECT service_provider_id FROM service_quotes WHERE service_request_id=? "
+                + "UNION ALL SELECT service_provider_id FROM service_lead_access WHERE service_request_id=?) engaged",
+                Integer.class, requestId, requestId, requestId);
+        return count == null ? 0 : count;
     }
 
     public LeadAccess upgradeLead(UUID id, boolean chat, boolean contact) {
@@ -318,7 +338,10 @@ public class ServiceEngagementRepository {
                 rs.getObject("service_request_id", UUID.class),
                 rs.getObject("service_provider_id", UUID.class), rs.getBoolean("chat_enabled"),
                 rs.getBoolean("contact_details_unlocked"), rs.getString("status"),
-                rs.getObject("granted_by_user_id", UUID.class), instant(rs, "accessed_at"), null);
+                rs.getObject("granted_by_user_id", UUID.class),
+                rs.getObject("billing_usage_record_id", UUID.class),
+                rs.getBigDecimal("lead_price"), rs.getString("lead_currency"),
+                instant(rs, "accessed_at"), null);
     }
 
     private static Review review(ResultSet rs, int row) throws SQLException {

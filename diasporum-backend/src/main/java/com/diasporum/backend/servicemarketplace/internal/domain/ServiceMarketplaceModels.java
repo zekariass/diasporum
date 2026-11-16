@@ -26,14 +26,18 @@ public final class ServiceMarketplaceModels {
     public record Provider(UUID id, UUID ownerUserId, UUID businessAccountId,
             String displayName, String description, Double baseLatitude,
             Double baseLongitude, BigDecimal radiusKm, String status,
-            String verificationStatus, List<Category> categories,
-            Double distanceMeters, boolean canManage, Instant createdAt,
-            Instant updatedAt) {
+            String verificationStatus, String onboardingStatus,
+            Instant onboardingSubmittedAt, Instant onboardingReviewedAt,
+            UUID onboardingReviewedByUserId, String onboardingRejectionReason,
+            List<Category> categories, Double distanceMeters, boolean canManage,
+            Instant createdAt, Instant updatedAt) {
         public Provider with(List<Category> nextCategories, Double distance,
                 boolean manageable) {
             return new Provider(id, ownerUserId, businessAccountId, displayName,
                     description, baseLatitude, baseLongitude, radiusKm, status,
-                    verificationStatus, nextCategories, distance, manageable,
+                    verificationStatus, onboardingStatus, onboardingSubmittedAt,
+                    onboardingReviewedAt, onboardingReviewedByUserId,
+                    onboardingRejectionReason, nextCategories, distance, manageable,
                     createdAt, updatedAt);
         }
     }
@@ -47,7 +51,8 @@ public final class ServiceMarketplaceModels {
 
     public record ServiceRequest(UUID id, UUID customerUserId,
             String customerDisplayName, UUID serviceCategoryId,
-            String categoryDisplayName, UUID countryId, UUID addressId,
+            String categoryDisplayName, UUID repostedFromRequestId,
+            UUID countryId, UUID addressId,
             Double latitude, Double longitude, String title, String description,
             BigDecimal budgetMin, BigDecimal budgetMax, String currencyCode,
             LocalDate preferredDate, String status, Instant expiresAt,
@@ -56,7 +61,7 @@ public final class ServiceMarketplaceModels {
         public ServiceRequest with(String displayName, List<UUID> media,
                 Double distance, boolean manageable) {
             return new ServiceRequest(id, customerUserId, displayName,
-                    serviceCategoryId, categoryDisplayName, countryId, addressId,
+                    serviceCategoryId, categoryDisplayName, repostedFromRequestId, countryId, addressId,
                     latitude, longitude, title, description, budgetMin, budgetMax,
                     currencyCode, preferredDate, status, expiresAt, publishedAt,
                     media, distance, manageable, createdAt, updatedAt);
@@ -86,12 +91,54 @@ public final class ServiceMarketplaceModels {
     public record LeadAccess(UUID id, UUID serviceRequestId,
             UUID serviceProviderId, boolean chatEnabled,
             boolean contactDetailsUnlocked, String status, UUID grantedByUserId,
+            UUID billingUsageRecordId, BigDecimal leadPrice, String leadCurrency,
             Instant accessedAt, ContactAddress contactAddress) {
         public LeadAccess withAddress(ContactAddress address) {
             return new LeadAccess(id, serviceRequestId, serviceProviderId,
                     chatEnabled, contactDetailsUnlocked, status, grantedByUserId,
-                    accessedAt, address);
+                    billingUsageRecordId, leadPrice, leadCurrency, accessedAt, address);
         }
+    }
+
+    public record QuoteItemInput(String description, BigDecimal quantity,
+            String unitLabel, BigDecimal unitAmount) {
+    }
+
+    public record QuoteInput(UUID serviceProviderId, UUID supersedesQuoteId,
+            String title, String scopeOfWork, BigDecimal amount, String currencyCode,
+            Integer estimatedDurationValue, String estimatedDurationUnit,
+            Instant validUntil, String inclusions, String exclusions,
+            String termsAndConditions, List<QuoteItemInput> items) {
+    }
+
+    public record QuoteItem(UUID id, int lineNo, String description,
+            BigDecimal quantity, String unitLabel, BigDecimal unitAmount,
+            BigDecimal lineAmount) {
+    }
+
+    public record Quote(UUID id, UUID serviceRequestId, UUID serviceProviderId,
+            String providerDisplayName, int revisionNo, UUID supersedesQuoteId,
+            UUID submittedByUserId, String title, String scopeOfWork,
+            BigDecimal amount, String currencyCode, Integer estimatedDurationValue,
+            String estimatedDurationUnit, Instant validUntil, String inclusions,
+            String exclusions, String termsAndConditions, String status,
+            Instant sentAt, Instant respondedAt, List<QuoteItem> items) {
+        public Quote withItems(List<QuoteItem> quoteItems) {
+            return new Quote(id, serviceRequestId, serviceProviderId,
+                    providerDisplayName, revisionNo, supersedesQuoteId,
+                    submittedByUserId, title, scopeOfWork, amount, currencyCode,
+                    estimatedDurationValue, estimatedDurationUnit, validUntil,
+                    inclusions, exclusions, termsAndConditions, status, sentAt,
+                    respondedAt, quoteItems);
+        }
+    }
+
+    public record Engagement(UUID id, UUID serviceRequestId, UUID acceptedQuoteId,
+            UUID serviceProviderId, String providerDisplayName, UUID customerUserId,
+            String status, Instant acceptedAt, Instant startedAt,
+            Instant completionSubmittedAt, Instant completedAt, Instant cancelledAt,
+            Instant issueRaisedAt, String issueReason, String customerCompletionNote,
+            String providerCompletionNote, Instant createdAt, Instant updatedAt) {
     }
 
     public record ReviewInput(UUID serviceProviderId, int rating,

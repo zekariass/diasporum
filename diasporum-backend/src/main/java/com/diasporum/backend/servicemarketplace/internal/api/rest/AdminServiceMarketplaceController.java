@@ -2,6 +2,8 @@ package com.diasporum.backend.servicemarketplace.internal.api.rest;
 
 import com.diasporum.backend.security.DiasporumUserPrincipal;
 import com.diasporum.backend.servicemarketplace.internal.application.ServiceModerationService;
+import com.diasporum.backend.servicemarketplace.internal.application.ServiceProviderOnboardingService;
+import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Provider;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Page;
 import com.diasporum.backend.servicemarketplace.internal.domain.ServiceMarketplaceModels.Report;
 import jakarta.validation.Valid;
@@ -24,9 +26,26 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/admin/service")
 public class AdminServiceMarketplaceController {
     private final ServiceModerationService moderation;
+    private final ServiceProviderOnboardingService onboarding;
 
-    public AdminServiceMarketplaceController(ServiceModerationService moderation) {
+    public AdminServiceMarketplaceController(ServiceModerationService moderation,
+            ServiceProviderOnboardingService onboarding) {
         this.moderation = moderation;
+        this.onboarding = onboarding;
+    }
+
+    @GetMapping("/provider-onboarding")
+    public Page<Provider> onboardingQueue(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) Integer size) {
+        return onboarding.queue(principal.userId(), status, cursor, size);
+    }
+
+    @PostMapping("/providers/{providerId}/onboarding-review")
+    public Provider reviewOnboarding(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID providerId, @Valid @RequestBody OnboardingReviewBody body) {
+        return onboarding.review(principal.userId(), providerId, body.decision(), body.reason());
     }
 
     @GetMapping("/reports")
@@ -55,5 +74,9 @@ public class AdminServiceMarketplaceController {
 
     public record ModerationActionBody(@NotBlank String targetType, @NotNull UUID targetId,
             @NotBlank String action, @Size(max = 2000) String reason, UUID reportId) {
+    }
+
+    public record OnboardingReviewBody(@NotBlank String decision,
+            @Size(max = 2000) String reason) {
     }
 }

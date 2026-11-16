@@ -252,7 +252,7 @@ public class TaxonomyService {
                         + " JOIN country_category_modules ccm ON ccm.category_id=cc.id"
                         + " WHERE cc.country_id=? AND cc.is_active"
                         + " AND ccm.module_key=?::category_module"
-                        + " ORDER BY cc.name",
+                        + " ORDER BY cc.sort_order,cc.name",
                 (rs, i) -> new TaxonomyApi.CategoryView(
                         rs.getObject("id", UUID.class),
                         rs.getObject("country_id", UUID.class),
