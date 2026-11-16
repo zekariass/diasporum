@@ -212,7 +212,7 @@ class VehicleListingsModuleIntegrationTest {
     @Test
     void v11WorksOnFreshAndPreVehicleDatabases() {
         String constraint = jdbc.queryForObject("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-                + "WHERE conname='media_objects_purpose_check'", String.class);
+                + "WHERE conrelid='media_objects'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%purpose%'", String.class);
         assertTrue(constraint.contains("VEHICLE"));
         assertTrue(constraint.contains("MESSAGE_DOCUMENT"));
         assertTrue(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM pg_indexes "

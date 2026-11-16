@@ -180,7 +180,7 @@ class SpareBagModuleIntegrationTest {
 
     private void assertMigratedSpareBagSchema(JdbcTemplate database) {
         String mediaConstraint = database.queryForObject("SELECT pg_get_constraintdef(oid)"
-                + " FROM pg_constraint WHERE conname='media_objects_purpose_check'", String.class);
+                + " FROM pg_constraint WHERE conrelid='media_objects'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%purpose%'", String.class);
         for (String purpose : new String[]{"MESSAGE_IMAGE", "MESSAGE_DOCUMENT", "JOB",
                 "BUSINESS", "PROPERTY", "SPARE_BAG_LISTING"}) {
             assertTrue(mediaConstraint.contains(purpose), purpose);

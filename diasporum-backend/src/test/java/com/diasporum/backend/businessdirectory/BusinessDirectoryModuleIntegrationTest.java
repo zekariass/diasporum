@@ -202,7 +202,7 @@ class BusinessDirectoryModuleIntegrationTest {
                 Integer.class, category));
 
         String mediaConstraint = jdbc.queryForObject("SELECT pg_get_constraintdef(oid)"
-                + " FROM pg_constraint WHERE conname='media_objects_purpose_check'", String.class);
+                + " FROM pg_constraint WHERE conrelid='media_objects'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%purpose%'", String.class);
         assertTrue(mediaConstraint.contains("MESSAGE_IMAGE"));
         assertTrue(mediaConstraint.contains("MESSAGE_DOCUMENT"));
         assertTrue(mediaConstraint.contains("JOB"));
@@ -245,7 +245,7 @@ class BusinessDirectoryModuleIntegrationTest {
             assertTrue(upgradeJdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM information_schema.columns"
                     + " WHERE table_name='business_media' AND column_name='is_logo')", Boolean.class));
             String mediaConstraint = upgradeJdbc.queryForObject("SELECT pg_get_constraintdef(oid)"
-                    + " FROM pg_constraint WHERE conname='media_objects_purpose_check'", String.class);
+                    + " FROM pg_constraint WHERE conrelid='media_objects'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%purpose%'", String.class);
             assertTrue(mediaConstraint.contains("MESSAGE_IMAGE"));
             assertTrue(mediaConstraint.contains("MESSAGE_DOCUMENT"));
             assertTrue(mediaConstraint.contains("JOB"));

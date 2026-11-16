@@ -197,7 +197,7 @@ class PropertyMarketplaceIntegrationTest {
         assertTrue(database.queryForObject("SELECT count(*)>=9 FROM country_property_types",
                 Boolean.class));
         String mediaConstraint = database.queryForObject("SELECT pg_get_constraintdef(oid)"
-                + " FROM pg_constraint WHERE conname='media_objects_purpose_check'", String.class);
+                + " FROM pg_constraint WHERE conrelid='media_objects'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%purpose%'", String.class);
         for (String purpose : new String[]{"MESSAGE_IMAGE", "MESSAGE_DOCUMENT", "JOB",
                 "BUSINESS", "PROPERTY"}) {
             assertTrue(mediaConstraint.contains(purpose));
