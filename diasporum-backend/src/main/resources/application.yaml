@@ -141,3 +141,8 @@ diasporum:
     # Positive prices consume that entitlement exactly once per provider/job round.
     lead-price: ${DIASPORUM_SERVICE_LEAD_PRICE:0}
     lead-currency: ${DIASPORUM_SERVICE_LEAD_CURRENCY:USD}
+  matchmaking:
+    # Maximum photos per dating profile, enforced server-side. Administrators
+    # can raise or lower this without a code change or migration; profiles
+    # above a lowered limit keep their photos but cannot add more.
+    max-profile-photos: ${DIASPORUM_MATCHMAKING_MAX_PROFILE_PHOTOS:6}
