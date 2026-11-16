@@ -18,7 +18,7 @@ import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import { CandidateCard } from "../components/candidate-profile";
 import { BrowseGrid } from "../components/browse-grid";
 import { MatchOverlay } from "../components/match-overlay";
-import { SwipeDeck } from "../components/swipe-deck";
+import { SwipeDeck, type SwipeDeckHandle } from "../components/swipe-deck";
 import {
   DatingBottomNavigation,
   DiscoverySkeleton,
@@ -124,6 +124,10 @@ export default function DiscoveryScreen() {
     "Matchmaking profiles could not be loaded.",
   );
   const actingRef = useRef<string | null>(null);
+  const deckRef = useRef<SwipeDeckHandle>(null);
+  const [rewindDirection, setRewindDirection] = useState<
+    "left" | "right" | null
+  >(null);
   const [acting, setActing] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [failedSwipe, setFailedSwipe] = useState<{
@@ -211,8 +215,11 @@ export default function DiscoveryScreen() {
     setActing("rewind");
     setActionError(null);
     try {
-      await api.rewind();
+      const result = await api.rewind();
       setLastLike(null);
+      // The restored card slides back in from the edge it left through:
+      // passes flew left, likes flew right.
+      setRewindDirection(result.action === "PASS" ? "left" : "right");
       page.refresh();
     } catch (error) {
       setActionError(
@@ -221,6 +228,16 @@ export default function DiscoveryScreen() {
     } finally {
       actingRef.current = null;
       setActing(null);
+    }
+  };
+
+  // In swipe mode the buttons drive the deck's exit animation; in browse
+  // mode the deck is unmounted, so the swipe is sent directly.
+  const decide = (action: SwipeAction) => {
+    if (viewMode === "swipe") {
+      deckRef.current?.flyOut(action === "LIKE" ? 1 : -1);
+    } else if (activeProfile) {
+      void swipe(activeProfile, action);
     }
   };
 
@@ -484,10 +501,13 @@ export default function DiscoveryScreen() {
             />
           ) : viewMode === "swipe" ? (
             <SwipeDeck
+              ref={deckRef}
               items={page.items}
               acting={acting !== null}
               onSwipe={swipe}
               onBlocked={(profile) => page.remove(profile.userId)}
+              rewindDirection={rewindDirection}
+              onRewindConsumed={() => setRewindDirection(null)}
               empty={emptyState}
             />
           ) : (
@@ -535,7 +555,7 @@ export default function DiscoveryScreen() {
               backgroundColor={theme.backgroundElement}
               size={58}
               disabled={acting !== null || !activeProfile}
-              onPress={() => activeProfile && void swipe(activeProfile, "PASS")}
+              onPress={() => decide("PASS")}
             />
             <DecisionButton
               icon="heart"
@@ -549,7 +569,7 @@ export default function DiscoveryScreen() {
               size={64}
               disabled={acting !== null || !activeProfile}
               loading={acting !== null && acting === activeProfile?.userId}
-              onPress={() => activeProfile && void swipe(activeProfile, "LIKE")}
+              onPress={() => decide("LIKE")}
             />
           </View>
         ) : null}

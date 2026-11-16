@@ -87,9 +87,19 @@ function ScrollHintChevron() {
   );
 }
 
-function DeckCardContent({ profile }: { profile: PublicMatchmakingProfile }) {
+function DeckCardContent({
+  profile,
+  photoIndex,
+}: {
+  profile: PublicMatchmakingProfile;
+  /** Set on the interactive top card — enables indicator dots. */
+  photoIndex?: number;
+}) {
   const theme = useTheme();
   const [failedPhoto, setFailedPhoto] = React.useState<string | null>(null);
+  const photos = (profile.photos ?? []).filter((p) => p.url);
+  const activeUrl = photos[photoIndex ?? 0]?.url ?? profile.photoUrl;
+  const showDots = photoIndex != null && photos.length > 1;
   const intention = optionLabel(profile.relationshipIntention, INTENTIONS, "");
   const chips = [
     ...new Set([
@@ -116,15 +126,19 @@ function DeckCardContent({ profile }: { profile: PublicMatchmakingProfile }) {
         { backgroundColor: theme.backgroundElement, borderColor: theme.border },
       ]}
     >
-      {profile.photoUrl && failedPhoto !== profile.photoUrl ? (
+      {activeUrl && failedPhoto !== activeUrl ? (
         <Image
-          source={{ uri: profile.photoUrl }}
+          source={{ uri: activeUrl }}
           style={styles.cardPhoto}
           contentFit="cover"
-          onError={() => setFailedPhoto(profile.photoUrl)}
+          onError={() => setFailedPhoto(activeUrl)}
           transition={180}
           cachePolicy="memory-disk"
-          accessibilityLabel={`${profile.displayName} profile photo`}
+          accessibilityLabel={
+            photos.length > 1
+              ? `${profile.displayName} profile photo ${(photoIndex ?? 0) + 1} of ${photos.length}`
+              : `${profile.displayName} profile photo`
+          }
         />
       ) : (
         <View
@@ -146,6 +160,23 @@ function DeckCardContent({ profile }: { profile: PublicMatchmakingProfile }) {
           <ThemedText themeColor="textSecondary">Photo kept private</ThemedText>
         </View>
       )}
+      {showDots ? (
+        <View
+          style={styles.dots}
+          pointerEvents="none"
+          accessibilityLabel={`Photo ${(photoIndex ?? 0) + 1} of ${photos.length}`}
+        >
+          {photos.map((_, index) => (
+            <View
+              key={index}
+              style={[
+                styles.dot,
+                index === (photoIndex ?? 0) && styles.dotActive,
+              ]}
+            />
+          ))}
+        </View>
+      ) : null}
       <LinearGradient
         colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.48)", "rgba(0,0,0,0.94)"]}
         locations={[0, 0.5, 1]}
@@ -195,23 +226,36 @@ function DeckCardContent({ profile }: { profile: PublicMatchmakingProfile }) {
   );
 }
 
-export function SwipeDeck({
-  items,
-  acting,
-  onSwipe,
-  onBlocked,
-  empty,
-}: {
-  items: PublicMatchmakingProfile[];
-  acting: boolean;
-  onSwipe: (
-    profile: PublicMatchmakingProfile,
-    action: SwipeAction,
-  ) => Promise<void> | void;
-  /** Called after a member is blocked so the card leaves the deck. */
-  onBlocked?: (profile: PublicMatchmakingProfile) => void;
-  empty?: React.ReactNode;
-}) {
+/** Imperative deck controls — lets the decision buttons trigger the same fly-out animation as a drag. */
+export interface SwipeDeckHandle {
+  /** Flies the top card off-screen; +1 right (like), -1 left (pass). */
+  flyOut: (direction: 1 | -1) => void;
+}
+
+export const SwipeDeck = React.forwardRef<
+  SwipeDeckHandle,
+  {
+    items: PublicMatchmakingProfile[];
+    acting: boolean;
+    onSwipe: (
+      profile: PublicMatchmakingProfile,
+      action: SwipeAction,
+    ) => Promise<void> | void;
+    /** Called after a member is blocked so the card leaves the deck. */
+    onBlocked?: (profile: PublicMatchmakingProfile) => void;
+    /**
+     * Set after a successful rewind — the restored card slides back in from
+     * this edge: "left" for a rewound pass, "right" for a rewound like.
+     */
+    rewindDirection?: "left" | "right" | null;
+    /** Invoked once the rewind entry animation has played. */
+    onRewindConsumed?: () => void;
+    empty?: React.ReactNode;
+  }
+>(function SwipeDeck(
+  { items, acting, onSwipe, onBlocked, rewindDirection, onRewindConsumed, empty },
+  ref,
+) {
   const theme = useTheme();
   const api = useMatchmakingApi();
   const [safetyOpen, setSafetyOpen] = React.useState(false);
@@ -225,6 +269,19 @@ export function SwipeDeck({
   const [position] = React.useState(() => new Animated.ValueXY());
   const flyingRef = React.useRef(false);
   const [flying, setFlying] = React.useState(false);
+  const [photoIndex, setPhotoIndex] = React.useState(0);
+  // Reset the gallery position when the top card changes (render-time sync).
+  const [photoOwner, setPhotoOwner] = React.useState(topItem?.userId);
+  if (topItem?.userId !== photoOwner) {
+    setPhotoOwner(topItem?.userId);
+    setPhotoIndex(0);
+  }
+  // Armed when a rewind succeeds — plays when the restored card actually
+  // becomes the top card (page refresh is async).
+  const pendingRewind = React.useRef<"left" | "right" | null>(null);
+  React.useEffect(() => {
+    if (rewindDirection) pendingRewind.current = rewindDirection;
+  }, [rewindDirection]);
   const mounted = React.useRef(true);
   React.useEffect(() => {
     mounted.current = true;
@@ -249,6 +306,14 @@ export function SwipeDeck({
     }
   }, []);
 
+  const photoCount = (topItem?.photos ?? []).filter((p) => p.url).length;
+  // Tapping the card cycles through the member's photos; single-photo
+  // members keep the previous behavior (open the full profile).
+  const onTapCard = React.useCallback(() => {
+    if (photoCount > 1) setPhotoIndex((index) => (index + 1) % photoCount);
+    else openProfile();
+  }, [openProfile, photoCount]);
+
   const fly = React.useCallback(
     (direction: 1 | -1) => {
       const {
@@ -258,32 +323,66 @@ export function SwipeDeck({
         width: w,
       } = latest.current;
       if (!target || busy || flyingRef.current) return;
+      pendingRewind.current = null;
       flyingRef.current = true;
       setFlying(true);
+      const finish = () => {
+        position.stopAnimation();
+        position.setValue({ x: 0, y: 0 });
+        flyingRef.current = false;
+        if (mounted.current) setFlying(false);
+      };
       Animated.timing(position, {
         toValue: { x: direction * (w + 160), y: 24 },
         duration: 230,
         useNativeDriver: true,
       }).start(({ finished }) => {
-        void (async () => {
-          try {
-            if (
-              finished &&
-              mounted.current &&
-              latest.current.topItem?.userId === target.userId
-            ) {
-              await send(target, direction === 1 ? "LIKE" : "PASS");
-            }
-          } finally {
-            flyingRef.current = false;
-            position.setValue({ x: 0, y: 0 });
-            if (mounted.current) setFlying(false);
-          }
-        })();
+        // If the request outlives the animation, keep the card parked
+        // off-screen until the swipe resolves.
+        if (finished && mounted.current && flyingRef.current) {
+          position.setValue({ x: direction * (w + 160), y: 24 });
+        }
       });
+      // Fire the swipe alongside the exit animation — the request being
+      // in-flight while the card slides away keeps the action responsive.
+      void (async () => {
+        try {
+          await send(target, direction === 1 ? "LIKE" : "PASS");
+        } finally {
+          finish();
+        }
+      })();
     },
     [position],
   );
+
+  // The decision buttons reuse the same fly-out animation as a drag.
+  React.useImperativeHandle(
+    ref,
+    () => ({ flyOut: (direction: 1 | -1) => fly(direction) }),
+    [fly],
+  );
+
+  // When the rewound card lands on top, slide it back in from the edge it
+  // left through: passes exit left, likes exit right.
+  React.useEffect(() => {
+    const from = pendingRewind.current;
+    if (!from || !topItem) return;
+    pendingRewind.current = null;
+    position.setValue({
+      x: from === "left" ? -(width + 160) : width + 160,
+      y: 24,
+    });
+    Animated.spring(position, {
+      toValue: { x: 0, y: 0 },
+      useNativeDriver: true,
+      friction: 7,
+      tension: 55,
+    }).start();
+    onRewindConsumed?.();
+    // Only top-card identity changes may trigger the return animation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topItem?.userId]);
 
   const shouldMove = React.useCallback(
     (_e: unknown, g: { dx: number; dy: number }) =>
@@ -413,11 +512,15 @@ export function SwipeDeck({
           <Pressable
             style={styles.cardPressable}
             disabled={acting || flying}
-            onPress={openProfile}
+            onPress={onTapCard}
             accessibilityRole="button"
-            accessibilityLabel={`View ${topItem.displayName}'s profile`}
+            accessibilityLabel={
+              photoCount > 1
+                ? `Show next photo of ${topItem.displayName}`
+                : `View ${topItem.displayName}'s profile`
+            }
           >
-            <DeckCardContent profile={topItem} />
+            <DeckCardContent profile={topItem} photoIndex={photoIndex} />
           </Pressable>
           <Pressable
             onPress={() => setSafetyOpen(true)}
@@ -498,7 +601,7 @@ export function SwipeDeck({
       />
     </>
   );
-}
+});
 
 const styles = StyleSheet.create({
   deck: { flex: 1 },
@@ -558,6 +661,24 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: 260,
+  },
+  dots: {
+    position: "absolute",
+    top: 14,
+    left: 14,
+    zIndex: 2,
+    flexDirection: "row",
+    gap: 6,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.5)",
+  },
+  dotActive: {
+    width: 18,
+    backgroundColor: "#fff",
   },
   cardInfo: {
     position: "absolute",

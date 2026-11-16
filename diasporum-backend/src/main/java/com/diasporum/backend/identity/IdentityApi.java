@@ -71,6 +71,6 @@ public interface IdentityApi {
     record ProfileSummary(UUID id, String username, String displayName,
             String accountStatus, boolean profileCompleted,
             UUID originCountryId, UUID currentCountryId,
-            UUID avatarMediaId) {
+            UUID avatarMediaId, String bio) {
     }
 }

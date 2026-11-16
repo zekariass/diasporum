@@ -1,5 +1,6 @@
 package com.diasporum.backend.matchmaking.internal.application;
 
+import com.diasporum.backend.identity.IdentityApi;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.MatchPageRow;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.MatchRow;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.MatchView;
@@ -7,6 +8,7 @@ import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.Page;
 import com.diasporum.backend.matchmaking.internal.infrastructure.persistence.MatchmakingRepository;
 import com.diasporum.backend.messaging.MessagingApi;
 import com.diasporum.backend.moderation.ModerationApi;
+import com.diasporum.backend.social.SocialApi;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -19,24 +21,30 @@ import org.springframework.transaction.annotation.Transactional;
 public class MatchService {
 
     private static final Set<String> REPORT_REASONS = Set.of("SPAM", "SCAM", "HARASSMENT",
-            "HATE", "SEXUAL_MISCONDUCT", "MISINFORMATION", "IMPERSONATION", "PRIVACY", "OTHER");
+            "HATE", "SEXUAL_MISCONDUCT", "MISINFORMATION", "IMPERSONATION", "PRIVACY",
+            "FAKE_PROFILE", "INAPPROPRIATE_PHOTOS", "UNDERAGE", "OTHER");
 
     private final MatchmakingRepository repository;
     private final MatchmakingAccess access;
-    private final ProfileProjections projections;
+    private final MatchmakingProfileVisibilityService visibility;
     private final MessagingApi messaging;
     private final ModerationApi moderation;
+    private final SocialApi social;
+    private final IdentityApi identity;
 
     public MatchService(MatchmakingRepository repository, MatchmakingAccess access,
-            ProfileProjections projections, MessagingApi messaging, ModerationApi moderation) {
+            MatchmakingProfileVisibilityService visibility, MessagingApi messaging,
+            ModerationApi moderation, SocialApi social, IdentityApi identity) {
         this.repository = repository;
         this.access = access;
-        this.projections = projections;
+        this.visibility = visibility;
         this.messaging = messaging;
         this.moderation = moderation;
+        this.social = social;
+        this.identity = identity;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Page<MatchView> matches(UUID actor, String cursor, int size) {
         access.requireAdult(actor);
         int limit = MatchmakingSupport.limit(size);
@@ -50,11 +58,16 @@ public class MatchService {
             var last = rows.get(rows.size() - 1).match();
             next = MatchmakingSupport.cursor(last.matchedAt(), last.id());
         }
-        return new Page<>(rows.stream().map(row -> view(actor, row.match(), row.other())).toList(),
-                next);
+        var resolved = visibility.resolveAll(actor,
+                rows.stream().map(MatchPageRow::other).toList());
+        var views = new java.util.ArrayList<MatchView>(rows.size());
+        for (int i = 0; i < rows.size(); i++) {
+            views.add(view(rows.get(i).match(), resolved.get(i)));
+        }
+        return new Page<>(views, next);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public MatchView detail(UUID actor, UUID matchId) {
         access.requireAdult(actor);
         MatchRow match = repository.match(matchId).orElseThrow(
@@ -72,9 +85,10 @@ public class MatchService {
                 throw MatchmakingSupport.notFound("MATCHMAKING_MATCH_NOT_FOUND");
             }
         }
-        var profile = repository.publicProfile(other).orElseThrow(
-                () -> MatchmakingSupport.notFound("MATCHMAKING_MATCH_NOT_FOUND"));
-        return view(actor, match, profile);
+        var resolved = visibility.resolve(actor,
+                repository.publicProfile(other).orElseThrow(
+                        () -> MatchmakingSupport.notFound("MATCHMAKING_MATCH_NOT_FOUND")));
+        return view(match, resolved);
     }
 
     @Transactional
@@ -106,9 +120,16 @@ public class MatchService {
         return moderation.report(actor, "MATCHMAKING_PROFILE", target, null, null, normalized, details);
     }
 
-    private MatchView view(UUID actor, MatchRow match,
-            com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PublicProfileRow other) {
-        return new MatchView(match.id(), match.status(), projections.publicProfile(other),
+    /** Users the caller blocked — shared user_blocks, resolved to summaries. */
+    @Transactional(readOnly = true)
+    public List<IdentityApi.ProfileSummary> blockedUsers(UUID actor) {
+        access.requireAdult(actor);
+        return identity.profileSummaries(social.blockedIds(actor));
+    }
+
+    private MatchView view(MatchRow match,
+            com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PublicProfileView other) {
+        return new MatchView(match.id(), match.status(), other,
                 match.matchedAt(), match.closedAt(),
                 "MATCHED".equals(match.status()) ? messaging.conversationIdForMatch(match.id()).orElse(null) : null);
     }

@@ -1,5 +1,11 @@
 import React from "react";
-import { Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -121,9 +127,21 @@ export function ProfileHero({
 }) {
   const theme = useTheme();
   const { width } = useWindowDimensions();
-  const [failedPhoto, setFailedPhoto] = React.useState<string | null>(null);
+  const [failedPhotos, setFailedPhotos] = React.useState<string[]>([]);
+  const [activePhoto, setActivePhoto] = React.useState(0);
   const intention = visibleOption(profile.relationshipIntention, INTENTIONS);
   const heroHeight = Math.min(650, Math.max(470, width * 1.2));
+  // Server-authorised renditions only — the gallery is whatever the backend
+  // resolved for this viewer, so privacy is never decided here.
+  const gallery = (
+    profile.photos?.length
+      ? profile.photos.map((photo) => photo.url)
+      : [profile.photoUrl]
+  ).filter(
+    (url): url is string =>
+      typeof url === "string" && !failedPhotos.includes(url),
+  );
+  const heroWidth = immersive ? width : undefined;
 
   return (
     <Pressable
@@ -141,16 +159,41 @@ export function ProfileHero({
         pressed && onPress && styles.heroPressed,
       ]}
     >
-      {profile.photoUrl && failedPhoto !== profile.photoUrl ? (
-        <Image
-          source={{ uri: profile.photoUrl }}
+      {gallery.length ? (
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          scrollEnabled={gallery.length > 1}
+          scrollEventThrottle={16}
+          onMomentumScrollEnd={(event) =>
+            setActivePhoto(
+              Math.round(
+                event.nativeEvent.contentOffset.x /
+                  Math.max(1, heroWidth ?? width),
+              ),
+            )
+          }
           style={styles.heroImage}
-          contentFit="cover"
-          transition={180}
-          cachePolicy="memory-disk"
-          onError={() => setFailedPhoto(profile.photoUrl)}
-          accessibilityLabel={`${profile.displayName}'s authorized profile photo`}
-        />
+        >
+          {gallery.map((url, index) => (
+            <Image
+              key={url}
+              source={{ uri: url }}
+              style={[
+                styles.heroImage,
+                heroWidth ? { width: heroWidth } : { aspectRatio: 0.8 },
+              ]}
+              contentFit="cover"
+              transition={180}
+              cachePolicy="memory-disk"
+              onError={() =>
+                setFailedPhotos((current) => [...current, url])
+              }
+              accessibilityLabel={`${profile.displayName}'s authorized profile photo ${index + 1}`}
+            />
+          ))}
+        </ScrollView>
       ) : (
         <View
           style={[
@@ -171,13 +214,29 @@ export function ProfileHero({
           <ThemedText themeColor="textSecondary">Photo kept private</ThemedText>
         </View>
       )}
+      {gallery.length > 1 ? (
+        <View style={styles.photoDots} pointerEvents="none">
+          {gallery.map((url, index) => (
+            <View
+              key={url}
+              style={[
+                styles.photoDot,
+                index === activePhoto && styles.photoDotActive,
+              ]}
+            />
+          ))}
+          <ThemedText style={styles.photoCounter}>
+            {Math.min(activePhoto + 1, gallery.length)}/{gallery.length}
+          </ThemedText>
+        </View>
+      ) : null}
       <LinearGradient
         colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.3)", "rgba(0,0,0,0.9)"]}
         locations={[0.35, 0.62, 1]}
         style={styles.heroScrim}
         pointerEvents="none"
       />
-      {profile.photoUrl && failedPhoto !== profile.photoUrl && onPress ? (
+      {gallery.length > 0 && onPress ? (
         <View style={styles.expandPhoto} pointerEvents="none">
           <Ionicons name="expand-outline" size={18} color="#fff" />
         </View>
@@ -386,7 +445,7 @@ export function ProfileDetails({
       {showHero ? (
         <View style={styles.hero}>
           <ProfileHero profile={profile} />
-          {profile.photoVisibility === "BLURRED" ? (
+          {profile.photos?.some((photo) => photo.rendition === "BLURRED") ? (
             <View style={styles.privacyNote}>
               <Ionicons
                 name="shield-checkmark-outline"
@@ -398,7 +457,7 @@ export function ProfileDetails({
                 themeColor="textSecondary"
                 style={styles.privacyText}
               >
-                This member chose a private, blurred photo
+                This member keeps their photos private until a mutual match
               </ThemedText>
             </View>
           ) : null}
@@ -585,6 +644,30 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  photoDots: {
+    position: "absolute",
+    top: Spacing.three,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+  },
+  photoDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.45)",
+  },
+  photoDotActive: { backgroundColor: "#fff", width: 18 },
+  photoCounter: {
+    position: "absolute",
+    right: 12,
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
   },
   privacyNote: {
     flexDirection: "row",

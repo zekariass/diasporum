@@ -47,8 +47,9 @@ function validRequest(value: unknown): value is MatchmakingProfileRequest {
   )
     return false;
   if (
-    !["VISIBLE", "BLURRED", "HIDDEN"].includes(String(r.nameVisibility)) ||
-    !["VISIBLE", "BLURRED", "HIDDEN"].includes(String(r.photoVisibility))
+    (r.blurPhotosUntilMatch != null &&
+      typeof r.blurPhotosUntilMatch !== "boolean") ||
+    (r.hideNameUntilMatch != null && typeof r.hideNameUntilMatch !== "boolean")
   )
     return false;
   const strings = [
@@ -65,7 +66,6 @@ function validRequest(value: unknown): value is MatchmakingProfileRequest {
     "activityLevel",
     "marriageTimeline",
     "religionImportance",
-    "photoMediaId",
   ];
   if (
     strings.some(
@@ -92,8 +92,8 @@ function validRequest(value: unknown): value is MatchmakingProfileRequest {
 const requestKeys = [
   "genderKey",
   "anonymousAlias",
-  "nameVisibility",
-  "photoVisibility",
+  "blurPhotosUntilMatch",
+  "hideNameUntilMatch",
   "status",
   "addressId",
   "nationalityCountryId",
@@ -108,7 +108,6 @@ const requestKeys = [
   "activityLevel",
   "marriageTimeline",
   "religionImportance",
-  "photoMediaId",
   "heightCm",
   "hasChildren",
   "longDistanceRelationship",
@@ -160,10 +159,7 @@ export async function loadWizardDraft(
       version?: number;
     };
     if (
-      (parsed.version != null &&
-        parsed.version !== 1 &&
-        parsed.version !== 2 &&
-        parsed.version !== 3) ||
+      (parsed.version != null && parsed.version !== 4) ||
       !Number.isInteger(parsed.step) ||
       (parsed.step ?? -1) < 0 ||
       (parsed.step ?? 0) > 50 ||
@@ -199,7 +195,7 @@ export async function saveWizardDraft(
 ): Promise<void> {
   if (!userId) return;
   const key = keyFor(userId);
-  const snapshot = JSON.stringify({ ...draft, version: 3 });
+  const snapshot = JSON.stringify({ ...draft, version: 4 });
   await serialize(key, async () => {
     if (Platform.OS === "web")
       globalThis.sessionStorage?.setItem(key, snapshot);

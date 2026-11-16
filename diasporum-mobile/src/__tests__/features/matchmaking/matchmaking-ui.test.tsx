@@ -24,7 +24,6 @@ import {
   MARITAL_STATUSES,
   MARRIAGE_TIMELINES,
   RELIGION_IMPORTANCE,
-  VISIBILITIES,
   WANTS_CHILDREN,
 } from "@/features/matchmaking/types/matchmaking-options";
 
@@ -34,8 +33,11 @@ import MatchDetailScreen from "@/features/matchmaking/screens/match-detail-scree
 import SetupScreen from "@/features/matchmaking/screens/setup-screen";
 import PreferencesScreen from "@/features/matchmaking/screens/preferences-screen";
 import CandidateProfileScreen from "@/features/matchmaking/screens/candidate-profile-screen";
+import OwnProfileScreen from "@/features/matchmaking/screens/own-profile-screen";
+import EditProfileScreen from "@/features/matchmaking/screens/edit-profile-screen";
+import MatchmakingSettingsScreen from "@/features/matchmaking/screens/matchmaking-settings-screen";
 import { usePagedMatchmaking } from "@/features/matchmaking/hooks/use-paged-matchmaking";
-import { pickAndUploadMatchmakingPhoto } from "@/features/matchmaking/services/matchmaking-media-api";
+import { pickAndUploadMatchmakingPhotos } from "@/features/matchmaking/services/matchmaking-media-api";
 import { loadWizardDraft } from "@/features/matchmaking/utils/wizard-progress";
 import { saveDiscoveryMode } from "@/features/matchmaking/utils/discovery-mode";
 import { ApiError } from "@/core/api/api-error";
@@ -94,7 +96,7 @@ jest.mock("@/features/matchmaking/hooks/use-matchmaking-realtime", () => ({
   useMatchmakingRealtime: () => {},
 }));
 jest.mock("@/features/matchmaking/services/matchmaking-media-api", () => ({
-  pickAndUploadMatchmakingPhoto: jest.fn(),
+  pickAndUploadMatchmakingPhotos: jest.fn(async () => []),
 }));
 jest.mock("@/features/matchmaking/utils/wizard-progress", () => ({
   loadWizardDraft: jest.fn(async () => null),
@@ -106,7 +108,9 @@ const candidate: PublicMatchmakingProfile = {
   userId: "u2",
   displayName: "Ada",
   photoUrl: null,
-  genderKey: "WOMAN",
+  photos: [],
+  nameRevealed: false,
+  genderKey: "FEMALE",
   age: 36,
   nationalityCountryId: null,
   religionId: null,
@@ -129,7 +133,7 @@ const candidate: PublicMatchmakingProfile = {
 
 const ownProfile: MatchmakingProfile = {
   userId: "u1",
-  genderKey: "WOMAN",
+  genderKey: "FEMALE",
   addressId: null,
   nationalityCountryId: "c1",
   religionId: null,
@@ -147,10 +151,8 @@ const ownProfile: MatchmakingProfile = {
   longDistanceRelationship: false,
   religionImportance: null,
   willingToRelocate: false,
-  photoMediaId: null,
-  blurredPhotoMediaId: null,
-  nameVisibility: "VISIBLE",
-  photoVisibility: "HIDDEN",
+  blurPhotosUntilMatch: true,
+  hideNameUntilMatch: true,
   anonymousAlias: "Moon",
   verificationStatus: "NOT_VERIFIED",
   status: "DRAFT",
@@ -158,6 +160,8 @@ const ownProfile: MatchmakingProfile = {
   lastActiveAt: null,
   createdAt: "2026-11-01T10:00:00Z",
   updatedAt: "2026-11-01T10:00:00Z",
+  photos: [],
+  maxProfilePhotos: 6,
 };
 
 const match: MatchView = {
@@ -175,6 +179,7 @@ const references = {
   countries: [],
   languages: [],
   addresses: [],
+  maxProfilePhotos: 6,
 };
 const compatibility = {
   interestIds: [],
@@ -186,8 +191,8 @@ const compatibility = {
 
 const wizardReferences = {
   genders: [
-    { id: "WOMAN", label: "Woman" },
-    { id: "MAN", label: "Man" },
+    { id: "FEMALE", label: "Woman" },
+    { id: "MALE", label: "Man" },
   ],
   religions: [{ id: "r1", label: "Orthodox" }],
   countries: [
@@ -196,18 +201,20 @@ const wizardReferences = {
   ],
   languages: [],
   addresses: [],
+  maxProfilePhotos: 6,
   profileOptions: Object.fromEntries(
-    Object.entries({
-      visibility: VISIBILITIES,
-      education: EDUCATION,
-      intentions: INTENTIONS,
-      marital: MARITAL_STATUSES,
-      wantsChildren: WANTS_CHILDREN,
-      habits: HABITS,
-      activity: ACTIVITY_LEVELS,
-      timeline: MARRIAGE_TIMELINES,
-      religionImportance: RELIGION_IMPORTANCE,
-    }).map(([key, options]) => [
+    (
+      Object.entries({
+        education: EDUCATION,
+        intentions: INTENTIONS,
+        marital: MARITAL_STATUSES,
+        wantsChildren: WANTS_CHILDREN,
+        habits: HABITS,
+        activity: ACTIVITY_LEVELS,
+        timeline: MARRIAGE_TIMELINES,
+        religionImportance: RELIGION_IMPORTANCE,
+      }) as [string, { value: string; label: string }[]][]
+    ).map(([key, options]) => [
       key,
       options.map((option) => ({ id: option.value, label: option.label })),
     ]),
@@ -643,6 +650,44 @@ describe("Discovery — swipe and browse modes", () => {
     expect(discoverCalls()).toBe(initialCalls);
   });
 
+  it("shows photo indicators and cycles photos on tap in swipe mode", async () => {
+    const multiPhoto = {
+      ...candidate,
+      photoUrl: "https://img.test/one.jpg",
+      photos: [
+        {
+          url: "https://img.test/one.jpg",
+          isPrimary: true,
+          sortOrder: 0,
+          rendition: "BLURRED" as const,
+        },
+        {
+          url: "https://img.test/two.jpg",
+          isPrimary: false,
+          sortOrder: 1,
+          rendition: "BLURRED" as const,
+        },
+      ],
+    };
+    mockClient.get.mockImplementation((path: string) => {
+      if (path.startsWith("/api/v1/matchmaking/discover")) {
+        return Promise.resolve({ items: [multiPhoto], nextCursor: null });
+      }
+      return Promise.resolve({ items: [], nextCursor: null });
+    });
+    await mount(<DiscoveryScreen />);
+
+    expect(await screen.findByLabelText("Photo 1 of 2")).toBeTruthy();
+    expect(screen.getByLabelText("Ada profile photo 1 of 2")).toBeTruthy();
+
+    await fireEvent.press(screen.getByLabelText("Show next photo of Ada"));
+    expect(await screen.findByLabelText("Photo 2 of 2")).toBeTruthy();
+    expect(screen.getByLabelText("Ada profile photo 2 of 2")).toBeTruthy();
+    expect(jest.mocked(router.push)).not.toHaveBeenCalledWith(
+      "/(app)/matchmaking/profile/u2",
+    );
+  });
+
   it("records a pass in browse mode", async () => {
     mockClient.get.mockImplementation((path: string) => {
       if (path.startsWith("/api/v1/matchmaking/discover")) {
@@ -922,6 +967,9 @@ describe("Setup wizard — step-by-step profile creation", () => {
       }
       if (path.endsWith("/compatibility"))
         return Promise.resolve(compatibility);
+      if (path.endsWith("/profile/photos")) {
+        return Promise.resolve({ photos: [], maxPhotos: 6 });
+      }
       if (path.endsWith("/privacy-settings")) {
         return Promise.resolve({ allowMatchmakingDiscovery: false });
       }
@@ -931,6 +979,23 @@ describe("Setup wizard — step-by-step profile creation", () => {
     });
     mockClient.put.mockImplementation((path: string) => {
       if (path.endsWith("/matchmaking/profile")) profileExists = true;
+      return Promise.resolve({});
+    });
+    mockClient.post.mockImplementation((path: string, body: unknown) => {
+      if (path.endsWith("/profile/photos")) {
+        return Promise.resolve({
+          photos: [
+            {
+              id: "photo-1",
+              mediaId: (body as { mediaId: string }).mediaId,
+              sortOrder: 0,
+              isPrimary: true,
+              url: "https://cdn.test/p1.jpg",
+            },
+          ],
+          maxPhotos: 6,
+        });
+      }
       return Promise.resolve({});
     });
   }
@@ -1056,7 +1121,7 @@ describe("Setup wizard — step-by-step profile creation", () => {
         expect.objectContaining({
           status: "DRAFT",
           anonymousAlias: "Moon",
-          genderKey: "WOMAN",
+          genderKey: "FEMALE",
           nationalityCountryId: "c1",
           hasChildren: false,
           wantsChildren: "UNSURE",
@@ -1080,11 +1145,11 @@ describe("Setup wizard — step-by-step profile creation", () => {
     expect(screen.getByText("Who would you like to meet?")).toBeTruthy();
   }, 20000);
 
-  it("finishes photo onboarding with a single original upload — no blurred slot", async () => {
+  it("attaches uploaded photos through the gallery endpoints — never via the profile body", async () => {
     mockSetupGets();
     jest
-      .mocked(pickAndUploadMatchmakingPhoto)
-      .mockResolvedValue({ assetId: "photo-1", localUri: "file://p.jpg" });
+      .mocked(pickAndUploadMatchmakingPhotos)
+      .mockResolvedValue([{ assetId: "media-1", localUri: "file://p.jpg" }]);
     await mount(<SetupScreen />);
 
     await screen.findByLabelText("Profile question 1 of 14");
@@ -1096,29 +1161,29 @@ describe("Setup wizard — step-by-step profile creation", () => {
     );
     for (let i = 0; i < 14; i++) await continueWizard();
 
-    // The photo stage has one original upload and no separate blurred slot.
+    // The photos step persists the draft first so gallery endpoints have a row.
     expect(await screen.findByLabelText("Step 3 of 5")).toBeTruthy();
-    expect(screen.queryByText("Blurred photo")).toBeNull();
-    await fireEvent.press(screen.getByLabelText("Add photo"));
-    await waitFor(() =>
-      expect(jest.mocked(pickAndUploadMatchmakingPhoto)).toHaveBeenCalled(),
-    );
-    expect(await screen.findByText("Blurred — protected")).toBeTruthy();
-    expect(screen.getByText("Visible — original")).toBeTruthy();
-
-    for (let i = 0; i < 2; i++) await continueWizard();
-    await fireEvent.press(screen.getByLabelText("Save and set preferences"));
     await waitFor(() =>
       expect(mockClient.put).toHaveBeenCalledWith(
         "/api/v1/matchmaking/profile",
-        expect.objectContaining({ photoMediaId: "photo-1" }),
+        expect.objectContaining({ status: "DRAFT" }),
         { authenticated: true },
       ),
     );
-    const body = mockClient.put.mock.calls.find(
+    await fireEvent.press(await screen.findByLabelText("Add primary photo"));
+    await waitFor(() =>
+      expect(mockClient.post).toHaveBeenCalledWith(
+        "/api/v1/matchmaking/profile/photos",
+        { mediaId: "media-1" },
+        { authenticated: true },
+      ),
+    );
+    expect(await screen.findByText("1 of 6 photos added")).toBeTruthy();
+    const profileBody = mockClient.put.mock.calls.find(
       (call) => call[0] === "/api/v1/matchmaking/profile",
     )?.[1];
-    expect(body).not.toHaveProperty("blurredPhotoMediaId");
+    expect(profileBody).not.toHaveProperty("photoMediaId");
+    expect(profileBody).not.toHaveProperty("blurredPhotoMediaId");
   });
 
   it("validates the optional height input in place", async () => {
@@ -1196,7 +1261,6 @@ describe("Profile preview and activation", () => {
           showVerifiedOnly: false,
           hasChildrenPreference: "ANY",
           wantsChildrenPreference: "ANY",
-          genderKeys: [],
           religionIds: [],
           languageIds: [],
         });
@@ -1259,7 +1323,6 @@ describe("Discovery preferences sheet", () => {
           showVerifiedOnly: true,
           hasChildrenPreference: "ANY",
           wantsChildrenPreference: "YES",
-          genderKeys: ["MAN"],
           religionIds: [],
           languageIds: [],
         });
@@ -1278,7 +1341,10 @@ describe("Discovery preferences sheet", () => {
     mockPreferenceGets();
     await mount(<PreferencesScreen />);
 
-    expect(await screen.findByText("Show me")).toBeTruthy();
+    expect(await screen.findByText("Who you see")).toBeTruthy();
+    expect(
+      screen.getByText("You discover men, and men discover you."),
+    ).toBeTruthy();
     expect(screen.getByText("Age range")).toBeTruthy();
     expect(screen.getByText("Location & distance")).toBeTruthy();
     expect(screen.getByText("Quality filters")).toBeTruthy();
@@ -1288,28 +1354,24 @@ describe("Discovery preferences sheet", () => {
     expect(screen.getByLabelText("Save")).toBeTruthy();
 
     // Edits are local until Save is pressed.
-    await fireEvent.press(screen.getByLabelText("Genders: Woman"));
-    expect(mockClient.put).not.toHaveBeenCalled();
-
     await fireEvent.press(screen.getByLabelText("Save preferences"));
     await waitFor(() =>
       expect(mockClient.put).toHaveBeenCalledWith(
         "/api/v1/matchmaking/preferences",
-        expect.objectContaining({
-          genderKeys: ["MAN", "WOMAN"],
-          showVerifiedOnly: true,
-        }),
+        expect.objectContaining({ showVerifiedOnly: true }),
         { authenticated: true },
       ),
     );
+    const savedBody = mockClient.put.mock.calls.find(
+      (call) => call[0] === "/api/v1/matchmaking/preferences",
+    )?.[1];
+    expect(savedBody).not.toHaveProperty("genderKeys");
     expect(jest.mocked(router.back)).toHaveBeenCalled();
   });
 
   it("confirms, then resets and saves the defaults immediately", async () => {
     mockPreferenceGets();
-    const alertSpy = jest
-      .spyOn(Alert, "alert")
-      .mockImplementation(() => {});
+    const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => {});
     await mount(<PreferencesScreen />);
     await screen.findByText("Age range");
 
@@ -1323,9 +1385,7 @@ describe("Discovery preferences sheet", () => {
 
     const buttons = alertSpy.mock.calls[0][2] ?? [];
     await act(async () => {
-      buttons
-        .find((button) => button.style === "destructive")
-        ?.onPress?.();
+      buttons.find((button) => button.style === "destructive")?.onPress?.();
     });
     await waitFor(() =>
       expect(mockClient.put).toHaveBeenCalledWith(
@@ -1561,10 +1621,10 @@ describe("Shared profile and recovery", () => {
         step: 13,
         request: {
           status: "DRAFT",
-          genderKey: "WOMAN",
+          genderKey: "FEMALE",
           anonymousAlias: "Moon",
-          nameVisibility: "HIDDEN",
-          photoVisibility: "HIDDEN",
+          blurPhotosUntilMatch: true,
+          hideNameUntilMatch: true,
           verificationStatus: "VERIFIED",
           userId: "someone-else",
         },
@@ -1633,5 +1693,80 @@ describe("Match detail continuity", () => {
       { authenticated: true },
     );
     expect(screen.queryByLabelText("Open chat")).toBeNull();
+  });
+});
+
+describe("Own profile, editing and settings", () => {
+  beforeEach(() => {
+    mockClient.get.mockImplementation((path: string) => {
+      if (path.endsWith("/api/v1/matchmaking/profile"))
+        return Promise.resolve(ownProfile);
+      if (path.endsWith("/reference-data"))
+        return Promise.resolve(wizardReferences);
+      if (path.endsWith("/privacy-settings"))
+        return Promise.resolve({ allowMatchmakingDiscovery: true });
+      if (path.endsWith("/profile/compatibility"))
+        return Promise.resolve(compatibility);
+      if (path.endsWith("/unread-count")) return Promise.resolve({ total: 0 });
+      return Promise.resolve({ items: [], nextCursor: null });
+    });
+    mockClient.patch.mockResolvedValue({ allowMatchmakingDiscovery: false });
+  });
+
+  it("opens the owner profile on Details with account actions and dating navigation", async () => {
+    await mount(<OwnProfileScreen />);
+
+    expect(await screen.findByText("u1@test.com")).toBeTruthy();
+    expect(screen.getByText("Lisbon, Ethiopia")).toBeTruthy();
+    expect(screen.getByLabelText("Dating navigation")).toBeTruthy();
+    expect(screen.getByLabelText("Edit")).toBeTruthy();
+    expect(screen.getByLabelText("Settings")).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText("Bio tab"));
+    expect(await screen.findByText("Existing story")).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Settings"));
+    expect(jest.mocked(router.push)).toHaveBeenCalledWith(
+      "/(app)/matchmaking/settings",
+    );
+  });
+
+  it("uses the reference edit structure and keeps bio changes in the form", async () => {
+    await mount(<EditProfileScreen />);
+
+    expect(await screen.findByText("About You")).toBeTruthy();
+    expect(screen.getByLabelText("Profile completion")).toBeTruthy();
+    expect(screen.getByLabelText("Save Changes")).toBeTruthy();
+    const bio = screen.getByLabelText("Bio");
+    await fireEvent.changeText(bio, "Updated bio");
+    expect(screen.getByLabelText("Bio").props.value).toBe("Updated bio");
+    expect(await screen.findByText("11/800")).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText("Details tab"));
+    expect(await screen.findByText("Identity")).toBeTruthy();
+    expect(screen.getByText("Background")).toBeTruthy();
+    expect(screen.getByText("Relationship")).toBeTruthy();
+  });
+
+  it("groups settings by status and discovery and saves the discovery toggle", async () => {
+    await mount(<MatchmakingSettingsScreen />);
+
+    expect(await screen.findByText("Profile status")).toBeTruthy();
+    expect(screen.getByText("Your dating profile")).toBeTruthy();
+    expect(screen.getByText("Discovery & privacy")).toBeTruthy();
+    await act(async () => {
+      fireEvent(screen.getByLabelText("Allow discovery"), "valueChange", false);
+    });
+
+    await waitFor(() =>
+      expect(mockClient.patch).toHaveBeenCalledWith(
+        "/api/v1/me/privacy-settings",
+        { allowMatchmakingDiscovery: false },
+        { authenticated: true },
+      ),
+    );
+    fireEvent.press(screen.getByLabelText("Dating preferences"));
+    expect(jest.mocked(router.push)).toHaveBeenCalledWith(
+      "/(app)/matchmaking/preferences",
+    );
   });
 });

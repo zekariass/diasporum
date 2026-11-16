@@ -6,6 +6,7 @@ import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.Match
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PreferenceCommand;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PreferenceView;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ProfileCommand;
+import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ProfilePhotoRow;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ProfileView;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PublicProfileRow;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PrivateAddressOption;
@@ -46,11 +47,10 @@ public class MatchmakingRepository {
                 + "relationship_intention,marital_status,has_children,wants_children,"
                 + "smoking,drinking,activity_level,height_cm,marriage_timeline,"
                 + "long_distance_relationship,religion_importance,willing_to_relocate,"
-                + "photo_media_id,blurred_photo_media_id,name_visibility,photo_visibility,"
+                + "blur_photos_until_match,hide_name_until_match,"
                 + "anonymous_alias,status,activated_at,last_active_at) VALUES(?,?,?,?,?,?,?,"
                 + "?,?,?,?,?,?,?,"
                 + "?,?,?,?,?,?,?,"
-                + "?::matchmaking_field_visibility,?::matchmaking_field_visibility,"
                 + "?,?::matchmaking_profile_status,"
                 + "CASE WHEN ?='ACTIVE' THEN now() ELSE NULL END,"
                 + "CASE WHEN ?='ACTIVE' THEN now() ELSE NULL END) "
@@ -65,8 +65,8 @@ public class MatchmakingRepository {
                 + "long_distance_relationship=EXCLUDED.long_distance_relationship,"
                 + "religion_importance=EXCLUDED.religion_importance,"
                 + "willing_to_relocate=EXCLUDED.willing_to_relocate,"
-                + "photo_media_id=EXCLUDED.photo_media_id,blurred_photo_media_id=EXCLUDED.blurred_photo_media_id,"
-                + "name_visibility=EXCLUDED.name_visibility,photo_visibility=EXCLUDED.photo_visibility,"
+                + "blur_photos_until_match=EXCLUDED.blur_photos_until_match,"
+                + "hide_name_until_match=EXCLUDED.hide_name_until_match,"
                 + "anonymous_alias=EXCLUDED.anonymous_alias,status=EXCLUDED.status,"
                 + "activated_at=CASE WHEN EXCLUDED.status='ACTIVE'"
                 + " THEN COALESCE(matchmaking_profiles.activated_at,now())"
@@ -77,8 +77,8 @@ public class MatchmakingRepository {
                 c.educationLevel(), c.occupation(), c.relationshipIntention(), c.maritalStatus(),
                 c.hasChildren(), c.wantsChildren(), c.smoking(), c.drinking(), c.activityLevel(),
                 c.heightCm(), c.marriageTimeline(), c.longDistanceRelationship(),
-                c.religionImportance(), c.willingToRelocate(), c.photoMediaId(),
-                c.blurredPhotoMediaId(), c.nameVisibility(), c.photoVisibility(),
+                c.religionImportance(), c.willingToRelocate(), c.blurPhotosUntilMatch(),
+                c.hideNameUntilMatch(),
                 c.anonymousAlias(), c.status(), c.status(), c.status());
     }
 
@@ -92,7 +92,7 @@ public class MatchmakingRepository {
                 (rs, i) -> new PreferenceView(userId, rs.getInt("min_age"),
                         rs.getInt("max_age"), rs.getObject("max_distance_km", Integer.class),
                         rs.getBoolean("show_verified_only"), rs.getString("has_children_preference"),
-                        rs.getString("wants_children_preference"), genderKeys(userId),
+                        rs.getString("wants_children_preference"),
                         religionIds(userId), languageIds(userId)), userId).stream().findFirst();
     }
 
@@ -106,13 +106,8 @@ public class MatchmakingRepository {
                 + " wants_children_preference=EXCLUDED.wants_children_preference,updated_at=now()",
                 userId, c.minAge(), c.maxAge(), c.maxDistanceKm(), c.showVerifiedOnly(),
                 c.hasChildrenPreference(), c.wantsChildrenPreference());
-        jdbc.update("DELETE FROM matchmaking_preference_genders WHERE user_id=?", userId);
         jdbc.update("DELETE FROM matchmaking_preference_religions WHERE user_id=?", userId);
         jdbc.update("DELETE FROM matchmaking_preference_languages WHERE user_id=?", userId);
-        for (String gender : c.genderKeys()) {
-            jdbc.update("INSERT INTO matchmaking_preference_genders(user_id,gender_key) VALUES(?,?)",
-                    userId, gender);
-        }
         for (UUID religion : c.religionIds()) {
             jdbc.update("INSERT INTO matchmaking_preference_religions(user_id,religion_id) VALUES(?,?)",
                     userId, religion);
@@ -121,11 +116,6 @@ public class MatchmakingRepository {
             jdbc.update("INSERT INTO matchmaking_preference_languages(user_id,language_id) VALUES(?,?)",
                     userId, language);
         }
-    }
-
-    private List<String> genderKeys(UUID userId) {
-        return jdbc.queryForList("SELECT gender_key FROM matchmaking_preference_genders"
-                + " WHERE user_id=? ORDER BY gender_key", String.class, userId);
     }
 
     private List<UUID> religionIds(UUID userId) {
@@ -420,12 +410,100 @@ public class MatchmakingRepository {
                 details, reporter, matchId).stream().findFirst();
     }
 
-    public int invalidGenders(Collection<String> values) {
-        if (values.isEmpty()) return 0;
-        String ph = placeholders(values.size());
-        return count("SELECT count(*) FROM (SELECT DISTINCT value FROM unnest(ARRAY[" + ph + "]::text[])"
-                + " AS value) v LEFT JOIN matchmaking_genders g ON g.gender_key=v.value"
-                + " AND g.is_active=true WHERE g.gender_key IS NULL", values.toArray());
+    // ---- profile photos ----
+
+    public List<ProfilePhotoRow> photos(UUID userId) {
+        return jdbc.query("SELECT id,media_id,sort_order,is_primary"
+                        + " FROM matchmaking_profile_photos WHERE user_id=?"
+                        + " ORDER BY sort_order,id",
+                (rs, row) -> new ProfilePhotoRow(rs.getObject("id", UUID.class),
+                        rs.getObject("media_id", UUID.class), rs.getInt("sort_order"),
+                        rs.getBoolean("is_primary"), userId), userId);
+    }
+
+    /** Batch photo load keyed by profile owner for page projections. */
+    public java.util.Map<UUID, List<ProfilePhotoRow>> photosForUsers(
+            Collection<UUID> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return java.util.Map.of();
+        }
+        String ph = placeholders(userIds.size());
+        var byUser = new java.util.LinkedHashMap<UUID, List<ProfilePhotoRow>>();
+        List<ProfilePhotoRow> rows = jdbc.query(
+                "SELECT id,user_id,media_id,sort_order,is_primary"
+                        + " FROM matchmaking_profile_photos WHERE user_id IN (" + ph + ")"
+                        + " ORDER BY user_id,sort_order,id",
+                (rs, row) -> new ProfilePhotoRow(rs.getObject("id", UUID.class),
+                        rs.getObject("media_id", UUID.class), rs.getInt("sort_order"),
+                        rs.getBoolean("is_primary"),
+                        rs.getObject("user_id", UUID.class)),
+                userIds.toArray());
+        for (ProfilePhotoRow row : rows) {
+            byUser.computeIfAbsent(row.userId(), k -> new java.util.ArrayList<>())
+                    .add(row);
+        }
+        return byUser;
+    }
+
+    public Optional<ProfilePhotoRow> photo(UUID userId, UUID photoId) {
+        return jdbc.query("SELECT id,media_id,sort_order,is_primary"
+                        + " FROM matchmaking_profile_photos WHERE user_id=? AND id=?",
+                (rs, row) -> new ProfilePhotoRow(rs.getObject("id", UUID.class),
+                        rs.getObject("media_id", UUID.class), rs.getInt("sort_order"),
+                        rs.getBoolean("is_primary"), userId), userId, photoId)
+                .stream().findFirst();
+    }
+
+    public int photoCount(UUID userId) {
+        return count("SELECT count(*) FROM matchmaking_profile_photos WHERE user_id=?", userId);
+    }
+
+    public boolean hasReadyPrimaryPhoto(UUID userId) {
+        return exists("SELECT 1 FROM matchmaking_profile_photos pp"
+                + " JOIN media_objects m ON m.id=pp.media_id AND m.status='READY'"
+                + " WHERE pp.user_id=? AND pp.is_primary", userId);
+    }
+
+    public ProfilePhotoRow insertPhoto(UUID userId, UUID mediaId, boolean primary) {
+        if (primary) {
+            jdbc.update("UPDATE matchmaking_profile_photos SET is_primary=false"
+                    + " WHERE user_id=? AND is_primary", userId);
+        }
+        UUID id = jdbc.queryForObject(
+                "INSERT INTO matchmaking_profile_photos(user_id,media_id,sort_order,is_primary)"
+                        + " VALUES(?,?,(SELECT COALESCE(max(sort_order),-1)+1"
+                        + " FROM matchmaking_profile_photos WHERE user_id=?),?)"
+                        + " RETURNING id",
+                UUID.class, userId, mediaId, userId, primary);
+        return photo(userId, id).orElseThrow();
+    }
+
+    public void deletePhoto(UUID userId, UUID photoId) {
+        // AFTER DELETE trigger promotes the next photo when the primary is removed.
+        jdbc.update("DELETE FROM matchmaking_profile_photos WHERE user_id=? AND id=?",
+                userId, photoId);
+    }
+
+    public void setPrimaryPhoto(UUID userId, UUID photoId) {
+        jdbc.update("UPDATE matchmaking_profile_photos SET is_primary=false"
+                + " WHERE user_id=? AND is_primary", userId);
+        jdbc.update("UPDATE matchmaking_profile_photos SET is_primary=true"
+                + " WHERE user_id=? AND id=?", userId, photoId);
+    }
+
+    /**
+     * Atomic reorder: two phases so the (user_id, sort_order) unique index is
+     * never violated mid-swap. Caller supplies the complete desired id order.
+     */
+    public void reorderPhotos(UUID userId, List<UUID> photoIds) {
+        for (int i = 0; i < photoIds.size(); i++) {
+            jdbc.update("UPDATE matchmaking_profile_photos SET sort_order=?"
+                    + " WHERE user_id=? AND id=?", -(i + 1), userId, photoIds.get(i));
+        }
+        for (int i = 0; i < photoIds.size(); i++) {
+            jdbc.update("UPDATE matchmaking_profile_photos SET sort_order=?"
+                    + " WHERE user_id=? AND id=?", i, userId, photoIds.get(i));
+        }
     }
 
     public int invalidReligions(Collection<UUID> values) {
@@ -471,11 +549,10 @@ public class MatchmakingRepository {
                 rs.getString("activity_level"), rs.getObject("height_cm", Integer.class),
                 rs.getString("marriage_timeline"), rs.getObject("long_distance_relationship", Boolean.class),
                 rs.getString("religion_importance"), rs.getObject("willing_to_relocate", Boolean.class),
-                rs.getObject("photo_media_id", UUID.class), rs.getObject("blurred_photo_media_id", UUID.class),
-                rs.getString("name_visibility"), rs.getString("photo_visibility"),
+                rs.getBoolean("blur_photos_until_match"), rs.getBoolean("hide_name_until_match"),
                 rs.getString("anonymous_alias"), rs.getString("verification_status"),
                 rs.getString("status"), instant(rs, "activated_at"), instant(rs, "last_active_at"),
-                instant(rs, "created_at"), instant(rs, "updated_at"));
+                instant(rs, "created_at"), instant(rs, "updated_at"), List.of(), 0);
     }
 
     private SwipeRow swipe(ResultSet rs, int row) throws SQLException {
@@ -504,7 +581,8 @@ public class MatchmakingRepository {
 
     private PublicProfileRow publicProfile(ResultSet rs, int row) throws SQLException {
         return new PublicProfileRow(rs.getObject("user_id", UUID.class), rs.getString("display_name"),
-                rs.getObject("public_photo_media_id", UUID.class), rs.getString("gender_key"),
+                rs.getString("anonymous_alias"), rs.getBoolean("hide_name_until_match"),
+                rs.getBoolean("blur_photos_until_match"), rs.getString("gender_key"),
                 rs.getObject("age", Integer.class), rs.getObject("nationality_country_id", UUID.class),
                 rs.getObject("religion_id", UUID.class), rs.getString("education_level"),
                 rs.getString("occupation"), rs.getString("relationship_intention"),
@@ -515,21 +593,23 @@ public class MatchmakingRepository {
                 rs.getString("religion_importance"), rs.getObject("willing_to_relocate", Boolean.class),
                 rs.getString("verification_status"), rs.getString("bio"), rs.getString("public_location"),
                 List.of((String[]) rs.getArray("interests").getArray()),
-                List.of((String[]) rs.getArray("languages").getArray()),
-                rs.getString("name_visibility"), rs.getString("photo_visibility"));
+                List.of((String[]) rs.getArray("languages").getArray()));
     }
 
+    /**
+     * Raw fields only — the real display name, alias and privacy switches are
+     * selected unchanged so the visibility service can resolve the authorised
+     * representation per viewer. Photos are joined separately in batches.
+     */
     private static final String PUBLIC_COLUMNS = "mp.user_id,"
-            + " CASE WHEN mp.name_visibility='VISIBLE' THEN p.display_name"
-            + " ELSE mp.anonymous_alias END AS display_name,"
-            + " CASE WHEN mp.photo_visibility='VISIBLE' THEN op.id"
-            + " WHEN mp.photo_visibility='BLURRED' THEN bp.id ELSE NULL END AS public_photo_media_id,"
+            + " p.display_name,mp.anonymous_alias,mp.hide_name_until_match,"
+            + "mp.blur_photos_until_match,"
             + " mp.gender_key,extract(year FROM age(current_date,p.date_of_birth))::integer AS age,"
             + " mp.nationality_country_id,mp.religion_id,mp.education_level,mp.occupation,"
             + " mp.relationship_intention,mp.marital_status,mp.has_children,mp.wants_children,"
             + " mp.smoking,mp.drinking,mp.activity_level,mp.height_cm,mp.marriage_timeline,"
             + " mp.long_distance_relationship,mp.religion_importance,mp.willing_to_relocate,"
-            + " mp.verification_status,mp.name_visibility::text,mp.photo_visibility::text,p.bio,"
+            + " mp.verification_status,p.bio,"
             + " concat_ws(', ',CASE WHEN ups.show_city THEN NULLIF(p.city,'') END,country.name) AS public_location,"
             + " ARRAY(SELECT i.display_name FROM user_interests ui JOIN interests i ON i.id=ui.interest_id"
             + " WHERE ui.user_id=mp.user_id AND i.is_active ORDER BY i.display_name) AS interests,"
@@ -538,8 +618,6 @@ public class MatchmakingRepository {
     private static final String PUBLIC_FROM = " FROM matchmaking_profiles mp"
             + " JOIN profiles p ON p.id=mp.user_id"
             + " JOIN user_privacy_settings ups ON ups.user_id=mp.user_id"
-            + " LEFT JOIN countries country ON country.id=p.current_country_id"
-            + " LEFT JOIN media_objects op ON op.id=mp.photo_media_id AND op.status='READY'"
-            + " LEFT JOIN media_objects bp ON bp.id=mp.blurred_photo_media_id AND bp.status='READY'";
+            + " LEFT JOIN countries country ON country.id=p.current_country_id";
     private static final String PUBLIC_SELECT = "SELECT " + PUBLIC_COLUMNS + PUBLIC_FROM;
 }

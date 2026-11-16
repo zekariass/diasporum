@@ -1,6 +1,8 @@
 import type { ApiClient } from "@/core/api/api-client";
 import type {
+  BlockedUser,
   MatchmakingEligibility,
+  MatchmakingPhotoList,
   MatchmakingPreferences,
   MatchmakingPreferencesRequest,
   MatchmakingProfile,
@@ -31,6 +33,30 @@ export function createMatchmakingApi(client: ApiClient) {
     saveProfile: (profile: MatchmakingProfileRequest) =>
       client.put<MatchmakingProfile>(`${ROOT}/profile`, profile, AUTH),
     deleteProfile: () => client.delete<void>(`${ROOT}/profile`, AUTH),
+    photos: () => client.get<MatchmakingPhotoList>(`${ROOT}/profile/photos`, AUTH),
+    addPhoto: (mediaId: string) =>
+      client.post<MatchmakingPhotoList>(
+        `${ROOT}/profile/photos`,
+        { mediaId },
+        AUTH,
+      ),
+    setPrimaryPhoto: (photoId: string) =>
+      client.put<MatchmakingPhotoList>(
+        `${ROOT}/profile/photos/${encodeURIComponent(photoId)}/primary`,
+        {},
+        AUTH,
+      ),
+    reorderPhotos: (photoIds: string[]) =>
+      client.put<MatchmakingPhotoList>(
+        `${ROOT}/profile/photos/order`,
+        { photoIds },
+        AUTH,
+      ),
+    deletePhoto: (photoId: string) =>
+      client.delete<MatchmakingPhotoList>(
+        `${ROOT}/profile/photos/${encodeURIComponent(photoId)}`,
+        AUTH,
+      ),
     preferences: () =>
       client.get<MatchmakingPreferences>(`${ROOT}/preferences`, AUTH),
     savePreferences: (preferences: MatchmakingPreferencesRequest) =>
@@ -112,6 +138,13 @@ export function createMatchmakingApi(client: ApiClient) {
         {},
         AUTH,
       ),
+    unblock: (targetUserId: string) =>
+      client.delete<void>(
+        `/api/v1/social/blocks/${encodeURIComponent(targetUserId)}`,
+        AUTH,
+      ),
+    blockedUsers: () =>
+      client.get<{ items: BlockedUser[] }>(`${ROOT}/blocked`, AUTH),
   };
 }
 

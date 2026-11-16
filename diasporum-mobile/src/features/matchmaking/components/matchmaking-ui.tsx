@@ -85,20 +85,172 @@ export function Section({
   title,
   hint,
   children,
+  compact = false,
+  framed = false,
 }: {
   title: string;
   hint?: string;
   children: React.ReactNode;
+  compact?: boolean;
+  framed?: boolean;
 }) {
+  const theme = useTheme();
   return (
-    <View style={styles.section}>
-      <ThemedText type="subtitle">{title}</ThemedText>
+    <View
+      style={[
+        styles.section,
+        framed && {
+          backgroundColor: theme.backgroundElement,
+          borderColor: theme.border,
+        },
+        framed && styles.sectionFramed,
+      ]}
+    >
+      <ThemedText type="subtitle" style={compact && styles.sectionTitleCompact}>
+        {title}
+      </ThemedText>
       {hint ? (
         <ThemedText type="small" themeColor="textSecondary">
           {hint}
         </ThemedText>
       ) : null}
       {children}
+    </View>
+  );
+}
+
+/** Horizontally scrollable icon+label pill tabs — never compress, they scroll. */
+export function PillTabBar({
+  tabs,
+  active,
+  onChange,
+  variant = "pills",
+}: {
+  tabs: {
+    key: string;
+    label: string;
+    icon: keyof typeof Ionicons.glyphMap;
+  }[];
+  active: string;
+  onChange: (key: string) => void;
+  variant?: "pills" | "stacked";
+}) {
+  const theme = useTheme();
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView> | null>(null);
+  const layouts = useRef(new Map<string, { x: number; width: number }>());
+  return (
+    <ScrollView
+      ref={scrollRef}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.tabBar}
+      contentContainerStyle={styles.tabBarContent}
+    >
+      {tabs.map((tab) => {
+        const selected = tab.key === active;
+        return (
+          <Pressable
+            key={tab.key}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+            accessibilityLabel={`${tab.label} tab`}
+            onLayout={(event) =>
+              layouts.current.set(tab.key, {
+                x: event.nativeEvent.layout.x,
+                width: event.nativeEvent.layout.width,
+              })
+            }
+            onPress={() => {
+              onChange(tab.key);
+              const layout = layouts.current.get(tab.key);
+              if (layout) {
+                scrollRef.current?.scrollTo({
+                  x: Math.max(0, layout.x - Spacing.four),
+                  animated: true,
+                });
+              }
+            }}
+            style={[
+              variant === "stacked" ? styles.tabStack : styles.tabPill,
+              variant === "pills" && {
+                backgroundColor: selected
+                  ? theme.primarySurface
+                  : theme.backgroundElement,
+                borderColor: selected ? theme.primary : theme.border,
+              },
+              variant === "stacked" && {
+                borderBottomColor: selected ? theme.primary : "transparent",
+              },
+            ]}
+          >
+            <Ionicons
+              name={tab.icon}
+              size={variant === "stacked" ? 20 : 15}
+              color={selected ? theme.primary : theme.textSecondary}
+            />
+            <ThemedText
+              style={{
+                color: selected ? theme.primary : theme.textSecondary,
+                fontWeight: selected ? "800" : "600",
+                fontSize: variant === "stacked" ? 12 : 13,
+              }}
+            >
+              {tab.label}
+            </ThemedText>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+/** Card list of icon-chip → label → value rows with hairline dividers. */
+export function ListCard({
+  items,
+}: {
+  items: {
+    icon: keyof typeof Ionicons.glyphMap;
+    label: string;
+    value: string;
+  }[];
+}) {
+  const theme = useTheme();
+  if (!items.length) return null;
+  return (
+    <View
+      style={[
+        styles.listCard,
+        { borderColor: theme.border, backgroundColor: theme.backgroundElement },
+      ]}
+    >
+      {items.map((item, index) => (
+        <View
+          key={`${item.label}-${index}`}
+          style={[
+            styles.listRow,
+            index > 0 && {
+              borderTopWidth: StyleSheet.hairlineWidth,
+              borderTopColor: theme.border,
+            },
+          ]}
+        >
+          <View
+            style={[styles.listIcon, { backgroundColor: theme.primarySurface }]}
+          >
+            <Ionicons name={item.icon} size={17} color={theme.primary} />
+          </View>
+          <View style={styles.listCopy}>
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              style={styles.listLabel}
+            >
+              {item.label}
+            </ThemedText>
+            <ThemedText style={styles.listValue}>{item.value}</ThemedText>
+          </View>
+        </View>
+      ))}
     </View>
   );
 }
@@ -858,8 +1010,7 @@ function useDatingBadgeCounts() {
         matches:
           matches.status === "fulfilled" ? matches.value.items.length : 0,
         likes: likes.status === "fulfilled" ? likes.value.items.length : 0,
-        unread:
-          unread.status === "fulfilled" ? (unread.value.total ?? 0) : 0,
+        unread: unread.status === "fulfilled" ? (unread.value.total ?? 0) : 0,
       }),
     );
   }, [api, messaging]);
@@ -1104,10 +1255,7 @@ export function DiscoverySkeleton({ mode }: { mode: DiscoveryMode }) {
       {[0, 1, 2].map((row) => (
         <View key={row} style={styles.skeletonGridRow}>
           {[0, 1].map((col) => (
-            <View
-              key={col}
-              style={[...placeholder, styles.skeletonGridCard]}
-            />
+            <View key={col} style={[...placeholder, styles.skeletonGridCard]} />
           ))}
         </View>
       ))}
@@ -1159,6 +1307,12 @@ const styles = StyleSheet.create({
   headerCopy: { flex: 1 },
   headerTitle: { fontSize: 25, lineHeight: 31 },
   section: { gap: Spacing.three },
+  sectionFramed: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.four,
+  },
+  sectionTitleCompact: { fontSize: 22, lineHeight: 28, fontWeight: "700" },
   field: { gap: Spacing.two },
   label: { fontSize: 14, fontWeight: "600" },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
@@ -1261,7 +1415,7 @@ const styles = StyleSheet.create({
   },
   datingNavLabel: { fontSize: 11, lineHeight: 14 },
   datingNavCenterCell: { width: 62, alignItems: "center" },
-  datingNavCenterWrap: { marginTop: -27 },
+  datingNavCenterWrap: { marginTop: -18 },
   datingNavCenterOuter: {
     width: 54,
     height: 54,
@@ -1396,4 +1550,60 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   centerText: { textAlign: "center" },
+  tabBar: { flexGrow: 0 },
+  tabBarContent: {
+    flexDirection: "row",
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+  },
+  tabPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minWidth: 90,
+    flexShrink: 0,
+    justifyContent: "center",
+  },
+  tabStack: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    minWidth: 82,
+    paddingHorizontal: Spacing.two,
+    paddingTop: Spacing.one,
+    paddingBottom: Spacing.two,
+    borderBottomWidth: 2,
+    flexShrink: 0,
+  },
+  listCard: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.lg,
+    overflow: "hidden",
+  },
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+  },
+  listIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  listCopy: { flex: 1, gap: 2 },
+  listLabel: {
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    fontWeight: "600",
+  },
+  listValue: { fontSize: 15, fontWeight: "700" },
 });

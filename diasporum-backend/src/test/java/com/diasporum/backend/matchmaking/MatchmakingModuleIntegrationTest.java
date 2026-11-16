@@ -20,6 +20,7 @@ import com.diasporum.backend.identity.IdentityTestSupport;
 import com.diasporum.backend.matchmaking.internal.application.CancelLikeService;
 import com.diasporum.backend.matchmaking.internal.application.DiscoveryService;
 import com.diasporum.backend.matchmaking.internal.application.MatchService;
+import com.diasporum.backend.matchmaking.internal.application.MatchmakingPhotoService;
 import com.diasporum.backend.matchmaking.internal.application.MatchmakingProfileService;
 import com.diasporum.backend.matchmaking.internal.application.PreferenceService;
 import com.diasporum.backend.matchmaking.internal.application.RecordSwipeService;
@@ -113,6 +114,7 @@ class MatchmakingModuleIntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired StorageClient storage;
     @Autowired MatchmakingProfileService profiles;
+    @Autowired MatchmakingPhotoService photoService;
     @Autowired PreferenceService preferences;
     @Autowired DiscoveryService discovery;
     @Autowired RecordSwipeService swipes;
@@ -176,23 +178,37 @@ class MatchmakingModuleIntegrationTest {
 
     private void activate(UUID userId, String gender) {
         profiles.save(userId, profile(gender, "DRAFT"));
-        preferences.replace(userId, preference(List.of()));
+        seedPhoto(userId);
+        preferences.replace(userId, preference());
         profiles.save(userId, profile(gender, "ACTIVE"));
     }
 
-    private static ProfileCommand profile(String gender, String status) {
-        return new ProfileCommand(gender, null, null, null, null, null, null, null,
-                false, "UNSURE", "NO", "NO", "MODERATE", 170, null, false,
-                "NOT_IMPORTANT", false, null, null, "VISIBLE", "HIDDEN", "Member", status);
+    /** READY original in the gallery — activation requires a primary photo. */
+    private UUID seedPhoto(UUID userId) {
+        UUID media = UUID.randomUUID();
+        String key = "mm-test/" + media + ".png";
+        try {
+            storage.put(key, testPng(), "image/png");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        jdbc.update("INSERT INTO media_objects(id,owner_user_id,bucket_name,object_key,"
+                + "purpose,mime_type,status,size_bytes,detected_mime_type,uploaded_at)"
+                + " VALUES(?,?,'test-bucket',?,'MATCHMAKING_PROFILE_PHOTO','image/png',"
+                + "'READY',?,'image/png',now())", media, userId, key, 64 * 64);
+        photoService.add(userId, media);
+        return media;
     }
 
-    /** Same baseline as {@link #profile} but with an uploaded original photo. */
-    private static ProfileCommand profileWithPhoto(UUID photo,
-            String photoVisibility, String status) {
-        return new ProfileCommand("WOMAN", null, null, null, null, null, null, null,
+    private static ProfileCommand profile(String gender, String status) {
+        return profile(gender, false, false, status);
+    }
+
+    private static ProfileCommand profile(String gender, boolean blurPhotos,
+            boolean hideName, String status) {
+        return new ProfileCommand(gender, null, null, null, null, null, null, null,
                 false, "UNSURE", "NO", "NO", "MODERATE", 170, null, false,
-                "NOT_IMPORTANT", false, photo, null, "VISIBLE", photoVisibility,
-                "Member", status);
+                "NOT_IMPORTANT", false, blurPhotos, hideName, "Member", status);
     }
 
     private static byte[] testPng() throws Exception {
@@ -208,8 +224,8 @@ class MatchmakingModuleIntegrationTest {
         return out.toByteArray();
     }
 
-    private static PreferenceCommand preference(List<String> genders) {
-        return new PreferenceCommand(18, 110, null, false, "ANY", "ANY", genders,
+    private static PreferenceCommand preference() {
+        return new PreferenceCommand(18, 110, null, false, "ANY", "ANY",
                 List.of(), List.of());
     }
 
@@ -225,23 +241,26 @@ class MatchmakingModuleIntegrationTest {
 
     @Test
     void profileLifecycleRequiresAdultOptInAndPreferences() {
-        profiles.save(u1, profile("WOMAN", "DRAFT"));
+        profiles.save(u1, profile("FEMALE", "DRAFT"));
         assertThrows(ResponseStatusException.class,
-                () -> profiles.save(u1, profile("WOMAN", "ACTIVE")));
-        preferences.replace(u1, preference(List.of("MAN")));
-        profiles.save(u1, profile("WOMAN", "ACTIVE"));
+                () -> profiles.save(u1, profile("FEMALE", "ACTIVE")));
+        preferences.replace(u1, preference());
+        assertThrows(ResponseStatusException.class,
+                () -> profiles.save(u1, profile("FEMALE", "ACTIVE")));
+        seedPhoto(u1);
+        profiles.save(u1, profile("FEMALE", "ACTIVE"));
         assertEquals("ACTIVE", profiles.profile(u1).status());
-        profiles.save(u1, profile("WOMAN", "PAUSED"));
+        profiles.save(u1, profile("FEMALE", "PAUSED"));
         assertFalse(discoveryEligible(u1));
         profiles.delete(u1);
         assertEquals("DELETED", profiles.profile(u1).status());
 
         jdbc.update("UPDATE profiles SET date_of_birth=? WHERE id=?",
                 Date.valueOf(LocalDate.now().minusYears(17)), u2);
-        assertThrows(ResponseStatusException.class, () -> profiles.save(u2, profile("MAN", "DRAFT")));
-        assertThrows(ResponseStatusException.class, () -> preferences.replace(u2, preference(List.of())));
+        assertThrows(ResponseStatusException.class, () -> profiles.save(u2, profile("MALE", "DRAFT")));
+        assertThrows(ResponseStatusException.class, () -> preferences.replace(u2, preference()));
         assertThrows(ResponseStatusException.class,
-                () -> profiles.save(u2, profile("MAN", "ACTIVE")));
+                () -> profiles.save(u2, profile("MALE", "ACTIVE")));
     }
 
     private boolean discoveryEligible(UUID userId) {
@@ -251,16 +270,18 @@ class MatchmakingModuleIntegrationTest {
 
     @Test
     void reciprocalDiscoveryAndSafeRestProjection() throws Exception {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
-        activate(u3, "WOMAN");
-        assertEquals(2, discovery.discover(u1, null, 20).items().size());
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
+        activate(u3, "FEMALE");
+        // Automatic opposite-gender discovery — u1 only ever sees MALE profiles.
+        var all = discovery.discover(u1, null, 20).items();
+        assertEquals(1, all.size());
+        assertEquals(u2, all.get(0).userId());
         var page = discovery.discover(u1, null, 1);
         assertEquals(1, page.items().size());
-        assertNotNull(page.nextCursor());
-        assertEquals(1, discovery.discover(u1, page.nextCursor(), 1).items().size());
+        assertNull(page.nextCursor());
 
-        preferences.replace(u1, preference(List.of("MAN")));
+        preferences.replace(u1, preference());
         var compatible = discovery.discover(u1, null, 1);
         assertEquals(1, compatible.items().size());
         assertEquals(u2, compatible.items().get(0).userId());
@@ -270,72 +291,135 @@ class MatchmakingModuleIntegrationTest {
                 .andExpect(jsonPath("$.items[0].userId").value(u2.toString()))
                 .andExpect(jsonPath("$.items[0].dateOfBirth").doesNotExist())
                 .andExpect(jsonPath("$.items[0].addressId").doesNotExist())
-                .andExpect(jsonPath("$.items[0].photoMediaId").doesNotExist());
+                .andExpect(jsonPath("$.items[0].photoMediaId").doesNotExist())
+                .andExpect(jsonPath("$.items[0].photos").isArray());
     }
 
     @Test
-    void blurredVisibilityDerivesServerSideRenditionWithoutManualUpload() throws Exception {
-        // A READY original in object storage — BLURRED activation must not
-        // require a second, client-managed blurred upload.
-        UUID photo = UUID.randomUUID();
-        String key = "mm-blur/original.png";
-        byte[] png = testPng();
-        jdbc.update("INSERT INTO media_objects(id,owner_user_id,bucket_name,object_key,"
-                + "purpose,mime_type,status,size_bytes,detected_mime_type,uploaded_at)"
-                + " VALUES(?,?,'test-bucket',?,'MATCHMAKING_PROFILE_PHOTO','image/png',"
-                + "'READY',?,'image/png',now())", photo, u1, key, png.length);
-        storage.put(key, png, "image/png");
+    void blurredPhotosRevealPrimaryOnIncomingLikeAndGalleryOnMatch() throws Exception {
+        profiles.save(u1, profile("FEMALE", true, true, "DRAFT"));
+        UUID first = seedPhoto(u1);
+        UUID second = seedPhoto(u1);
+        preferences.replace(u1, preference());
+        profiles.save(u1, profile("FEMALE", true, true, "ACTIVE"));
+        activate(u2, "MALE");
+        profiles.save(u2, profile("MALE", true, true, "ACTIVE"));
 
-        profiles.save(u1, profileWithPhoto(photo, "BLURRED", "DRAFT"));
-        preferences.replace(u1, preference(List.of()));
-        var active = profiles.save(u1, profileWithPhoto(photo, "BLURRED", "ACTIVE"));
-
-        UUID blurredId = active.blurredPhotoMediaId();
-        assertNotNull(blurredId);
-        assertNotEquals(photo, blurredId);
-        assertEquals("READY", jdbc.queryForObject(
-                "SELECT status::text FROM media_objects WHERE id=?",
-                String.class, blurredId));
-        assertEquals(u1, jdbc.queryForObject(
-                "SELECT owner_user_id FROM media_objects WHERE id=?",
-                UUID.class, blurredId));
-        String blurredKey = jdbc.queryForObject(
-                "SELECT object_key FROM media_objects WHERE id=?",
-                String.class, blurredId);
-        assertTrue(blurredKey.startsWith("derivatives/"));
-        assertFalse(blurredKey.contains(key));
-        assertFalse(blurredKey.contains(photo.toString()));
+        // Derivative is generated eagerly at attach, owned by the same user,
+        // under a deterministic key derived from the source — never the source
+        // key itself.
+        String originalKey = jdbc.queryForObject(
+                "SELECT object_key FROM media_objects WHERE id=?", String.class, first);
+        String blurredKey = "derivatives/" + UUID.nameUUIDFromBytes(
+                ("MATCHMAKING_PROFILE_BLURRED:" + originalKey)
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8)) + ".jpg";
+        assertNotNull(jdbc.queryForObject(
+                "SELECT id FROM media_objects WHERE object_key=?"
+                        + " AND purpose='MATCHMAKING_PROFILE_BLURRED' AND owner_user_id=?",
+                UUID.class, blurredKey, u1));
+        assertFalse(blurredKey.contains(originalKey));
         assertNotNull(javax.imageio.ImageIO.read(
-                new java.io.ByteArrayInputStream(
-                        storage.get(blurredKey).orElseThrow())));
+                new java.io.ByteArrayInputStream(storage.get(blurredKey).orElseThrow())));
 
-        // Idempotent — saving again reuses the existing derivative.
-        assertEquals(blurredId, profiles.save(u1,
-                profileWithPhoto(photo, "BLURRED", "ACTIVE")).blurredPhotoMediaId());
+        // Discovery: blurred renditions + alias — originals never exposed.
+        var card = discovery.profile(u2, u1);
+        assertEquals("Member", card.displayName());
+        assertFalse(card.nameRevealed());
+        assertEquals("https://r2.test/get/" + blurredKey, card.photoUrl());
+        assertEquals(2, card.photos().size());
+        assertTrue(card.photos().stream().allMatch(p -> "BLURRED".equals(p.rendition())));
+        assertTrue(card.photos().stream().allMatch(p -> p.url() != null
+                && !p.url().contains(originalKey)));
 
-        // Viewers receive the blurred object's URL — never the original key.
-        activate(u2, "MAN");
-        assertEquals("https://r2.test/get/" + blurredKey,
-                discovery.profile(u2, u1).photoUrl());
-        mvc.perform(get("/api/v1/matchmaking/profiles/{id}", u1)
-                        .with(authentication(auth(u2))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.photoUrl")
-                        .value("https://r2.test/get/" + blurredKey));
+        // Incoming LIKE reveals ONLY the primary photo — the rest stay blurred
+        // and the hidden name stays behind the alias.
+        swipes.record(u1, u2, "LIKE");
+        var incoming = discovery.receivedLikes(u2, null, 20).items().getFirst();
+        assertEquals("Member", incoming.displayName());
+        assertEquals("https://r2.test/get/" + originalKey, incoming.photoUrl());
+        assertEquals("ORIGINAL", incoming.photos().stream()
+                .filter(p -> p.isPrimary()).findFirst().orElseThrow().rendition());
+        assertEquals("BLURRED", incoming.photos().stream()
+                .filter(p -> !p.isPrimary()).findFirst().orElseThrow().rendition());
+        // The sender gains nothing in return — u2 has protected settings.
+        var sentView = discovery.profile(u1, u2);
+        assertEquals("Member", sentView.displayName());
+        assertTrue(sentView.photos().stream().allMatch(p -> "BLURRED".equals(p.rendition())));
 
-        // Visibility flips re-project automatically — no extra uploads.
-        profiles.save(u1, profileWithPhoto(photo, "VISIBLE", "ACTIVE"));
-        assertEquals("https://r2.test/get/" + key,
-                discovery.profile(u2, u1).photoUrl());
-        profiles.save(u1, profileWithPhoto(photo, "HIDDEN", "ACTIVE"));
-        assertNull(discovery.profile(u2, u1).photoUrl());
+        // Mutual match: full name + gallery originals for both directions.
+        swipes.record(u2, u1, "LIKE");
+        var matchedView = discovery.profile(u2, u1);
+        assertTrue(matchedView.nameRevealed());
+        assertTrue(matchedView.photos().stream()
+                .allMatch(p -> "ORIGINAL".equals(p.rendition())
+                        && p.url().contains("mm-test/")));
+
+        // Blur off: originals are served during normal discovery, before any
+        // relationship exists.
+        profiles.save(u3, profile("FEMALE", false, false, "DRAFT"));
+        UUID third = seedPhoto(u3);
+        preferences.replace(u3, preference());
+        profiles.save(u3, profile("FEMALE", false, false, "ACTIVE"));
+        String thirdKey = jdbc.queryForObject(
+                "SELECT object_key FROM media_objects WHERE id=?", String.class, third);
+        var visible = discovery.profile(u2, u3);
+        assertEquals("https://r2.test/get/" + thirdKey, visible.photoUrl());
+    }
+
+    @Test
+    void photoGalleryManagementEnforcesLimitPrimaryAndOwnership() throws Exception {
+        profiles.save(u1, profile("FEMALE", "DRAFT"));
+        var ids = new java.util.ArrayList<UUID>();
+        for (int i = 0; i < 6; i++) {
+            ids.add(seedPhoto(u1));
+        }
+        var view = photoService.photos(u1);
+        assertEquals(6, view.photos().size());
+        assertEquals(6, view.maxPhotos());
+        assertTrue(view.photos().get(0).isPrimary());
+
+        // The configured limit is enforced server-side.
+        UUID extra = UUID.randomUUID();
+        jdbc.update("INSERT INTO media_objects(id,owner_user_id,bucket_name,object_key,"
+                + "purpose,mime_type,status,uploaded_at) VALUES(?,?,'test-bucket',?,"
+                + "'MATCHMAKING_PROFILE_PHOTO','image/png','READY',now())",
+                extra, u1, "mm-test/" + extra);
+        assertThrows(ResponseStatusException.class, () -> photoService.add(u1, extra));
+
+        // Foreign media is rejected, even when owned by another active member.
+        profiles.save(u2, profile("MALE", "DRAFT"));
+        assertThrows(ResponseStatusException.class, () -> photoService.add(u2, ids.get(0)));
+
+        // Duplicate attachments to the same profile are rejected.
+        photoService.delete(u1, view.photos().get(0).id());
+        assertThrows(ResponseStatusException.class, () -> photoService.add(u1, ids.get(1)));
+
+        // Deleting the primary promotes the next photo in sort order.
+        var afterDelete = photoService.photos(u1);
+        assertTrue(afterDelete.photos().get(0).isPrimary());
+        assertEquals(ids.get(1), afterDelete.photos().get(0).mediaId());
+
+        // Primary selection and deterministic reorder.
+        UUID targetId = afterDelete.photos().get(3).id();
+        var reprioritized = photoService.setPrimary(u1, targetId);
+        assertEquals(1, reprioritized.photos().stream().filter(p -> p.isPrimary()).count());
+        var reorderedIds = reprioritized.photos().stream()
+                .map(p -> p.id()).toList().reversed();
+        var reordered = photoService.reorder(u1, reorderedIds);
+        assertEquals(reorderedIds, reordered.photos().stream().map(p -> p.id()).toList());
+        assertTrue(reordered.photos().stream().filter(p -> p.isPrimary())
+                .findFirst().orElseThrow().id().equals(targetId));
+
+        // The owner view returns presigned original URLs only for READY media.
+        assertTrue(photoService.photos(u1).photos().stream()
+                .allMatch(p -> p.url() != null && p.url().startsWith("https://r2.test/get/")));
     }
 
     @Test
     void cancelLikeAndLatestOnlyRewindAppendHistory() {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
-        activate(u3, "MAN");
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
+        activate(u3, "MALE");
         swipes.record(u1, u2, "LIKE");
         assertEquals("WITHDRAWN", cancelLikes.cancel(u1, u2).status());
         assertEquals(2, count("matchmaking_swipe_history"));
@@ -351,8 +435,8 @@ class MatchmakingModuleIntegrationTest {
 
     @Test
     void mutualMatchCreatesOnlyConversationAndUnmatchClosesItWithoutLosingHistory() {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
         assertFalse(swipes.record(u1, u2, "LIKE").matched());
         var result = swipes.record(u2, u1, "LIKE");
         assertTrue(result.matched());
@@ -368,7 +452,7 @@ class MatchmakingModuleIntegrationTest {
 
         messagingService.sendMessage(u1, result.conversationId(), "Hello before unmatch", null, null);
         jdbc.update("INSERT INTO user_follows(follower_user_id,followed_user_id) VALUES(?,?)", u1, u2);
-        profiles.save(u1, profile("WOMAN", "PAUSED"));
+        profiles.save(u1, profile("FEMALE", "PAUSED"));
         assertEquals(1, matches.matches(u1, null, 20).items().size());
         var detail = unmatches.unmatch(u1, result.matchId(), null);
         assertEquals("UNMATCHED", detail.status());
@@ -390,8 +474,8 @@ class MatchmakingModuleIntegrationTest {
 
     @Test
     void concurrentOppositeLikesConvergeWithoutDuplicateSideEffects() throws Exception {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
         var pool = Executors.newFixedThreadPool(2);
         var latch = new CountDownLatch(1);
         var first = pool.submit(() -> { latch.await(); return swipes.record(u1, u2, "LIKE"); });
@@ -408,8 +492,8 @@ class MatchmakingModuleIntegrationTest {
 
     @Test
     void matchIntegrationFailureRollsBackSecondSwipeAndAllMatchSideEffects() {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
         swipes.record(u1, u2, "LIKE");
         org.mockito.Mockito.doThrow(new IllegalStateException("forced-notification-failure"))
                 .when(notifications).create(org.mockito.ArgumentMatchers.argThat(
@@ -427,8 +511,8 @@ class MatchmakingModuleIntegrationTest {
 
     @Test
     void configuredQuotaDeniesWithoutRecordingSwipe() {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
         jdbc.update("UPDATE billing_plan_entitlements SET quantity_limit=0"
                 + " WHERE feature_id IN (SELECT id FROM billing_features"
                 + " WHERE feature_key='MATCHMAKING_INTERACT')");
@@ -460,8 +544,8 @@ class MatchmakingModuleIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.addresses").isEmpty());
 
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
         swipes.record(u1, u2, "LIKE");
         UUID matchId = swipes.record(u2, u1, "LIKE").matchId();
         mvc.perform(post("/api/v1/matchmaking/matches/{matchId}/report", matchId)
@@ -491,14 +575,14 @@ class MatchmakingModuleIntegrationTest {
                 .andExpect(jsonPath("$.profileStatus").isEmpty());
 
         // Draft → PROFILE_INCOMPLETE; client continues setup
-        profiles.save(u1, profile("WOMAN", "DRAFT"));
+        profiles.save(u1, profile("FEMALE", "DRAFT"));
         mvc.perform(get("/api/v1/matchmaking/eligibility").with(authentication(auth(u1))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reason").value("PROFILE_INCOMPLETE"))
                 .andExpect(jsonPath("$.profileStatus").value("DRAFT"));
 
         // Active + adult + opt-in + preferences → ELIGIBLE
-        activate(u1, "WOMAN");
+        activate(u1, "FEMALE");
         mvc.perform(get("/api/v1/matchmaking/eligibility").with(authentication(auth(u1))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.eligible").value(true))
@@ -518,7 +602,7 @@ class MatchmakingModuleIntegrationTest {
                 + " WHERE user_id=?", u1);
 
         // Paused → PROFILE_PAUSED; suspended → PROFILE_SUSPENDED; both ineligible
-        profiles.save(u1, profile("WOMAN", "PAUSED"));
+        profiles.save(u1, profile("FEMALE", "PAUSED"));
         mvc.perform(get("/api/v1/matchmaking/eligibility").with(authentication(auth(u1))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reason").value("PROFILE_PAUSED"));
@@ -548,7 +632,7 @@ class MatchmakingModuleIntegrationTest {
                 .andExpect(jsonPath("$.adult").value(false));
 
         // Even draft writes require confirmed adulthood.
-        assertThrows(ResponseStatusException.class, () -> profiles.save(dob, profile("WOMAN", "DRAFT")));
+        assertThrows(ResponseStatusException.class, () -> profiles.save(dob, profile("FEMALE", "DRAFT")));
         mvc.perform(get("/api/v1/matchmaking/eligibility").with(authentication(auth(dob))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reason").value("DOB_REQUIRED"));
@@ -562,7 +646,7 @@ class MatchmakingModuleIntegrationTest {
         assertEquals(Boolean.TRUE, jdbc.queryForObject(
                 "SELECT age_eligibility_confirmed_at IS NOT NULL FROM profiles WHERE id=?",
                 Boolean.class, dob));
-        profiles.save(dob, profile("WOMAN", "DRAFT"));
+        profiles.save(dob, profile("FEMALE", "DRAFT"));
         mvc.perform(get("/api/v1/matchmaking/eligibility").with(authentication(auth(dob))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reason").value("PROFILE_INCOMPLETE"))
@@ -616,16 +700,16 @@ class MatchmakingModuleIntegrationTest {
 
         // An under-18 account still cannot activate a Dating profile — the
         // write path enforces adult eligibility independently of the UI.
-        assertThrows(ResponseStatusException.class, () -> profiles.save(minor, profile("WOMAN", "DRAFT")));
-        assertThrows(ResponseStatusException.class, () -> preferences.replace(minor, preference(List.of())));
+        assertThrows(ResponseStatusException.class, () -> profiles.save(minor, profile("FEMALE", "DRAFT")));
+        assertThrows(ResponseStatusException.class, () -> preferences.replace(minor, preference()));
         assertThrows(ResponseStatusException.class,
-                () -> profiles.save(minor, profile("WOMAN", "ACTIVE")));
+                () -> profiles.save(minor, profile("FEMALE", "ACTIVE")));
     }
 
     @Test
     void retriesAndReversedDecisionsKeepOneCurrentStateAndAppendOnlyHistory() {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
         swipes.record(u1, u2, "LIKE");
         swipes.record(u1, u2, "LIKE");
         assertEquals(1, count("billing_usage_records"));
@@ -645,13 +729,13 @@ class MatchmakingModuleIntegrationTest {
 
     @Test
     void safePreviewAndMissingConfirmationAreEnforcedAcrossReadsAndChat() throws Exception {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
         jdbc.update("UPDATE profiles SET bio='A real biography',city='Private City' WHERE id=?", u2);
         var preview = discovery.preview(u2);
         assertEquals("A real biography", preview.bio());
         assertTrue(preview.publicLocation() == null || !preview.publicLocation().contains("Private City"));
-        assertNull(preview.photoUrl());
+        assertNotNull(preview.photoUrl());
         swipes.record(u1, u2, "LIKE");
         var matched = swipes.record(u2, u1, "LIKE");
         jdbc.update("UPDATE profiles SET age_eligibility_confirmed_at=NULL WHERE id=?", u2);
@@ -667,9 +751,9 @@ class MatchmakingModuleIntegrationTest {
 
     @Test
     void staleDraftCannotOverwriteActivatedProfileAndReportsWorkAfterBlock() throws Exception {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
-        assertThrows(ResponseStatusException.class, () -> profiles.save(u1, profile("WOMAN", "DRAFT")));
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
+        assertThrows(ResponseStatusException.class, () -> profiles.save(u1, profile("FEMALE", "DRAFT")));
         mvc.perform(post("/api/v1/social/blocks/{id}", u2).with(authentication(auth(u1))))
                 .andExpect(status().isOk());
         assertNotNull(matches.reportProfile(u1, u2, "HARASSMENT", "Please investigate"));
@@ -699,7 +783,7 @@ class MatchmakingModuleIntegrationTest {
         communityService.completeOnboarding(passTarget);
         communityService.completeOnboarding(outsider);
         for (UUID user : new UUID[]{u1, u2, u3, passTarget, outsider}) {
-            activate(user, user.equals(u1) ? "WOMAN" : "MAN");
+            activate(user, user.equals(u1) ? "FEMALE" : "MALE");
         }
 
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES('France','FR','FRA')"
@@ -775,8 +859,8 @@ class MatchmakingModuleIntegrationTest {
 
     @Test
     void restEndpointsUsePrincipalAndReturnMatchIdentifiers() throws Exception {
-        activate(u1, "WOMAN");
-        activate(u2, "MAN");
+        activate(u1, "FEMALE");
+        activate(u2, "MALE");
         mvc.perform(get("/api/v1/matchmaking/profile").with(authentication(auth(u1))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value(u1.toString()));

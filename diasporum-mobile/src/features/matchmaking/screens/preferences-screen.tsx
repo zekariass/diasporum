@@ -65,7 +65,6 @@ const DEFAULTS: MatchmakingPreferencesRequest = {
   showVerifiedOnly: false,
   hasChildrenPreference: "ANY",
   wantsChildrenPreference: "ANY",
-  genderKeys: [],
   religionIds: [],
   languageIds: [],
 };
@@ -94,7 +93,6 @@ const toRequest = (
   showVerifiedOnly: preferences.showVerifiedOnly,
   hasChildrenPreference: preferences.hasChildrenPreference,
   wantsChildrenPreference: preferences.wantsChildrenPreference,
-  genderKeys: preferences.genderKeys,
   religionIds: preferences.religionIds,
   languageIds: preferences.languageIds,
 });
@@ -315,7 +313,7 @@ export default function PreferencesScreen({
   ) => setForm((current) => ({ ...current, [key]: value }));
 
   const toggleMulti = (
-    key: "genderKeys" | "religionIds" | "languageIds",
+    key: "religionIds" | "languageIds",
     id: string,
   ) =>
     set(
@@ -498,23 +496,19 @@ export default function PreferencesScreen({
     <>
       <PrefSection
         accent={theme.primary}
-        icon="male-female-outline"
-        title="Show me"
-        hint="Choose who appears in discovery. Select none to include all genders."
+        icon="people-outline"
+        title="Who you see"
+        hint="Dating shows you members of the opposite gender automatically — everyone shares the same rule."
         card={card}
       >
         <View style={styles.chipRow}>
-          {references.genders.map((option) => (
-            <SheetChip
-              key={option.id}
-              multi
-              accent={theme.primary}
-              label={option.label}
-              selected={form.genderKeys.includes(option.id)}
-              onPress={() => toggleMulti("genderKeys", option.id)}
-              accessibilityLabel={`Genders: ${option.label}`}
-            />
-          ))}
+          <ThemedText type="small" themeColor="textSecondary">
+            {profile?.genderKey === "MALE"
+              ? "You discover women, and women discover you."
+              : profile?.genderKey === "FEMALE"
+                ? "You discover men, and men discover you."
+                : "Set your gender on your profile to start discovering."}
+          </ThemedText>
         </View>
       </PrefSection>
 

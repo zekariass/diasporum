@@ -47,7 +47,6 @@ public class PreferenceService {
         var normalized = new PreferenceCommand(command.minAge(), command.maxAge(),
                 command.maxDistanceKm(), command.showVerifiedOnly(),
                 command.hasChildrenPreference(), command.wantsChildrenPreference(),
-                command.genderKeys().stream().distinct().toList(),
                 command.religionIds().stream().distinct().toList(),
                 command.languageIds().stream().distinct().toList());
         repository.replacePreferences(actor, normalized);
@@ -56,7 +55,7 @@ public class PreferenceService {
 
     private void validate(PreferenceCommand c) {
         if (c == null || c.minAge() == null || c.maxAge() == null
-                || c.showVerifiedOnly() == null || c.genderKeys() == null
+                || c.showVerifiedOnly() == null
                 || c.religionIds() == null || c.languageIds() == null
                 || c.minAge() < 18 || c.maxAge() > 110 || c.maxAge() < c.minAge()
                 || c.maxDistanceKm() != null
@@ -65,8 +64,7 @@ public class PreferenceService {
                 || !WANTS_CHILDREN.contains(c.wantsChildrenPreference())) {
             throw MatchmakingSupport.bad("INVALID_MATCHMAKING_PREFERENCES");
         }
-        if (repository.invalidGenders(c.genderKeys()) != 0
-                || repository.invalidReligions(c.religionIds()) != 0
+        if (repository.invalidReligions(c.religionIds()) != 0
                 || repository.invalidLanguages(c.languageIds()) != 0) {
             throw MatchmakingSupport.bad("INVALID_MATCHMAKING_REFERENCE");
         }

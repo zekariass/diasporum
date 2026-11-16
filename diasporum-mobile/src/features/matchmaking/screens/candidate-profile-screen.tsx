@@ -424,8 +424,16 @@ export default function CandidateProfileScreen() {
         />
 
         <PhotoViewerModal
-          visible={photoOpen && Boolean(profile.photoUrl)}
-          mediaIds={profile.photoUrl ? [profile.photoUrl] : []}
+          visible={photoOpen}
+          mediaIds={
+            profile.photos?.length
+              ? profile.photos
+                  .map((photo) => photo.url)
+                  .filter((url): url is string => Boolean(url))
+              : profile.photoUrl
+                ? [profile.photoUrl]
+                : []
+          }
           resolve={resolvePhoto}
           onClose={() => setPhotoOpen(false)}
         />

@@ -1,18 +1,9 @@
-import type {
-  FieldVisibility,
-  MatchmakingReferenceData,
-} from "./matchmaking-types";
+import type { MatchmakingReferenceData } from "./matchmaking-types";
 
 export interface Choice<T extends string = string> {
   value: T;
   label: string;
 }
-
-export const VISIBILITIES: Choice<FieldVisibility>[] = [
-  { value: "VISIBLE", label: "Visible" },
-  { value: "BLURRED", label: "Blurred" },
-  { value: "HIDDEN", label: "Hidden" },
-];
 
 export const EDUCATION: Choice[] = [
   ["SECONDARY", "Secondary"],

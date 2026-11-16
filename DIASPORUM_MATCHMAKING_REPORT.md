@@ -57,7 +57,7 @@ Activation requires:
 - A saved preference record.
 - Valid taxonomy and owner-owned reference data.
 - Valid, owned, purpose-correct media.
-- A `READY` visible or blurred photo when the corresponding photo-visibility mode is selected.
+- A `READY` primary photo in the profile photo collection (see §12).
 
 Profile deletion closes the user's active matches and marks the profile deleted rather than exposing it for further discovery.
 
@@ -71,7 +71,9 @@ Paused profiles are removed from active discovery but retain access to their exi
 - Maximum distance.
 - Verified-only filtering.
 - Existing-children and desired-children preferences.
-- Gender, religion, and language selections.
+- Religion and language selections.
+
+Candidate gender is no longer a selectable preference: the catalogue is restricted to `MALE`/`FEMALE` and discovery automatically returns the opposite gender in both directions (see §12).
 
 Reference selections are validated against active taxonomy data and normalized to remove duplicates.
 
@@ -146,7 +148,13 @@ All endpoints are under `/api/v1/matchmaking` and use the authenticated `Diaspor
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/reference-data` | Gender, religion, country, language, and owner-private-address options |
+| GET | `/reference-data` | Gender, religion, country, language, owner-private-address options, and the configured `maxProfilePhotos` limit |
+| GET | `/profile/photos` | Ordered owned photo gallery with presigned owner URLs |
+| POST | `/profile/photos` | Attach an owned READY `MATCHMAKING_PROFILE_PHOTO` media object |
+| PUT | `/profile/photos/order` | Atomically reorder the complete gallery |
+| PUT | `/profile/photos/{photoId}/primary` | Promote a photo to primary |
+| DELETE | `/profile/photos/{photoId}` | Detach a photo (next photo auto-promotes) |
+| GET | `/blocked` | Profile summaries of members the caller blocked |
 | GET | `/profile` | Read the authenticated user's Matchmaking profile |
 | PUT | `/profile` | Create or replace the authenticated user's profile |
 | DELETE | `/profile` | Delete the profile and close active matches |
@@ -245,12 +253,11 @@ Notification failure participates in the same transaction and therefore prevents
 
 ### Media
 
-Matchmaking uses the existing media upload flow with two dedicated purposes:
+Matchmaking uses the existing media upload flow with one dedicated purpose:
 
 - `MATCHMAKING_PROFILE_PHOTO`
-- `MATCHMAKING_PROFILE_BLURRED`
 
-The backend validates ownership, purpose, and `READY` status before profile attachment. Public projections join only media that is actually `READY`.
+The profile photo record references only the original media object. Blurred renditions are generic server-side media derivatives generated on demand from the original — there is no separate matchmaking-owned blurred asset. The backend validates ownership, purpose, and `READY` status before gallery attachment, and presigns only the rendition the viewer's relationship authorises.
 
 ### Realtime and outbox
 
@@ -266,9 +273,9 @@ Realtime is an invalidation mechanism only. PostgreSQL and the REST API remain t
 - Activation requires adulthood and explicit discovery opt-in.
 - Discovery enforces reciprocal compatibility and excludes blocked or otherwise ineligible users.
 - Candidate and match details are participant-safe and return not-found responses where appropriate to avoid resource disclosure.
-- Public profiles expose only visibility-approved display names and photos.
+- Public profiles expose only the name and photo renditions the central visibility service authorises for the viewer's relationship.
 - Hidden names use the profile's anonymous alias.
-- Hidden photos are omitted; blurred mode uses only the designated blurred asset.
+- Unauthorised viewers receive only the server-generated blurred derivative URL — never the original media ID, object key or URL.
 - Private address coordinates and raw owner photo-media identifiers are not exposed in public DTOs.
 - Reference-data address choices are restricted to addresses owned by the authenticated user.
 - Match report and unmatch operations require match participation.
@@ -287,8 +294,9 @@ The Expo/React Native feature lives under `src/features/matchmaking`, with thin 
 |---|---|---|
 | `/matchmaking` | `matchmaking-entry-screen.tsx` | Resolve profile state and route to setup, discovery, or the appropriate entry flow |
 | `/matchmaking/setup` | `setup-screen.tsx` | Adult gate, privacy opt-in, initial profile/preferences setup |
-| `/matchmaking/profile` | `own-profile-screen.tsx` | Edit profile, visibility, photos, pause/activate, and delete |
-| `/matchmaking/preferences` | `preferences-screen.tsx` | Edit discovery preferences |
+| `/matchmaking/profile` | `own-profile-screen.tsx` | Edit profile, privacy toggles, photo gallery, pause/activate, and delete |
+| `/matchmaking/preferences` | `preferences-screen.tsx` | Edit discovery preferences (age, distance, family, religion, languages) |
+| `/matchmaking/blocked` | `blocked-users-screen.tsx` | Manage blocked members (shared social blocks) |
 | `/matchmaking/profile/{userId}` | `candidate-profile-screen.tsx` | Candidate details and actions |
 | `/matchmaking/matches` | `matches-screen.tsx` | Cursor-paginated active matches |
 | `/matchmaking/matches/{matchId}` | `match-detail-screen.tsx` | Match detail, chat, report, block, and unmatch actions |
@@ -304,14 +312,17 @@ The discovery screen provides:
 
 ### Profile media
 
-Mobile photo upload uses the existing authenticated media API:
+Mobile photo management is a gallery flow over the existing authenticated media API:
 
-1. Request photo-library permission and select a square-edited image.
+1. Request photo-library permission and multi-select up to the remaining slots.
 2. Accept JPEG, PNG, or WebP.
-3. Initialize an upload with the appropriate Matchmaking purpose.
+3. Initialize an upload with `MATCHMAKING_PROFILE_PHOTO` purpose per asset.
 4. PUT bytes to the signed storage URL.
 5. Complete the upload and require `READY` status.
-6. Best-effort cleanup of the initialized asset if upload or completion fails.
+6. Attach each finished media object through `POST /profile/photos`.
+7. Reorder, promote-to-primary, and delete through the `/profile/photos` endpoints; the server response replaces the local list.
+
+The client never uploads or selects a blurred rendition, and never sees original identifiers for photos it is not authorised to view.
 
 ### Pagination and request consistency
 
@@ -451,6 +462,49 @@ The remaining lint warnings are in existing environment configuration, security 
 - `matchmaking-ui.test.tsx`
 - `matchmaking-realtime.test.tsx`
 - Affected Messaging mobile suites
+
+---
+
+## 12. v10.14 architectural correction — photos, privacy, gender
+
+Flyway `V26__matchmaking_photos_privacy_gender.sql` and the v10.13 clean-install artifacts were updated together. The earlier §§2–9 describe the pre-correction behaviour where it differs.
+
+### Photos
+
+- `matchmaking_profile_photos(id, user_id, media_id, sort_order, is_primary, …)` replaces the profile-level `photo_media_id`/`blurred_photo_media_id`/`photo_visibility` columns.
+- At most one primary photo per profile (partial unique index); deterministic ordering via a `(user_id, sort_order)` unique index; deleting the primary auto-promotes the next photo through an `AFTER DELETE` trigger.
+- The maximum photo count is backend configuration (`matchmaking.max-profile-photos`, default 6) — never a hardcoded database limit — and is returned in `/reference-data` and every photo-list response.
+- `photo_media_id` backfills into the collection as the primary; the legacy `blurred_photo_media_id` assets are superseded by generic media derivatives generated lazily from originals.
+- All photo mutations go through `/profile/photos` endpoints; the profile `PUT` no longer accepts photo fields.
+
+### Privacy and reveal lifecycle
+
+`blur_photos_until_match` and `hide_name_until_match` (both default `true`, migrated from the old `VISIBLE`/`BLURRED`/`HIDDEN` enums) drive a single central resolver, `MatchmakingProfileVisibilityService`, used by discovery, browse, candidate detail, sent/received likes, own preview and matches:
+
+- Normal discovery: blurred derivative URLs and/or the anonymous alias.
+- Incoming active LIKE: the sender's primary photo is revealed in original rendition; the rest of the gallery and the hidden name stay protected. The sender gains nothing from sending.
+- Mutual match: full name and complete original gallery for both participants.
+- Unmatch/block: reveal permission is revoked; closed matches resolve back to discovery rules and blocks deny everything.
+
+Unauthorised responses contain only presigned derivative URLs — never original media IDs, object keys or derivable URLs.
+
+### Gender
+
+- `matchmaking_genders` is restricted to `MALE`/`FEMALE`; `WOMAN`/`MAN` rows migrate, non-binary/other seeds deactivate.
+- `matchmaking_preference_genders` is dropped; mutual compatibility now requires opposite genders plus all pre-existing bilateral criteria (age, distance, religion, languages, children, verification, eligibility).
+- The mobile preferences screen no longer offers a gender selector — it explains the automatic rule instead.
+
+### Backend additions
+
+- `MatchmakingPhotoService` — attach/limit/ownership validation, primary promotion, atomic two-phase reorder, delete.
+- `MatchmakingProfileVisibilityService` — per-viewer relationship resolution and presigned rendition selection (`ORIGINAL` vs `BLURRED`).
+- `MatchmakingProperties` — `matchmaking.max-profile-photos` configuration binding.
+
+### Mobile additions
+
+- `components/photo-manager.tsx` — shared grid: configurable slots, primary badge, accessible reorder, delete confirm, multi-upload.
+- `screens/blocked-users-screen.tsx` + route `/matchmaking/blocked` — manages shared social blocks (unblock does not restore matches).
+- Wizard gains a multi-photo step (server-draft sync before first attach) and two privacy toggle cards; candidate profile hero is a paged gallery over server-resolved renditions.
 
 ---
 

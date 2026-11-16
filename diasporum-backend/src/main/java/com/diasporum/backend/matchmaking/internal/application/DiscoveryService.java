@@ -10,50 +10,55 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Privacy-safe discovery, candidate detail, and received-LIKE projections. */
+/**
+ * Privacy-safe discovery, candidate detail, and received-LIKE projections.
+ * Transactions are read/write because a first-time blurred derivative is
+ * generated lazily inside the read path (idempotent single write).
+ */
 @Service
 public class DiscoveryService {
 
     private final MatchmakingRepository repository;
     private final MatchmakingAccess access;
-    private final ProfileProjections projections;
+    private final MatchmakingProfileVisibilityService visibility;
     private final CommunityApi community;
 
     public DiscoveryService(MatchmakingRepository repository, MatchmakingAccess access,
-            ProfileProjections projections, CommunityApi community) {
+            MatchmakingProfileVisibilityService visibility, CommunityApi community) {
         this.repository = repository;
         this.access = access;
-        this.projections = projections;
+        this.visibility = visibility;
         this.community = community;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Page<PublicProfileView> discover(UUID actor, String cursor, int size) {
         access.requireEligible(actor);
         var context = community.requireActiveModule(actor, "MATCHMAKING");
         int limit = MatchmakingSupport.limit(size);
         List<PublicProfileRow> rows = repository.discover(actor, context.communityId(),
                 MatchmakingSupport.uuidCursor(cursor), limit + 1);
-        return profilePage(rows, limit);
+        return profilePage(actor, rows, limit);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Page<PublicProfileView> receivedLikes(UUID actor, String cursor, int size) {
         access.requireEligible(actor);
         int limit = MatchmakingSupport.limit(size);
         List<PublicProfileRow> rows = repository.receivedLikes(actor,
                 MatchmakingSupport.uuidCursor(cursor), limit + 1);
-        return profilePage(rows, limit);
+        return profilePage(actor, rows, limit);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Page<PublicProfileView> sentLikes(UUID actor, String cursor, int size) {
         access.requireEligible(actor);
         int limit = MatchmakingSupport.limit(size);
-        return profilePage(repository.sentLikes(actor, MatchmakingSupport.uuidCursor(cursor), limit + 1), limit);
+        return profilePage(actor, repository.sentLikes(actor,
+                MatchmakingSupport.uuidCursor(cursor), limit + 1), limit);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public PublicProfileView profile(UUID actor, UUID target) {
         access.requireEligible(actor);
         if (actor.equals(target)) {
@@ -73,23 +78,24 @@ public class DiscoveryService {
                 throw MatchmakingSupport.notFound("MATCHMAKING_PROFILE_NOT_FOUND");
             }
         }
-        return repository.publicProfile(target).map(projections::publicProfile)
+        return repository.publicProfile(target).map(row -> visibility.resolve(actor, row))
                 .orElseThrow(() -> MatchmakingSupport.notFound("MATCHMAKING_PROFILE_NOT_FOUND"));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public PublicProfileView preview(UUID actor) {
         access.requireAdult(actor);
-        return repository.publicProfile(actor).map(projections::publicProfile)
+        return repository.publicProfile(actor).map(row -> visibility.resolve(actor, row))
                 .orElseThrow(() -> MatchmakingSupport.notFound("MATCHMAKING_PROFILE_NOT_FOUND"));
     }
 
-    private Page<PublicProfileView> profilePage(List<PublicProfileRow> rows, int limit) {
+    private Page<PublicProfileView> profilePage(UUID actor, List<PublicProfileRow> rows,
+            int limit) {
         String next = null;
         if (rows.size() > limit) {
             rows = rows.subList(0, limit);
             next = MatchmakingSupport.cursor(rows.get(rows.size() - 1).userId());
         }
-        return new Page<>(rows.stream().map(projections::publicProfile).toList(), next);
+        return new Page<>(visibility.resolveAll(actor, rows), next);
     }
 }

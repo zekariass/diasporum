@@ -4,10 +4,25 @@ export type MatchmakingStatus =
   | "PAUSED"
   | "SUSPENDED"
   | "DELETED";
-export type FieldVisibility = "VISIBLE" | "BLURRED" | "HIDDEN";
 export type SwipeAction = "LIKE" | "PASS";
 export type SwipeStatus = "ACTIVE" | "WITHDRAWN" | "REWOUND";
 export type MatchStatus = "MATCHED" | "UNMATCHED" | "CLOSED" | "BLOCKED";
+export type PhotoRendition = "ORIGINAL" | "BLURRED";
+
+/** One owned gallery photo; `url` is the presigned original rendition. */
+export interface MatchmakingProfilePhoto {
+  id: string;
+  mediaId: string;
+  sortOrder: number;
+  isPrimary: boolean;
+  url: string | null;
+}
+
+/** Photo collection plus the backend-configured upload limit. */
+export interface MatchmakingPhotoList {
+  photos: MatchmakingProfilePhoto[];
+  maxPhotos: number;
+}
 
 export interface MatchmakingProfile {
   userId: string;
@@ -29,10 +44,8 @@ export interface MatchmakingProfile {
   longDistanceRelationship: boolean | null;
   religionImportance: string | null;
   willingToRelocate: boolean | null;
-  photoMediaId: string | null;
-  blurredPhotoMediaId: string | null;
-  nameVisibility: FieldVisibility;
-  photoVisibility: FieldVisibility;
+  blurPhotosUntilMatch: boolean;
+  hideNameUntilMatch: boolean;
   anonymousAlias: string;
   verificationStatus:
     | "NOT_VERIFIED"
@@ -45,21 +58,24 @@ export interface MatchmakingProfile {
   lastActiveAt: string | null;
   createdAt: string;
   updatedAt: string;
+  photos: MatchmakingProfilePhoto[];
+  maxProfilePhotos: number;
 }
 
 /**
- * The blurred rendition is server-generated from the original photo —
- * clients never send or manage it, so it is not part of the request.
+ * Photos are managed exclusively through the /profile/photos endpoints —
+ * they are never part of the profile write request.
  */
 export type MatchmakingProfileRequest = Omit<
   MatchmakingProfile,
   | "userId"
-  | "blurredPhotoMediaId"
   | "verificationStatus"
   | "activatedAt"
   | "lastActiveAt"
   | "createdAt"
   | "updatedAt"
+  | "photos"
+  | "maxProfilePhotos"
 > & { status: "DRAFT" | "ACTIVE" | "PAUSED" };
 
 export interface SharedProfileDraft {
@@ -70,6 +86,7 @@ export interface SharedProfileDraft {
   languageIds: string[];
 }
 
+/** Gender is derived server-side (automatic opposite-gender discovery). */
 export interface MatchmakingPreferences {
   userId: string;
   minAge: number;
@@ -78,7 +95,6 @@ export interface MatchmakingPreferences {
   showVerifiedOnly: boolean;
   hasChildrenPreference: "ANY" | "YES" | "NO";
   wantsChildrenPreference: "ANY" | "YES" | "NO" | "UNSURE";
-  genderKeys: string[];
   religionIds: string[];
   languageIds: string[];
 }
@@ -88,16 +104,28 @@ export type MatchmakingPreferencesRequest = Omit<
   "userId"
 >;
 
+/**
+ * One authorised photo rendition for the requesting viewer. `url` is
+ * presigned against the specific permitted rendition only — the client
+ * never decides which rendition it may see.
+ */
+export interface PublicPhoto {
+  url: string | null;
+  isPrimary: boolean;
+  sortOrder: number;
+  rendition: PhotoRendition;
+}
+
 export interface PublicMatchmakingProfile {
   bio?: string | null;
   publicLocation?: string | null;
   interests?: string[];
   languages?: string[];
-  nameVisibility?: FieldVisibility;
-  photoVisibility?: FieldVisibility;
   userId: string;
   displayName: string;
   photoUrl: string | null;
+  photos: PublicPhoto[];
+  nameRevealed: boolean;
   genderKey: string;
   age: number | null;
   nationalityCountryId: string | null;
@@ -183,8 +211,16 @@ export interface MatchmakingReferenceData {
   languages: ReferenceOption[];
   addresses: PrivateAddressOption[];
   profileOptions?: Record<string, ReferenceOption[]>;
+  maxProfilePhotos: number;
 }
 
 export interface PrivacySettings {
   allowMatchmakingDiscovery: boolean;
+}
+
+/** Minimal identity of a blocked member for the management screen. */
+export interface BlockedUser {
+  id: string;
+  username: string | null;
+  displayName: string | null;
 }

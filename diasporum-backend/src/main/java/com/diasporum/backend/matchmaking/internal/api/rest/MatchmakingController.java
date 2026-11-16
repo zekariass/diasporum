@@ -4,6 +4,7 @@ import com.diasporum.backend.matchmaking.internal.application.CancelLikeService;
 import com.diasporum.backend.matchmaking.internal.application.DiscoveryService;
 import com.diasporum.backend.matchmaking.internal.application.EligibilityService;
 import com.diasporum.backend.matchmaking.internal.application.MatchService;
+import com.diasporum.backend.matchmaking.internal.application.MatchmakingPhotoService;
 import com.diasporum.backend.matchmaking.internal.application.MatchmakingProfileService;
 import com.diasporum.backend.matchmaking.internal.application.PreferenceService;
 import com.diasporum.backend.matchmaking.internal.application.RecordSwipeService;
@@ -16,6 +17,7 @@ import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.Page;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PreferenceCommand;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PreferenceView;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ProfileCommand;
+import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ProfilePhotoListView;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ProfileView;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.PublicProfileView;
 import com.diasporum.backend.matchmaking.internal.domain.MatchmakingModels.ReferenceDataView;
@@ -58,13 +60,15 @@ public class MatchmakingController {
     private final MatchService matches;
     private final UnmatchService unmatches;
     private final ReferenceDataService referenceData;
+    private final MatchmakingPhotoService photoService;
 
     public MatchmakingController(MatchmakingProfileService profiles,
             EligibilityService eligibility, PreferenceService preferences, DiscoveryService discovery,
             RecordSwipeService swipes, CancelLikeService cancelLikes,
             RewindSwipeService rewinds, MatchService matches, UnmatchService unmatches,
-            ReferenceDataService referenceData) {
+            ReferenceDataService referenceData, MatchmakingPhotoService photoService) {
         this.profiles = profiles;
+        this.photoService = photoService;
         this.eligibility = eligibility;
         this.preferences = preferences;
         this.discovery = discovery;
@@ -76,24 +80,34 @@ public class MatchmakingController {
         this.referenceData = referenceData;
     }
 
+    /**
+     * Photos are managed exclusively through /profile/photos endpoints. Null
+     * privacy booleans default to the anonymous-by-default behaviour (true).
+     */
     public record ProfileRequest(@NotBlank String genderKey, UUID addressId,
             UUID nationalityCountryId, UUID religionId, String educationLevel,
             @Size(max = 160) String occupation, String relationshipIntention, String maritalStatus,
             Boolean hasChildren, String wantsChildren, String smoking, String drinking,
             String activityLevel, @Min(80) @Max(250) Integer heightCm, String marriageTimeline,
             Boolean longDistanceRelationship, String religionImportance, Boolean willingToRelocate,
-            UUID photoMediaId, UUID blurredPhotoMediaId, @NotBlank String nameVisibility,
-            @NotBlank String photoVisibility, @NotBlank @Size(max = 80) String anonymousAlias,
+            Boolean blurPhotosUntilMatch, Boolean hideNameUntilMatch,
+            @NotBlank @Size(max = 80) String anonymousAlias,
             @NotBlank String status) {
     }
 
+    /** Gender is derived from the caller's profile — not selectable. */
     public record PreferenceRequest(@NotNull @Min(18) @Max(110) Integer minAge,
             @NotNull @Min(18) @Max(110) Integer maxAge,
             @Min(1) @Max(20000) Integer maxDistanceKm, @NotNull Boolean showVerifiedOnly,
             @NotBlank String hasChildrenPreference, @NotBlank String wantsChildrenPreference,
-            @NotNull List<@NotBlank String> genderKeys,
             @NotNull List<@NotNull UUID> religionIds,
             @NotNull List<@NotNull UUID> languageIds) {
+    }
+
+    public record AddPhotoRequest(@NotNull UUID mediaId) {
+    }
+
+    public record ReorderPhotosRequest(@NotNull List<@NotNull UUID> photoIds) {
     }
 
     public record SwipeRequest(@NotNull UUID targetUserId, @NotBlank String action) {
@@ -135,9 +149,49 @@ public class MatchmakingController {
                 request.maritalStatus(), request.hasChildren(), request.wantsChildren(),
                 request.smoking(), request.drinking(), request.activityLevel(), request.heightCm(),
                 request.marriageTimeline(), request.longDistanceRelationship(),
-                request.religionImportance(), request.willingToRelocate(), request.photoMediaId(),
-                null, request.nameVisibility(), request.photoVisibility(),
+                request.religionImportance(), request.willingToRelocate(),
+                request.blurPhotosUntilMatch(), request.hideNameUntilMatch(),
                 request.anonymousAlias(), request.status()));
+    }
+
+    // ---- photo gallery ----
+
+    @GetMapping("/profile/photos")
+    public ProfilePhotoListView photos(@AuthenticationPrincipal DiasporumUserPrincipal principal) {
+        return photoService.photos(principal.userId());
+    }
+
+    @PostMapping("/profile/photos")
+    public ProfilePhotoListView addPhoto(@AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @Valid @RequestBody AddPhotoRequest request) {
+        return photoService.add(principal.userId(), request.mediaId());
+    }
+
+    @PutMapping("/profile/photos/order")
+    public ProfilePhotoListView reorderPhotos(
+            @AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @Valid @RequestBody ReorderPhotosRequest request) {
+        return photoService.reorder(principal.userId(), request.photoIds());
+    }
+
+    @PutMapping("/profile/photos/{photoId}/primary")
+    public ProfilePhotoListView primaryPhoto(
+            @AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID photoId) {
+        return photoService.setPrimary(principal.userId(), photoId);
+    }
+
+    @DeleteMapping("/profile/photos/{photoId}")
+    public ProfilePhotoListView deletePhoto(
+            @AuthenticationPrincipal DiasporumUserPrincipal principal,
+            @PathVariable UUID photoId) {
+        return photoService.delete(principal.userId(), photoId);
+    }
+
+    /** Profile summaries of users the caller blocked (management view). */
+    @GetMapping("/blocked")
+    public Map<String, Object> blocked(@AuthenticationPrincipal DiasporumUserPrincipal principal) {
+        return Map.of("items", matches.blockedUsers(principal.userId()));
     }
 
     @DeleteMapping("/profile")
@@ -158,7 +212,7 @@ public class MatchmakingController {
         return preferences.replace(principal.userId(), new PreferenceCommand(request.minAge(),
                 request.maxAge(), request.maxDistanceKm(), request.showVerifiedOnly(),
                 request.hasChildrenPreference(), request.wantsChildrenPreference(),
-                request.genderKeys(), request.religionIds(), request.languageIds()));
+                request.religionIds(), request.languageIds()));
     }
 
     @GetMapping("/discover")

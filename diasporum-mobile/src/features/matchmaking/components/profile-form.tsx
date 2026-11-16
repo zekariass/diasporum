@@ -11,14 +11,22 @@ import {
   createProfileApi,
   type ProfileCompatibility,
 } from "@/features/profile/services/profile-api";
-import { StyleSheet, View } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from "react-native";
 import { ThemedText } from "@/components/themed-text";
 import { FormInput } from "@/shared/components/form-input";
 import { PrimaryButton } from "@/shared/components/primary-button";
-import { Spacing } from "@/shared/theme/spacing";
+import { useTheme } from "@/hooks/use-theme";
+import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import { profileChoices } from "../types/matchmaking-options";
 import type {
-  FieldVisibility,
+  MatchmakingPhotoList,
   MatchmakingProfile,
   MatchmakingProfileRequest,
   MatchmakingReferenceData,
@@ -26,13 +34,15 @@ import type {
   SharedProfileDraft,
 } from "../types/matchmaking-types";
 import { matchmakingError } from "../services/matchmaking-errors";
-import { useMatchmakingPhotoUpload } from "../hooks/use-matchmaking-photos";
+import { Ionicons } from "@expo/vector-icons";
 import {
   ChoiceChips,
-  ProfilePhoto,
+  PillTabBar,
   Section,
   SelectField,
 } from "./matchmaking-ui";
+import { MatchmakingPhotoManager } from "./photo-manager";
+import { PrivacyNote, ToggleCard } from "./wizard-ui";
 
 export function useSharedProfileForm() {
   const { apiClient, session, updateProfile } = useSession();
@@ -181,10 +191,14 @@ export function SharedProfileFields({
   state,
   references,
   group,
+  compact = false,
+  framed = false,
 }: {
   state: ReturnType<typeof useSharedProfileForm>;
   references: MatchmakingReferenceData;
   group?: "about" | "compatibility" | "location";
+  compact?: boolean;
+  framed?: boolean;
 }) {
   const { form, catalog, change } = state;
   return (
@@ -206,6 +220,8 @@ export function SharedProfileFields({
         <Section
           title="About you"
           hint="This is your existing Diasporum biography. Changes also appear on your general profile."
+          compact={compact}
+          framed={framed}
         >
           <FormInput
             label="About me"
@@ -220,6 +236,8 @@ export function SharedProfileFields({
         <Section
           title="What connects you"
           hint="Choose up to 30 interests and languages. These are shared with your general profile."
+          compact={compact}
+          framed={framed}
         >
           <ChoiceChips
             label="Your interests"
@@ -248,7 +266,9 @@ export function SharedProfileFields({
       {!group || group === "location" ? (
         <Section
           title="Where you are"
-          hint="Country and city reuse your general profile. City visibility follows your privacy settings. Never enter a street address here."
+          hint="Country and city reuse your general profile. Never enter a street address here."
+          compact={compact}
+          framed={framed}
         >
           <SelectField
             label="Current country"
@@ -318,15 +338,74 @@ export function profileRequestFrom(
     longDistanceRelationship: profile?.longDistanceRelationship ?? null,
     religionImportance: profile?.religionImportance ?? null,
     willingToRelocate: profile?.willingToRelocate ?? null,
-    photoMediaId: profile?.photoMediaId ?? null,
-    nameVisibility: profile?.nameVisibility ?? "BLURRED",
-    photoVisibility: profile?.photoVisibility ?? "HIDDEN",
+    blurPhotosUntilMatch: profile?.blurPhotosUntilMatch ?? true,
+    hideNameUntilMatch: profile?.hideNameUntilMatch ?? true,
     anonymousAlias: profile?.anonymousAlias ?? "Diasporum member",
     status:
       profile?.status === "ACTIVE" || profile?.status === "PAUSED"
         ? profile.status
         : "DRAFT",
   };
+}
+
+type EditTab = "bio" | "details" | "photos" | "lifestyle" | "privacy";
+
+const EDIT_TABS: {
+  key: EditTab;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  { key: "bio", label: "Bio", icon: "reader" },
+  { key: "details", label: "Details", icon: "person-outline" },
+  { key: "photos", label: "Photos", icon: "images-outline" },
+  { key: "lifestyle", label: "Lifestyle", icon: "git-branch-outline" },
+  { key: "privacy", label: "Privacy", icon: "eye-outline" },
+];
+
+function BioField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const theme = useTheme();
+  return (
+    <View style={styles.bioField}>
+      <ThemedText
+        type="small"
+        themeColor="textSecondary"
+        style={styles.bioLabel}
+      >
+        Bio
+      </ThemedText>
+      <View
+        style={[
+          styles.bioInputWrap,
+          { backgroundColor: theme.background, borderColor: theme.border },
+        ]}
+      >
+        <TextInput
+          value={value}
+          onChangeText={onChange}
+          multiline
+          maxLength={800}
+          textAlignVertical="top"
+          placeholder="Tell others about yourself..."
+          placeholderTextColor={theme.textSecondary}
+          accessibilityLabel="Bio"
+          style={[styles.bioInput, { color: theme.text }]}
+        />
+        <ThemedText
+          type="small"
+          themeColor="textSecondary"
+          style={styles.bioCounter}
+        >
+          {`${value.length}/800`}
+        </ThemedText>
+      </View>
+    </View>
+  );
 }
 
 export function ProfileForm({
@@ -344,6 +423,7 @@ export function ProfileForm({
   submitLabel: string;
   onSubmit: (request: MatchmakingProfileRequest) => void;
 }) {
+  const theme = useTheme();
   const [form, setForm] = useState<MatchmakingProfileRequest>(() => ({
     ...profileRequestFrom(profile, references),
     status,
@@ -351,8 +431,38 @@ export function ProfileForm({
   const [height, setHeight] = useState(form.heightCm?.toString() ?? "");
   const shared = useSharedProfileForm();
   const [error, setError] = useState<string | null>(null);
-  const { uploading, photoUri, upload, hydratePreview, clearPreview } =
-    useMatchmakingPhotoUpload();
+  const [gallery, setGallery] = useState<MatchmakingPhotoList>({
+    photos: profile?.photos ?? [],
+    maxPhotos: profile?.maxProfilePhotos ?? 6,
+  });
+  const [tab, setTab] = useState<EditTab>("bio");
+
+  const completion = useMemo(() => {
+    const checks = [
+      Boolean(shared.form.bio.trim()),
+      Boolean(form.genderKey),
+      Boolean(form.anonymousAlias.trim()),
+      Boolean(form.nationalityCountryId),
+      Boolean(form.religionId),
+      Boolean(form.educationLevel),
+      Boolean(form.occupation?.trim()),
+      Boolean(height.trim()),
+      Boolean(form.relationshipIntention),
+      Boolean(form.maritalStatus),
+      form.hasChildren != null,
+      Boolean(form.wantsChildren),
+      Boolean(form.smoking),
+      Boolean(form.drinking),
+      Boolean(form.activityLevel),
+      gallery.photos.length > 0,
+      Boolean(shared.form.currentCountryId),
+      Boolean(shared.form.city.trim()),
+      shared.form.interestIds.length > 0,
+      shared.form.languageIds.length > 0,
+    ];
+    return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+  }, [form, gallery.photos.length, height, shared.form]);
+  const filledSegments = Math.round(completion / 20);
 
   const set = (
     field: keyof MatchmakingProfileRequest,
@@ -365,35 +475,11 @@ export function ProfileForm({
     (value: string | null | string[]) => {
       set(field, Array.isArray(value) ? (value[0] ?? null) : value);
     };
-  const pick = async () => {
-    setError(null);
-    try {
-      const uploaded = await upload();
-      if (uploaded) {
-        set("photoMediaId", uploaded.assetId);
-      }
-    } catch (uploadError) {
-      setError(
-        matchmakingError(
-          uploadError,
-          uploadError instanceof Error
-            ? uploadError.message
-            : "The photo could not be uploaded.",
-        ),
-      );
-    }
-  };
-  // Existing profile — show the saved original via the owner-scoped URL.
-  useEffect(() => {
-    if (form.photoMediaId && !photoUri) {
-      void hydratePreview(form.photoMediaId).catch(() => {});
-    }
-  }, [form.photoMediaId, photoUri, hydratePreview]);
-
   const submit = async () => {
     const parsedHeight = height.trim() ? Number(height) : null;
     if (!form.genderKey || !form.anonymousAlias.trim()) {
       setError("Gender and a nickname are required.");
+      setTab("details");
       return;
     }
     if (
@@ -403,6 +489,7 @@ export function ProfileForm({
         parsedHeight > 250)
     ) {
       setError("Height must be a whole number between 80 and 250 cm.");
+      setTab("details");
       return;
     }
     setError(null);
@@ -417,223 +504,368 @@ export function ProfileForm({
   };
 
   return (
-    <View style={styles.form}>
-      <Section
-        title="Identity"
-        hint="Only the visibility-approved name and photo are shown to candidates."
-      >
-        <ChoiceChips
-          label="Gender"
-          choices={references.genders}
-          value={form.genderKey}
-          onChange={single("genderKey")}
-          required
-        />
-        <FormInput
-          label="Nickname"
-          value={form.anonymousAlias}
-          maxLength={80}
-          onChangeText={(value) => set("anonymousAlias", value)}
-          required
-        />
-        <ChoiceChips
-          label="Name visibility"
-          choices={profileChoices(references, "visibility")}
-          value={form.nameVisibility}
-          onChange={(value) => set("nameVisibility", value as FieldVisibility)}
-          required
-        />
-        <ChoiceChips
-          label="Photo visibility"
-          choices={profileChoices(references, "visibility")}
-          value={form.photoVisibility}
-          onChange={(value) => set("photoVisibility", value as FieldVisibility)}
-          required
-        />
-        <View style={styles.photoRow}>
-          <View style={styles.photoItem}>
-            <ProfilePhoto uri={photoUri} name="Photo" size={76} />
-            <PrimaryButton
-              label={form.photoMediaId ? "Replace photo" : "Upload photo"}
-              variant="secondary"
-              loading={uploading}
-              disabled={uploading}
-              onPress={() => void pick()}
-            />
-          </View>
-          {form.photoMediaId ? (
-            <View style={styles.photoItem}>
-              <PrimaryButton
-                label="Remove photo"
-                variant="ghost"
-                disabled={uploading}
-                onPress={() => {
-                  set("photoMediaId", null);
-                  clearPreview();
-                }}
-              />
-            </View>
-          ) : null}
-        </View>
-        <ThemedText type="small" themeColor="textSecondary">
-          Upload your original photo once — Diasporum automatically creates the
-          blurred version for Blurred visibility. Hidden visibility shows no
-          photo.
-        </ThemedText>
-      </Section>
-
-      <Section title="Background">
-        <SelectField
-          label="Nationality"
-          options={references.countries}
-          searchable
-          value={form.nationalityCountryId}
-          onChange={single("nationalityCountryId")}
-        />
-        <SelectField
-          label="Religion"
-          options={references.religions}
-          searchable
-          value={form.religionId}
-          onChange={single("religionId")}
-        />
-        <ChoiceChips
-          label="Religion importance"
-          choices={profileChoices(references, "religionImportance")}
-          value={form.religionImportance}
-          onChange={single("religionImportance")}
-        />
-        <SelectField
-          label="Private address reference"
-          options={references.addresses}
-          value={form.addressId}
-          onChange={single("addressId")}
-        />
-        <ThemedText type="small" themeColor="textSecondary">
-          Only your saved private addresses are listed. Exact coordinates and
-          address details are never shared.
-        </ThemedText>
-        <ChoiceChips
-          label="Education"
-          choices={profileChoices(references, "education")}
-          value={form.educationLevel}
-          onChange={single("educationLevel")}
-        />
-        <FormInput
-          label="Occupation"
-          value={form.occupation ?? ""}
-          maxLength={160}
-          onChangeText={(value) => set("occupation", value)}
-        />
-        <FormInput
-          label="Height (cm)"
-          value={height}
-          keyboardType="number-pad"
-          maxLength={3}
-          onChangeText={setHeight}
-          hint="Optional, 80–250 cm"
-        />
-      </Section>
-
-      <Section title="Relationship">
-        <ChoiceChips
-          label="Intention"
-          choices={profileChoices(references, "intentions")}
-          value={form.relationshipIntention}
-          onChange={single("relationshipIntention")}
-        />
-        <ChoiceChips
-          label="Marital status"
-          choices={profileChoices(references, "marital")}
-          value={form.maritalStatus}
-          onChange={single("maritalStatus")}
-        />
-        <ChoiceChips
-          label="I have children"
-          choices={[
-            { value: "YES", label: "Yes" },
-            { value: "NO", label: "No" },
-          ]}
-          value={
-            form.hasChildren == null ? null : form.hasChildren ? "YES" : "NO"
-          }
-          onChange={(value) =>
-            set("hasChildren", value == null ? null : value === "YES")
-          }
-        />
-        <ChoiceChips
-          label="Wants children"
-          choices={profileChoices(references, "wantsChildren")}
-          value={form.wantsChildren}
-          onChange={single("wantsChildren")}
-        />
-        <ChoiceChips
-          label="Marriage timeline"
-          choices={profileChoices(references, "timeline")}
-          value={form.marriageTimeline}
-          onChange={single("marriageTimeline")}
-        />
-        {(["longDistanceRelationship", "willingToRelocate"] as const).map(
-          (field) => (
-            <ChoiceChips
-              key={field}
-              label={
-                field === "longDistanceRelationship"
-                  ? "Open to a long-distance relationship"
-                  : "Willing to relocate"
-              }
-              choices={[
-                { value: "YES", label: "Yes" },
-                { value: "NO", label: "No" },
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    >
+      <View style={styles.progressBlock}>
+        <View
+          style={styles.progressSegments}
+          accessibilityRole="progressbar"
+          accessibilityLabel="Profile completion"
+          accessibilityValue={{ min: 0, max: 100, now: completion }}
+        >
+          {Array.from({ length: 5 }, (_, index) => (
+            <View
+              key={index}
+              style={[
+                styles.progressSegment,
+                {
+                  backgroundColor:
+                    index < filledSegments
+                      ? theme.primary
+                      : theme.backgroundElement,
+                },
               ]}
-              value={form[field] == null ? null : form[field] ? "YES" : "NO"}
-              onChange={(value) =>
-                set(field, value == null ? null : value === "YES")
-              }
             />
-          ),
-        )}
-      </Section>
-
-      <Section title="Lifestyle">
-        <ChoiceChips
-          label="Smoking"
-          choices={profileChoices(references, "habits")}
-          value={form.smoking}
-          onChange={single("smoking")}
-        />
-        <ChoiceChips
-          label="Drinking"
-          choices={profileChoices(references, "habits")}
-          value={form.drinking}
-          onChange={single("drinking")}
-        />
-        <ChoiceChips
-          label="Activity level"
-          choices={profileChoices(references, "activity")}
-          value={form.activityLevel}
-          onChange={single("activityLevel")}
-        />
-      </Section>
-
-      {error ? (
-        <ThemedText themeColor="error" accessibilityRole="alert">
-          {error}
+          ))}
+        </View>
+        <ThemedText
+          type="small"
+          themeColor="textSecondary"
+          style={styles.progressLabel}
+        >
+          Profile completion:{" "}
+          <ThemedText style={{ color: theme.primary, fontWeight: "800" }}>
+            {completion}%
+          </ThemedText>
         </ThemedText>
-      ) : null}
-      <SharedProfileFields state={shared} references={references} />
-      <PrimaryButton
-        label={submitLabel}
-        onPress={() => void submit()}
-        loading={saving || shared.saving}
-        disabled={uploading || shared.saving || !shared.catalog}
+      </View>
+
+      <PillTabBar
+        tabs={EDIT_TABS}
+        active={tab}
+        onChange={(key) => setTab(key as EditTab)}
       />
-    </View>
+
+      <ScrollView
+        style={styles.formScroll}
+        contentContainerStyle={styles.formContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {tab === "bio" ? (
+          <Section
+            title="About You"
+            hint="This is your existing Diasporum biography. Changes also appear on your general profile."
+            compact
+            framed
+          >
+            <BioField
+              value={shared.form.bio}
+              onChange={(bio) => shared.change({ bio })}
+            />
+          </Section>
+        ) : null}
+
+        {tab === "details" ? (
+          <>
+            <Section
+              title="Identity"
+              hint="Only the privacy-approved name and photos are shown to candidates."
+              compact
+              framed
+            >
+              <ChoiceChips
+                label="Gender"
+                choices={references.genders}
+                value={form.genderKey}
+                onChange={single("genderKey")}
+                required
+              />
+              <FormInput
+                label="Nickname"
+                value={form.anonymousAlias}
+                maxLength={80}
+                onChangeText={(value) => set("anonymousAlias", value)}
+                required
+              />
+            </Section>
+
+            <Section title="Background" compact framed>
+              <SelectField
+                label="Nationality"
+                options={references.countries}
+                searchable
+                value={form.nationalityCountryId}
+                onChange={single("nationalityCountryId")}
+              />
+              <SelectField
+                label="Religion"
+                options={references.religions}
+                searchable
+                value={form.religionId}
+                onChange={single("religionId")}
+              />
+              <ChoiceChips
+                label="Religion importance"
+                choices={profileChoices(references, "religionImportance")}
+                value={form.religionImportance}
+                onChange={single("religionImportance")}
+              />
+              <SelectField
+                label="Private address reference"
+                options={references.addresses}
+                value={form.addressId}
+                onChange={single("addressId")}
+              />
+              <ThemedText type="small" themeColor="textSecondary">
+                Only your saved private addresses are listed. Exact coordinates
+                and address details are never shared.
+              </ThemedText>
+              <ChoiceChips
+                label="Education"
+                choices={profileChoices(references, "education")}
+                value={form.educationLevel}
+                onChange={single("educationLevel")}
+              />
+              <FormInput
+                label="Occupation"
+                value={form.occupation ?? ""}
+                maxLength={160}
+                onChangeText={(value) => set("occupation", value)}
+              />
+              <FormInput
+                label="Height (cm)"
+                value={height}
+                keyboardType="number-pad"
+                maxLength={3}
+                onChangeText={setHeight}
+                hint="Optional, 80–250 cm"
+              />
+            </Section>
+
+            <Section title="Relationship" compact framed>
+              <ChoiceChips
+                label="Intention"
+                choices={profileChoices(references, "intentions")}
+                value={form.relationshipIntention}
+                onChange={single("relationshipIntention")}
+              />
+              <ChoiceChips
+                label="Marital status"
+                choices={profileChoices(references, "marital")}
+                value={form.maritalStatus}
+                onChange={single("maritalStatus")}
+              />
+              <ChoiceChips
+                label="I have children"
+                choices={[
+                  { value: "YES", label: "Yes" },
+                  { value: "NO", label: "No" },
+                ]}
+                value={
+                  form.hasChildren == null
+                    ? null
+                    : form.hasChildren
+                      ? "YES"
+                      : "NO"
+                }
+                onChange={(value) =>
+                  set("hasChildren", value == null ? null : value === "YES")
+                }
+              />
+              <ChoiceChips
+                label="Wants children"
+                choices={profileChoices(references, "wantsChildren")}
+                value={form.wantsChildren}
+                onChange={single("wantsChildren")}
+              />
+              <ChoiceChips
+                label="Marriage timeline"
+                choices={profileChoices(references, "timeline")}
+                value={form.marriageTimeline}
+                onChange={single("marriageTimeline")}
+              />
+              {(["longDistanceRelationship", "willingToRelocate"] as const).map(
+                (field) => (
+                  <ChoiceChips
+                    key={field}
+                    label={
+                      field === "longDistanceRelationship"
+                        ? "Open to a long-distance relationship"
+                        : "Willing to relocate"
+                    }
+                    choices={[
+                      { value: "YES", label: "Yes" },
+                      { value: "NO", label: "No" },
+                    ]}
+                    value={
+                      form[field] == null ? null : form[field] ? "YES" : "NO"
+                    }
+                    onChange={(value) =>
+                      set(field, value == null ? null : value === "YES")
+                    }
+                  />
+                ),
+              )}
+            </Section>
+
+            <SharedProfileFields
+              state={shared}
+              references={references}
+              group="location"
+              compact
+              framed
+            />
+          </>
+        ) : null}
+
+        {tab === "photos" ? (
+          <Section
+            title="Your Photos"
+            hint="The primary photo leads your profile. Blurred versions are generated on Diasporum's servers — originals stay private until a match."
+            compact
+            framed
+          >
+            <MatchmakingPhotoManager
+              photos={gallery.photos}
+              maxPhotos={gallery.maxPhotos}
+              onChange={setGallery}
+              disabled={saving}
+            />
+          </Section>
+        ) : null}
+
+        {tab === "lifestyle" ? (
+          <>
+            <Section
+              title="Lifestyle"
+              hint="A few everyday details help members understand what life with you looks like."
+              compact
+              framed
+            >
+              <ChoiceChips
+                label="Smoking"
+                choices={profileChoices(references, "habits")}
+                value={form.smoking}
+                onChange={single("smoking")}
+              />
+              <ChoiceChips
+                label="Drinking"
+                choices={profileChoices(references, "habits")}
+                value={form.drinking}
+                onChange={single("drinking")}
+              />
+              <ChoiceChips
+                label="Activity level"
+                choices={profileChoices(references, "activity")}
+                value={form.activityLevel}
+                onChange={single("activityLevel")}
+              />
+            </Section>
+            <SharedProfileFields
+              state={shared}
+              references={references}
+              group="compatibility"
+              compact
+              framed
+            />
+          </>
+        ) : null}
+
+        {tab === "privacy" ? (
+          <Section
+            title="Privacy"
+            hint="You control what candidates see before a mutual match."
+            compact
+            framed
+          >
+            <ToggleCard
+              icon="contrast"
+              label="Blur my photos until matching"
+              hint="Candidates see a blurred version of your photos until you both like each other."
+              value={form.blurPhotosUntilMatch}
+              onChange={(value) => set("blurPhotosUntilMatch", value)}
+            />
+            <ToggleCard
+              icon="eye-off"
+              label="Hide my name until matching"
+              hint="Candidates see your nickname instead of your name until you match."
+              value={form.hideNameUntilMatch}
+              onChange={(value) => set("hideNameUntilMatch", value)}
+            />
+            <PrivacyNote>
+              When you like someone, they can see your primary photo. Your other
+              photos and hidden name stay private until you match.
+            </PrivacyNote>
+          </Section>
+        ) : null}
+
+        {error ? (
+          <ThemedText themeColor="error" accessibilityRole="alert">
+            {error}
+          </ThemedText>
+        ) : null}
+      </ScrollView>
+
+      <View
+        style={[
+          styles.footer,
+          { backgroundColor: theme.background, borderTopColor: theme.border },
+        ]}
+      >
+        <PrimaryButton
+          label={submitLabel}
+          onPress={() => void submit()}
+          loading={saving || shared.saving}
+          disabled={shared.saving || !shared.catalog}
+          style={styles.saveButton}
+        />
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  form: { gap: Spacing.five },
-  photoRow: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.four },
-  photoItem: { alignItems: "center", gap: Spacing.two, flex: 1, minWidth: 145 },
+  root: { flex: 1 },
+  progressBlock: {
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.one,
+    paddingBottom: Spacing.two,
+  },
+  progressSegments: { flexDirection: "row", gap: Spacing.two, height: 7 },
+  progressSegment: { flex: 1, borderRadius: BorderRadius.full },
+  progressLabel: { textAlign: "center" },
+  formScroll: { flex: 1 },
+  formContent: {
+    padding: Spacing.three,
+    paddingBottom: Spacing.four,
+    gap: Spacing.three,
+  },
+  bioField: { gap: Spacing.two },
+  bioLabel: { fontWeight: "600" },
+  bioInputWrap: {
+    minHeight: 230,
+    borderWidth: 1,
+    borderRadius: BorderRadius.lg,
+  },
+  bioInput: {
+    minHeight: 228,
+    padding: Spacing.three,
+    paddingBottom: 44,
+    fontSize: 16,
+    lineHeight: 24,
+  },
+  bioCounter: {
+    position: "absolute",
+    right: Spacing.three,
+    bottom: Spacing.two,
+  },
+  footer: {
+    padding: Spacing.three,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  saveButton: { width: "100%", minHeight: 56 },
 });

@@ -10,26 +10,19 @@ public final class MatchmakingModels {
     private MatchmakingModels() {
     }
 
+    /**
+     * Profile write command. Photos are managed through the dedicated photo
+     * endpoints, never through this record. {@code blurPhotosUntilMatch} /
+     * {@code hideNameUntilMatch} are the user-controlled privacy switches.
+     */
     public record ProfileCommand(String genderKey, UUID addressId,
             UUID nationalityCountryId, UUID religionId, String educationLevel,
             String occupation, String relationshipIntention, String maritalStatus,
             Boolean hasChildren, String wantsChildren, String smoking, String drinking,
             String activityLevel, Integer heightCm, String marriageTimeline,
             Boolean longDistanceRelationship, String religionImportance,
-            Boolean willingToRelocate, UUID photoMediaId, UUID blurredPhotoMediaId,
-            String nameVisibility, String photoVisibility, String anonymousAlias,
-            String status) {
-
-        /** Copy with the blurred rendition reference replaced (server-derived). */
-        public ProfileCommand withBlurredPhotoMediaId(UUID id) {
-            return new ProfileCommand(genderKey, addressId, nationalityCountryId,
-                    religionId, educationLevel, occupation, relationshipIntention,
-                    maritalStatus, hasChildren, wantsChildren, smoking, drinking,
-                    activityLevel, heightCm, marriageTimeline,
-                    longDistanceRelationship, religionImportance, willingToRelocate,
-                    photoMediaId, id, nameVisibility, photoVisibility,
-                    anonymousAlias, status);
-        }
+            Boolean willingToRelocate, Boolean blurPhotosUntilMatch,
+            Boolean hideNameUntilMatch, String anonymousAlias, String status) {
     }
 
     public record ProfileView(UUID userId, String genderKey, UUID addressId,
@@ -38,26 +31,53 @@ public final class MatchmakingModels {
             Boolean hasChildren, String wantsChildren, String smoking, String drinking,
             String activityLevel, Integer heightCm, String marriageTimeline,
             Boolean longDistanceRelationship, String religionImportance,
-            Boolean willingToRelocate, UUID photoMediaId, UUID blurredPhotoMediaId,
-            String nameVisibility, String photoVisibility, String anonymousAlias,
+            Boolean willingToRelocate, Boolean blurPhotosUntilMatch,
+            Boolean hideNameUntilMatch, String anonymousAlias,
             String verificationStatus, String status, Instant activatedAt,
-            Instant lastActiveAt, Instant createdAt, Instant updatedAt) {
+            Instant lastActiveAt, Instant createdAt, Instant updatedAt,
+            List<ProfilePhotoView> photos, int maxProfilePhotos) {
+
+        /** Copy with the gallery collection + configured limit attached. */
+        public ProfileView withPhotos(List<ProfilePhotoView> photos, int maxProfilePhotos) {
+            return new ProfileView(userId, genderKey, addressId, nationalityCountryId,
+                    religionId, educationLevel, occupation, relationshipIntention,
+                    maritalStatus, hasChildren, wantsChildren, smoking, drinking,
+                    activityLevel, heightCm, marriageTimeline,
+                    longDistanceRelationship, religionImportance, willingToRelocate,
+                    blurPhotosUntilMatch, hideNameUntilMatch, anonymousAlias,
+                    verificationStatus, status, activatedAt, lastActiveAt, createdAt,
+                    updatedAt, photos, maxProfilePhotos);
+        }
     }
 
+    /** One owned gallery photo. {@code url} is a presigned original rendition. */
+    public record ProfilePhotoView(UUID id, UUID mediaId, int sortOrder,
+            boolean isPrimary, String url) {
+    }
+
+    /** Photo collection plus the configured upload limit. */
+    public record ProfilePhotoListView(List<ProfilePhotoView> photos, int maxPhotos) {
+    }
+
+    /** Gender is implicit (automatic opposite-gender discovery). */
     public record PreferenceCommand(Integer minAge, Integer maxAge,
             Integer maxDistanceKm, Boolean showVerifiedOnly,
             String hasChildrenPreference, String wantsChildrenPreference,
-            List<String> genderKeys, List<UUID> religionIds, List<UUID> languageIds) {
+            List<UUID> religionIds, List<UUID> languageIds) {
     }
 
     public record PreferenceView(UUID userId, int minAge, int maxAge,
             Integer maxDistanceKm, boolean showVerifiedOnly,
             String hasChildrenPreference, String wantsChildrenPreference,
-            List<String> genderKeys, List<UUID> religionIds, List<UUID> languageIds) {
+            List<UUID> religionIds, List<UUID> languageIds) {
     }
 
-    /** Internal projection row; the nullable photo ID is never exposed directly. */
-    public record PublicProfileRow(UUID userId, String displayName, UUID photoMediaId,
+    /**
+     * Internal projection row: raw display name, alias and privacy switches.
+     * Never serialised — the visibility service resolves the authorised view.
+     */
+    public record PublicProfileRow(UUID userId, String displayName, String anonymousAlias,
+            boolean hideNameUntilMatch, boolean blurPhotosUntilMatch,
             String genderKey, Integer age, UUID nationalityCountryId, UUID religionId,
             String educationLevel, String occupation, String relationshipIntention,
             String maritalStatus, Boolean hasChildren, String wantsChildren,
@@ -65,11 +85,21 @@ public final class MatchmakingModels {
             String marriageTimeline, Boolean longDistanceRelationship,
             String religionImportance, Boolean willingToRelocate,
             String verificationStatus, String bio, String publicLocation,
-            List<String> interests, List<String> languages, String nameVisibility,
-            String photoVisibility) {
+            List<String> interests, List<String> languages) {
+    }
+
+    /** Internal photo row (original media id only — resolved per viewer). */
+    public record ProfilePhotoRow(UUID id, UUID mediaId, int sortOrder,
+            boolean isPrimary, UUID userId) {
+    }
+
+    /** Authorised photo rendition for one viewer relationship. */
+    public record PublicPhotoView(String url, boolean isPrimary, int sortOrder,
+            String rendition) {
     }
 
     public record PublicProfileView(UUID userId, String displayName, String photoUrl,
+            List<PublicPhotoView> photos, boolean nameRevealed,
             String genderKey, Integer age, UUID nationalityCountryId, UUID religionId,
             String educationLevel, String occupation, String relationshipIntention,
             String maritalStatus, Boolean hasChildren, String wantsChildren,
@@ -77,8 +107,7 @@ public final class MatchmakingModels {
             String marriageTimeline, Boolean longDistanceRelationship,
             String religionImportance, Boolean willingToRelocate,
             String verificationStatus, String bio, String publicLocation,
-            List<String> interests, List<String> languages, String nameVisibility,
-            String photoVisibility) {
+            List<String> interests, List<String> languages) {
     }
 
     public record MatchRow(UUID id, UUID userAId, UUID userBId, String status,
@@ -132,10 +161,11 @@ public final class MatchmakingModels {
     public record ReferenceDataView(List<ReferenceOption> genders,
             List<ReferenceOption> religions, List<ReferenceOption> countries,
             List<ReferenceOption> languages, List<PrivateAddressOption> addresses,
-            java.util.Map<String, List<ReferenceOption>> profileOptions) {
+            java.util.Map<String, List<ReferenceOption>> profileOptions,
+            int maxProfilePhotos) {
         public ReferenceDataView(List<ReferenceOption> genders, List<ReferenceOption> religions,
                 List<ReferenceOption> countries, List<ReferenceOption> languages, List<PrivateAddressOption> addresses) {
-            this(genders, religions, countries, languages, addresses, java.util.Map.of());
+            this(genders, religions, countries, languages, addresses, java.util.Map.of(), 0);
         }
     }
 

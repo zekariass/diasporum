@@ -3,28 +3,26 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { router, usePreventRemove } from "expo-router";
 import { ThemedText } from "@/components/themed-text";
 import { FormInput } from "@/shared/components/form-input";
 import { PrimaryButton } from "@/shared/components/primary-button";
 import { useTheme } from "@/hooks/use-theme";
-import { BorderRadius, Spacing } from "@/shared/theme/spacing";
+import { Spacing } from "@/shared/theme/spacing";
 import { profileChoices } from "../types/matchmaking-options";
 import type {
-  FieldVisibility,
+  MatchmakingPhotoList,
   MatchmakingProfile,
   MatchmakingProfileRequest,
   MatchmakingReferenceData,
 } from "../types/matchmaking-types";
 import { matchmakingError } from "../services/matchmaking-errors";
-import { useMatchmakingPhotoUpload } from "../hooks/use-matchmaking-photos";
+import { MatchmakingPhotoManager } from "./photo-manager";
 import { loadWizardDraft, saveWizardDraft } from "../utils/wizard-progress";
 import { SelectField } from "./matchmaking-ui";
 import {
@@ -49,11 +47,8 @@ import {
 type IconName = keyof typeof Ionicons.glyphMap;
 
 const GENDER_ICONS: Record<string, IconName> = {
-  WOMAN: "woman",
-  MAN: "man",
-  NON_BINARY: "male-female",
-  OTHER: "person",
-  PREFER_NOT_TO_SAY: "eye-off",
+  FEMALE: "woman",
+  MALE: "man",
 };
 
 const INTENTION_ICONS: Record<string, IconName> = {
@@ -61,12 +56,6 @@ const INTENTION_ICONS: Record<string, IconName> = {
   SERIOUS_RELATIONSHIP: "heart",
   LONG_TERM_DATING: "infinite",
   NOT_SURE_YET: "sparkles",
-};
-
-const VISIBILITY_ICONS: Record<FieldVisibility, IconName> = {
-  VISIBLE: "eye",
-  BLURRED: "contrast",
-  HIDDEN: "eye-off",
 };
 
 const STEPS = [
@@ -228,12 +217,6 @@ export function SetupWizard({
   userId: string | null;
 }) {
   const theme = useTheme();
-  const visibilityOptions = profileChoices(references, "visibility").map(
-    (option) => ({
-      ...option,
-      icon: VISIBILITY_ICONS[option.value as FieldVisibility] ?? "eye",
-    }),
-  );
   const [step, setStep] = useState(0);
   const [hydrated, setHydrated] = useState(false);
   const [form, setForm] = useState<MatchmakingProfileRequest>(() => ({
@@ -252,8 +235,12 @@ export function SetupWizard({
   const [submitting, setSubmitting] = useState(false);
   const shared = useSharedProfileForm();
   const { restore: restoreShared } = shared;
-  const { uploading, photoUri, upload, hydratePreview, clearPreview } =
-    useMatchmakingPhotoUpload();
+  const [gallery, setGallery] = useState<MatchmakingPhotoList>({
+    photos: profile?.photos ?? [],
+    maxPhotos: profile?.maxProfilePhotos ?? references.maxProfilePhotos ?? 6,
+  });
+  const [galleryReady, setGalleryReady] = useState(() => profile != null);
+  const gallerySyncing = useRef(false);
 
   const set = (
     field: keyof MatchmakingProfileRequest,
@@ -270,25 +257,6 @@ export function SetupWizard({
   const updateHeight = (value: string) => {
     setDirty(true);
     setHeight(value);
-  };
-
-  const pick = async () => {
-    setError(null);
-    try {
-      const uploaded = await upload();
-      if (uploaded) {
-        set("photoMediaId", uploaded.assetId);
-      }
-    } catch (uploadError) {
-      setError(
-        matchmakingError(uploadError, "The photo could not be uploaded."),
-      );
-    }
-  };
-
-  const removePhoto = () => {
-    set("photoMediaId", null);
-    clearPreview();
   };
 
   const parsedHeight = height.trim() ? Number(height) : null;
@@ -380,12 +348,20 @@ export function SetupWizard({
     shared.catalog,
   ]);
 
-  // Resumed draft — show the already-uploaded original via the owner URL.
+  // Photos step — photo endpoints need a server-side profile row, so persist
+  // the draft once before the gallery manager starts attaching media.
   useEffect(() => {
-    if (form.photoMediaId && !photoUri) {
-      void hydratePreview(form.photoMediaId).catch(() => {});
-    }
-  }, [form.photoMediaId, photoUri, hydratePreview]);
+    if (STEPS[step].key !== "photos" || galleryReady || !canSaveDraft) return;
+    if (gallerySyncing.current) return;
+    gallerySyncing.current = true;
+    void Promise.resolve(onSaveDraft(buildRequest()))
+      .then(() => setGalleryReady(true))
+      .catch(() => {})
+      .finally(() => {
+        gallerySyncing.current = false;
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, galleryReady, canSaveDraft]);
 
   /** Inline validation message for the current step, or null when it passes. */
   const stepProblem = (): string | null => {
@@ -402,20 +378,14 @@ export function SetupWizard({
     if (key === "location" && !shared.form.currentCountryId) {
       return "Choose your current country to continue.";
     }
-    if (
-      key === "privacy" &&
-      form.photoVisibility !== "HIDDEN" &&
-      !form.photoMediaId
-    ) {
-      return "Add a photo or choose Hidden photo visibility to continue.";
-    }
+    // Photos stay optional here — activation enforces a READY primary photo
+    // server-side, and the preview step explains if none was added yet.
     return null;
   };
 
   /** Continue stays disabled while required answers are missing or invalid. */
   const blocked =
     Boolean(stepProblem()) ||
-    uploading ||
     saving ||
     optInSaving ||
     shared.saving ||
@@ -733,122 +703,22 @@ export function SetupWizard({
     ),
     photos: (
       <>
-        {form.photoMediaId ? (
-          <View
-            style={[
-              styles.photoCard,
-              {
-                borderColor: theme.border,
-                backgroundColor: theme.backgroundElement,
-              },
-            ]}
-          >
-            {photoUri ? (
-              <Image
-                source={{ uri: photoUri }}
-                style={styles.photoPreview}
-                contentFit="cover"
-                accessibilityLabel="Your profile photo"
-              />
-            ) : (
-              <View
-                style={[
-                  styles.photoPreview,
-                  {
-                    backgroundColor: theme.background,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  },
-                ]}
-              >
-                <Ionicons name="image" size={32} color={theme.textSecondary} />
-              </View>
-            )}
-            <View style={styles.photoActions}>
-              <PrimaryButton
-                label="Replace"
-                variant="secondary"
-                loading={uploading}
-                onPress={() => void pick()}
-                style={styles.photoButton}
-              />
-              <PrimaryButton
-                label="Remove"
-                variant="ghost"
-                disabled={uploading}
-                onPress={removePhoto}
-                style={styles.photoButton}
-              />
-            </View>
-          </View>
+        {galleryReady ? (
+          <MatchmakingPhotoManager
+            photos={gallery.photos}
+            maxPhotos={gallery.maxPhotos}
+            onChange={setGallery}
+          />
         ) : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Add photo"
-            disabled={uploading}
-            onPress={() => void pick()}
-            style={[
-              styles.photoCard,
-              styles.photoAdd,
-              {
-                borderColor: theme.border,
-                backgroundColor: theme.backgroundElement,
-              },
-            ]}
-          >
-            <Ionicons
-              name={uploading ? "hourglass" : "camera"}
-              size={32}
-              color={theme.primary}
-            />
-            <ThemedText style={styles.photoAddLabel}>
-              {uploading ? "Uploading…" : "Add photo"}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              JPEG, PNG or WebP
-            </ThemedText>
-          </Pressable>
-        )}
-        {form.photoMediaId && photoUri ? (
-          <View style={styles.previewRow}>
-            <View style={styles.previewItem}>
-              <Image
-                source={{ uri: photoUri }}
-                style={styles.previewThumb}
-                contentFit="cover"
-                accessibilityLabel="How the photo looks when visible"
-              />
-              <ThemedText
-                type="small"
-                themeColor="textSecondary"
-                style={styles.previewCaption}
-              >
-                Visible — original
-              </ThemedText>
-            </View>
-            <View style={styles.previewItem}>
-              <Image
-                source={{ uri: photoUri }}
-                style={styles.previewThumb}
-                contentFit="cover"
-                blurRadius={18}
-                accessibilityLabel="How the photo looks when blurred"
-              />
-              <ThemedText
-                type="small"
-                themeColor="textSecondary"
-                style={styles.previewCaption}
-              >
-                Blurred — protected
-              </ThemedText>
-            </View>
+          <View style={styles.loading}>
+            <ActivityIndicator color={theme.primary} />
           </View>
-        ) : null}
+        )}
         <PrivacyNote>
-          Upload your original photo once. If you choose Blurred visibility,
-          Diasporum automatically creates the blurred version candidates see —
-          your original is never shared with other members. Hidden shows no
-          photo at all.
+          Your first photo becomes the primary photo used in discovery cards
+          and shown to members you like. Blurred versions for other members
+          are generated on Diasporum&apos;s servers — your originals are never
+          shared without a match.
         </PrivacyNote>
       </>
     ),
@@ -875,20 +745,24 @@ export function SetupWizard({
     ),
     privacy: (
       <>
-        <OptionChips
-          label="Who can see your name?"
-          options={visibilityOptions}
-          value={form.nameVisibility}
-          required
-          onChange={(value) => set("nameVisibility", value as FieldVisibility)}
+        <ToggleCard
+          icon="contrast"
+          label="Blur my photos until matching"
+          hint="Candidates see a blurred version of your photos until you both like each other."
+          value={form.blurPhotosUntilMatch}
+          onChange={(value) => set("blurPhotosUntilMatch", value)}
         />
-        <OptionChips
-          label="Who can see your photo?"
-          options={visibilityOptions}
-          value={form.photoVisibility}
-          required
-          onChange={(value) => set("photoVisibility", value as FieldVisibility)}
+        <ToggleCard
+          icon="eye-off"
+          label="Hide my name until matching"
+          hint="Candidates see your nickname instead of your name until you match."
+          value={form.hideNameUntilMatch}
+          onChange={(value) => set("hideNameUntilMatch", value)}
         />
+        <PrivacyNote>
+          When you like someone, they can see your primary photo. Your other
+          photos and hidden name stay private until you match.
+        </PrivacyNote>
       </>
     ),
     participation: (
@@ -991,32 +865,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   fieldGroup: { gap: Spacing.two },
-  photoCard: {
-    alignItems: "center",
-    gap: Spacing.three,
-    borderWidth: 1,
-    borderRadius: BorderRadius.lg,
-    borderStyle: "dashed",
-    padding: Spacing.four,
-  },
-  photoAdd: { minHeight: 180, justifyContent: "center" },
-  photoAddLabel: { fontSize: 16, fontWeight: "700" },
-  photoPreview: {
-    width: "100%",
-    aspectRatio: 1,
-    borderRadius: BorderRadius.md,
-  },
-  photoActions: { flexDirection: "row", gap: Spacing.two },
-  photoButton: { flex: 1 },
-  previewRow: { flexDirection: "row", gap: Spacing.three },
-  previewItem: { flex: 1, alignItems: "center", gap: Spacing.two },
-  previewThumb: {
-    width: "100%",
-    aspectRatio: 1,
-    borderRadius: BorderRadius.md,
-    overflow: "hidden",
-  },
-  previewCaption: { textAlign: "center" },
   error: { fontSize: 13 },
   footer: {
     flexDirection: "row",

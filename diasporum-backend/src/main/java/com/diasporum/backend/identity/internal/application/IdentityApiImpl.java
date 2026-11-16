@@ -43,7 +43,8 @@ public class IdentityApiImpl implements IdentityApi {
                         + " p.profile_completed_at IS NOT NULL AS done,"
                         + " p.origin_country_id, p.current_country_id,"
                         + " (SELECT media_id FROM profile_media WHERE user_id=p.id"
-                        + " AND variant='AVATAR') AS avatar_media_id"
+                        + " AND variant='AVATAR') AS avatar_media_id,"
+                        + " p.bio"
                         + " FROM profiles p JOIN users u ON u.id=p.id"
                         + " WHERE p.id IN (" + placeholders + ")",
                 (rs, i) -> new ProfileSummary(rs.getObject("id", UUID.class),
@@ -51,7 +52,8 @@ public class IdentityApiImpl implements IdentityApi {
                         rs.getString("account_status"), rs.getBoolean("done"),
                         rs.getObject("origin_country_id", UUID.class),
                         rs.getObject("current_country_id", UUID.class),
-                        rs.getObject("avatar_media_id", UUID.class)),
+                        rs.getObject("avatar_media_id", UUID.class),
+                        rs.getString("bio")),
                 ids.toArray());
     }
 
@@ -92,7 +94,8 @@ public class IdentityApiImpl implements IdentityApi {
                         + " p.profile_completed_at IS NOT NULL AS done,"
                         + " p.origin_country_id, p.current_country_id,"
                         + " (SELECT media_id FROM profile_media WHERE user_id=p.id"
-                        + " AND variant='AVATAR') AS avatar_media_id"
+                        + " AND variant='AVATAR') AS avatar_media_id,"
+                        + " p.bio"
                         + " FROM profiles p JOIN users u ON u.id=p.id"
                         + " WHERE p.username IS NOT NULL AND lower(p.username)=lower(?)",
                 (rs, i) -> new ProfileSummary(rs.getObject("id", UUID.class),
@@ -100,7 +103,8 @@ public class IdentityApiImpl implements IdentityApi {
                         rs.getString("account_status"), rs.getBoolean("done"),
                         rs.getObject("origin_country_id", UUID.class),
                         rs.getObject("current_country_id", UUID.class),
-                        rs.getObject("avatar_media_id", UUID.class)),
+                        rs.getObject("avatar_media_id", UUID.class),
+                        rs.getString("bio")),
                 username.trim())
                 .stream().findFirst();
     }
@@ -111,7 +115,8 @@ public class IdentityApiImpl implements IdentityApi {
             var p = profiles.getProfile(profileId);
             return Optional.of(new ProfileSummary(p.id(), p.username(),
                     p.displayName(), p.accountStatus(), p.profileCompleted(),
-                    p.originCountryId(), p.currentCountryId(), p.avatarMediaId()));
+                    p.originCountryId(), p.currentCountryId(), p.avatarMediaId(),
+                    p.bio()));
         } catch (org.springframework.web.server.ResponseStatusException e) {
             if (e.getStatusCode().value() == 404) {
                 return Optional.empty();
