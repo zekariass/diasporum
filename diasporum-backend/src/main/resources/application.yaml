@@ -146,3 +146,13 @@ diasporum:
     # can raise or lower this without a code change or migration; profiles
     # above a lowered limit keep their photos but cannot add more.
     max-profile-photos: ${DIASPORUM_MATCHMAKING_MAX_PROFILE_PHOTOS:6}
+  billing:
+    # Prepaid subscription lifecycle workers. Both are idempotent (rows are
+    # claimed by conditional UPDATEs), so the intervals only affect latency.
+    # Country policy, provider capabilities and prices are configured in the
+    # database, not here — see country_billing_settings.
+    expiry-interval: ${DIASPORUM_BILLING_EXPIRY_INTERVAL:PT15M}
+    renewal-reminder-interval: ${DIASPORUM_BILLING_RENEWAL_REMINDER_INTERVAL:PT6H}
+    # How long before a term ends the one renewal reminder is sent. A new
+    # purchased term re-arms the reminder.
+    renewal-reminder-lead: ${DIASPORUM_BILLING_RENEWAL_REMINDER_LEAD:P7D}

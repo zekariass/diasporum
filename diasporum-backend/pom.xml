@@ -167,6 +167,16 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<!-- Integration-test JVMs close many Spring contexts at exit; each
+					     Hikari pool waits on adder threads racing dead Testcontainer
+					     databases, which can exceed the 30s default. -->
+					<forkedProcessExitTimeoutInSeconds>180</forkedProcessExitTimeoutInSeconds>
+				</configuration>
+			</plugin>
 		</plugins>
 	</build>
 
