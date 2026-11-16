@@ -622,6 +622,48 @@ class TicketingIntegrationTest {
     }
 
     @Test
+    void payoutCompleteRechecksBalanceAndVerification() throws Exception {
+        UUID type = ticketType("20.00", 10);
+        OrderView order = payViaWebhook(buy(buyer, type, 2, null)); // ledger +40.00
+        var account = payoutAccounts.create(organizer, new AccountCommand(null, "BANK_ACCOUNT",
+                dest, "EUR", "Gala Org", null, "DE89370400440532013000", null,
+                Map.of("swift_code", "COBADEFFXXX"), null, null, null, true));
+        moveEventEnd(4);
+        jdbc.update("UPDATE ticket_fee_configurations SET min_payout_amount=10");
+        payoutAccounts.adminVerify(admin, account.id(), true, "IBAN checked");
+
+        var payout = payouts.request(organizer, eventId, account.id(), "p-stale");
+        assertMoney("40.00", payout.netPayoutAmount());
+        payouts.approve(admin, payout.id());
+
+        // refund lands between approval and completion: balance 40 → 20 < payout 40
+        refunds.createByAdmin(admin, order.id(), List.of(order.tickets().get(0).id()), "late refund");
+        assertMoney("20.00", balance());
+        assertEquals("PAYOUT_INSUFFICIENT_BALANCE",
+                code(() -> payouts.complete(admin, payout.id(), "TRX-1")));
+
+        // release the stale payout; the remaining 20 can be re-requested
+        payouts.reject(admin, payout.id(), "superseded", true);
+        var fresh = payouts.request(organizer, eventId, account.id(), "p-fresh");
+        assertMoney("20.00", fresh.netPayoutAmount());
+        payouts.approve(admin, fresh.id());
+
+        // organiser edits the account after approval → verification resets → completion blocked
+        payoutAccounts.update(organizer, account.id(), new AccountCommand(null, "BANK_ACCOUNT",
+                dest, "EUR", "Gala Org", null, "FR1420041010050500013M02606", null,
+                Map.of("swift_code", "COBADEFFXXX"), null, null, null, true));
+        assertEquals("PAYOUT_ACCOUNT_NOT_VERIFIED",
+                code(() -> payouts.complete(admin, fresh.id(), "TRX-2")));
+
+        // re-verify and the same payout completes
+        payoutAccounts.adminVerify(admin, account.id(), true, "re-checked");
+        var done = payouts.complete(admin, fresh.id(), "TRX-2");
+        assertEquals("COMPLETED", done.status());
+        assertMoney("20.00", ledgerSum("PAYOUT", "debit_amount"));
+        assertMoney("0", balance());
+    }
+
+    @Test
     void payoutAccountsAreValidatedEncryptedAndMasked() {
         assertEquals("PAYOUT_ACCOUNT_FIELDS_INVALID", code(() -> payoutAccounts.create(organizer,
                 new AccountCommand(null, "BANK_ACCOUNT", dest, "EUR", "Org", null, null, "12345678",

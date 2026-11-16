@@ -238,17 +238,35 @@ public class OrganiserPayoutService {
      * Records the manual transfer. Approval and the transfer reference are the
      * table's CHECKs (COMPLETED requires approved_at; MANUAL requires
      * transfer_reference) — enforced by the database, surfaced as 409.
+     *
+     * <p>The payout's snapshot is rechecked before the debit: the account must
+     * still be VERIFIED (edits reset it to PENDING) and the balance must still
+     * cover the payout (refunds can debit the ledger between request and
+     * completion — the snapshot must never overdraw the organiser).
      */
     @Transactional
     public PayoutView complete(UUID actor, UUID payoutId, String transferReference) {
         access.requirePlatformAdmin(actor);
         PayoutView p = lock(payoutId);
+        TicketedEvent e = access.requireEvent(p.eventId());
+        if ("PROCESSING".equals(p.status())) {
+            if (!"VERIFIED".equals(accounts.facts(p.payoutAccountId()).verificationStatus())) {
+                throw conflict("PAYOUT_ACCOUNT_NOT_VERIFIED");
+            }
+            BigDecimal heldByOthers = jdbc.queryForObject("SELECT coalesce(sum(net_payout_amount),0)"
+                    + " FROM ticket_organiser_payouts WHERE event_id=?"
+                    + " AND status IN ('PENDING','ON_HOLD','PROCESSING') AND id<>?",
+                    BigDecimal.class, p.eventId(), payoutId).setScale(2);
+            if (ledger.balance(p.eventId()).subtract(heldByOthers)
+                    .compareTo(p.netPayoutAmount()) < 0) {
+                throw conflict("PAYOUT_INSUFFICIENT_BALANCE");
+            }
+        }
         String ref = transferReference == null || transferReference.isBlank() ? null
                 : transferReference.trim();
         PayoutView done = move(payoutId, "UPDATE ticket_organiser_payouts SET status='COMPLETED',"
                 + "transfer_reference=?,transferred_by_user_id=?,completed_at=now() WHERE id=?"
                 + " AND status IN ('PENDING','ON_HOLD','PROCESSING')", ref, actor, payoutId);
-        TicketedEvent e = access.requireEvent(p.eventId());
         ledger.debit(e, "PAYOUT", Source.payout(payoutId), p.netPayoutAmount(),
                 "Manual payout " + ref, "payout:" + payoutId);
         notifications.payoutCompleted(p.requestedByUserId(), p.eventId(), e.title(), payoutId,
