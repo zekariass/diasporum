@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { ThemedView } from "@/components/themed-view";
 import { ThemedText } from "@/components/themed-text";
@@ -18,6 +18,7 @@ type CollectionTab = "ALL" | ListingType;
 export default function ListingCollectionScreen({ mode }: { mode: "mine" | "saved" }) {
   const theme = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { apiClient } = useSession();
   const api = useMemo(() => createSpareBagApi(apiClient), [apiClient]);
   const [items, setItems] = useState<Listing[]>([]);
@@ -125,7 +126,7 @@ export default function ListingCollectionScreen({ mode }: { mode: "mine" | "save
             </ListingCard>
           )}
           ListHeaderComponent={header}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}
           ListEmptyComponent={<CollectionState
             loading={loading}
             error={error}

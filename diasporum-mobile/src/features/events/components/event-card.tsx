@@ -1,7 +1,8 @@
 /**
- * EventCard — Eventbrite-style card: cover on top, bold title with inline
- * share + save icons, date · location meta line, "Free" price line,
- * participant counts and status badges. Tapping opens the detail screen.
+ * EventCard — compact horizontal card: cover thumbnail on the left, bold
+ * title with inline share + save icons, date · location meta line, "Free"
+ * price line, participant counts and status badges on the right. Tapping
+ * opens the detail screen.
  */
 
 import React from "react";
@@ -69,7 +70,7 @@ export function EventCard({ item, onPress, onToggleSave }: Props) {
         },
       ]}
     >
-      {/* Cover — inset inside the card like the Eventbrite list */}
+      {/* Cover thumbnail — left column, fills the card height */}
       <View style={styles.coverWrap}>
         <EventCover
           eventId={e.id}
@@ -78,20 +79,24 @@ export function EventCard({ item, onPress, onToggleSave }: Props) {
         />
         {fewSpotsLeft && (
           <View style={styles.urgencyBadge}>
-            <Ionicons name="flame" size={11} color="#3F6212" />
+            <Ionicons name="flame" size={10} color="#3F6212" />
             <ThemedText style={styles.urgencyText}>Few spots left</ThemedText>
           </View>
         )}
         {e.visibilityScope === "COUNTRY" && !fewSpotsLeft && (
           <View style={styles.scopeBadge}>
-            <Ionicons name="globe-outline" size={11} color={BrandColors.white} />
+            <Ionicons name="globe-outline" size={10} color={BrandColors.white} />
             <ThemedText style={styles.scopeBadgeText}>Country-wide</ThemedText>
           </View>
         )}
       </View>
 
-      {/* Body */}
+      {/* Body — right column */}
       <View style={styles.body}>
+        <ThemedText style={styles.date} numberOfLines={1}>
+          {formatEventDate(e.startsAt, e.timezone)}
+        </ThemedText>
+
         <View style={styles.titleRow}>
           <ThemedText style={styles.title} numberOfLines={2}>
             {e.title}
@@ -132,31 +137,33 @@ export function EventCard({ item, onPress, onToggleSave }: Props) {
           themeColor="textSecondary"
           numberOfLines={1}
         >
-          {formatEventDate(e.startsAt, e.timezone)}
-          {" · "}
           {isOnline ? "Online" : (e.locationName ?? "Location TBA")}
         </ThemedText>
 
-        <ThemedText style={styles.price}>Free</ThemedText>
-
-        <ThemedText
-          style={styles.counts}
-          themeColor="textSecondary"
-          numberOfLines={1}
-        >
-          {countsSummary(
-            item.counts.going,
-            item.counts.interested,
-            item.counts.waitlisted,
-          )}
-          {e.capacity !== null ? ` · ${e.capacity} spots` : ""}
-        </ThemedText>
+        <View style={styles.footRow}>
+          <ThemedText style={styles.footPrice}>Free</ThemedText>
+          <ThemedText style={styles.foot} themeColor="textSecondary">
+            ·
+          </ThemedText>
+          <ThemedText
+            style={[styles.foot, styles.footCounts]}
+            themeColor="textSecondary"
+            numberOfLines={1}
+          >
+            {countsSummary(
+              item.counts.going,
+              item.counts.interested,
+              item.counts.waitlisted,
+            )}
+            {e.capacity !== null ? ` · ${e.capacity} spots` : ""}
+          </ThemedText>
+        </View>
 
         {(item.category || cancelled || isDraft || item.myRsvp) && (
           <View style={styles.tagRow}>
             {item.category && (
-              <View style={[styles.tag, { backgroundColor: theme.backgroundSelected }]}>
-                <ThemedText style={styles.tagText} themeColor="textSecondary">
+              <View style={[styles.tag, { backgroundColor: theme.primarySurface }]}>
+                <ThemedText style={[styles.tagText, { color: theme.primary }]}>
                   {item.category.displayName}
                 </ThemedText>
               </View>
@@ -191,63 +198,79 @@ export function EventCard({ item, onPress, onToggleSave }: Props) {
 
 const styles = StyleSheet.create({
   card: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 12,
     borderRadius: BorderRadius.lg,
     borderWidth: StyleSheet.hairlineWidth,
     marginHorizontal: Spacing.one,
     marginVertical: Spacing.two,
     padding: Spacing.two,
     shadowColor: BrandColors.black,
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
-  coverWrap: { position: "relative" },
-  cover: { aspectRatio: 16 / 9, borderRadius: BorderRadius.md },
+  coverWrap: { position: "relative", width: 116, minHeight: 104 },
+  cover: {
+    width: "100%",
+    height: "100%",
+    aspectRatio: undefined,
+    borderRadius: BorderRadius.md,
+  },
   urgencyBadge: {
     position: "absolute",
-    top: Spacing.two,
-    left: Spacing.two,
+    top: Spacing.one,
+    left: Spacing.one,
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 3,
     borderRadius: BorderRadius.sm,
     backgroundColor: "#D9F99D",
-    paddingHorizontal: Spacing.two,
-    paddingVertical: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
   },
   urgencyText: {
     color: "#3F6212",
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: "800",
-    letterSpacing: 0.4,
+    letterSpacing: 0.3,
     textTransform: "uppercase",
   },
   scopeBadge: {
     position: "absolute",
-    top: Spacing.two,
-    left: Spacing.two,
+    top: Spacing.one,
+    left: Spacing.one,
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 3,
     borderRadius: BorderRadius.sm,
     backgroundColor: "rgba(17,24,39,0.72)",
-    paddingHorizontal: Spacing.two,
-    paddingVertical: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
   },
-  scopeBadgeText: { color: BrandColors.white, fontSize: 10, fontWeight: "700" },
-  body: { padding: Spacing.two, paddingBottom: Spacing.one, gap: 3 },
+  scopeBadgeText: { color: BrandColors.white, fontSize: 9, fontWeight: "700" },
+  body: { flex: 1, gap: 3 },
+  date: {
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 15,
+    color: BrandColors.primary,
+  },
   titleRow: { flexDirection: "row", alignItems: "flex-start", gap: Spacing.two },
-  title: { flex: 1, fontSize: 17, fontWeight: "800", lineHeight: 22 },
+  title: { flex: 1, fontSize: 16, fontWeight: "800", lineHeight: 21 },
   titleActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: Spacing.three,
+    gap: 12,
     paddingTop: 2,
   },
   meta: { fontSize: 13, lineHeight: 18 },
-  price: { fontSize: 14, fontWeight: "800" },
-  counts: { fontSize: 12, lineHeight: 16 },
+  footRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  foot: { fontSize: 12, lineHeight: 16 },
+  footPrice: { fontSize: 12, fontWeight: "800", lineHeight: 16 },
+  footCounts: { flexShrink: 1 },
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
   tag: {
     flexDirection: "row",

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ThemedText } from "@/components/themed-text";
@@ -20,6 +20,7 @@ export default function ListingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { apiClient } = useSession();
   const api = useMemo(() => createSpareBagApi(apiClient), [apiClient]);
   const [listing, setListing] = useState<Listing | null>(null);
@@ -82,7 +83,7 @@ export default function ListingDetailScreen() {
       <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
         <ScreenHeader back title="Listing details" right={saveAction} />
         {loading ? <LoadingScreen /> : !listing ? <ErrorState message={error ?? "Listing not found."} onRetry={() => { setLoading(true); void load(); }} /> : (
-          <ScrollView contentContainerStyle={styles.content}>
+          <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.five }]}>
             <View style={styles.summary}>
               <View style={styles.badges}><ListingTypeBadge listing={listing} /><StatusBadge status={listing.status} /></View>
               <ThemedText style={styles.title}>{listing.title}</ThemedText>

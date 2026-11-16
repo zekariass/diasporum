@@ -25,11 +25,12 @@ import { PropertyMediaManager } from "../components/property-media-manager";
 import { ActionButton, PropertyScreen } from "../components/property-controls";
 import {
   PROPERTY_STEP_TITLES,
+  firstInvalidPropertyStep,
   initialPropertyForm,
   propertyCommandFromForm,
   propertyFormFromDetail,
-  validatePropertyForm,
-  validatePropertyStep,
+  propertyStepErrors,
+  type PropertyFieldErrors,
   type PropertyFormState,
 } from "../utils/property-form-state";
 
@@ -59,6 +60,7 @@ export default function PropertyFormScreen() {
   const [submitMode, setSubmitMode] = useState<"draft" | "review" | null>(null);
   const submitting = submitMode !== null;
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<PropertyFieldErrors>({});
   const lastStep = PROPERTY_STEP_TITLES.length - 1;
 
   const load = useCallback(() => {
@@ -86,27 +88,52 @@ export default function PropertyFormScreen() {
 
   const onChange = useCallback((patch: Partial<PropertyFormState>) => {
     setForm((previous) => ({ ...previous, ...patch }));
+    setFieldErrors((previous) => {
+      const next = { ...previous };
+      let touched = false;
+      for (const key of Object.keys(patch)) {
+        if (key in next) {
+          delete next[key];
+          touched = true;
+        }
+      }
+      return touched ? next : previous;
+    });
+    setError(null);
   }, []);
 
   const advance = useCallback(() => {
-    const message = validatePropertyStep(form, step);
-    setError(message);
-    if (!message) setStep((current) => Math.min(current + 1, lastStep));
+    const errors = propertyStepErrors(form, step);
+    setFieldErrors(errors);
+    if (Object.keys(errors).length) {
+      setError("Please fix the highlighted fields below.");
+      return;
+    }
+    setError(null);
+    setStep((current) => Math.min(current + 1, lastStep));
   }, [form, step, lastStep]);
 
   const back = useCallback(() => {
     setError(null);
+    setFieldErrors({});
     setStep((current) => Math.max(0, current - 1));
   }, []);
 
   const submit = useCallback(
     async (review: boolean) => {
       if (submitting) return;
-      const validation = validatePropertyForm(form);
-      if (validation) {
-        setError(validation);
+      if (!form.countryId) {
+        setError("Your current country is required.");
         return;
       }
+      const invalidStep = firstInvalidPropertyStep(form);
+      if (invalidStep >= 0) {
+        setStep(invalidStep);
+        setFieldErrors(propertyStepErrors(form, invalidStep));
+        setError("Please fix the highlighted fields below.");
+        return;
+      }
+      setFieldErrors({});
       setSubmitMode(review ? "review" : "draft");
       setError(null);
       try {
@@ -226,6 +253,7 @@ export default function PropertyFormScreen() {
             existingMediaCount={detail?.media.length ?? 0}
             step={step}
             mediaSlot={mediaSlot}
+            errors={fieldErrors}
           />
         </View>
         <View
@@ -234,7 +262,10 @@ export default function PropertyFormScreen() {
             {
               backgroundColor: theme.background,
               borderTopColor: theme.border,
-              paddingBottom: Math.max(insets.bottom, Spacing.two),
+              paddingBottom: Math.max(
+                Math.round(insets.bottom * 0.4),
+                Spacing.one,
+              ),
             },
           ]}
         >
@@ -337,9 +368,9 @@ const styles = StyleSheet.create({
   form: { flex: 1 },
   footer: {
     paddingHorizontal: Spacing.three,
-    paddingTop: Spacing.three,
+    paddingTop: Spacing.two,
     borderTopWidth: StyleSheet.hairlineWidth,
-    gap: Spacing.three,
+    gap: Spacing.two,
   },
   actions: { flexDirection: "row", alignItems: "center", gap: Spacing.three },
   finalActions: { gap: Spacing.three },

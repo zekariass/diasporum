@@ -26,6 +26,7 @@ import type {
   PropertyType,
 } from "../types/property-types";
 import { PropertyCard } from "../components/property-card";
+import { PropertyMenuDrawer } from "../components/property-menu-drawer";
 import {
   PropertiesEmpty,
   PropertiesSkeleton,
@@ -47,28 +48,6 @@ const SORTS: { value: PropertySort; label: string }[] = [
   { value: "NEWEST", label: "Newest first" },
   { value: "PRICE_ASC", label: "Price: low to high" },
   { value: "PRICE_DESC", label: "Price: high to low" },
-];
-
-const MENU: {
-  label: string;
-  icon: React.ComponentProps<typeof Ionicons>["name"];
-  route: string;
-}[] = [
-  {
-    label: "My properties",
-    icon: "person-outline",
-    route: "/(app)/properties/my",
-  },
-  {
-    label: "Create property",
-    icon: "add-circle-outline",
-    route: "/(app)/properties/create",
-  },
-  {
-    label: "Saved properties",
-    icon: "bookmark-outline",
-    route: "/(app)/properties/saved",
-  },
 ];
 
 export default function PropertiesScreen() {
@@ -476,27 +455,9 @@ function PropertyBrowser() {
           />
         ))}
       </Sheet>
-      <Sheet
-        visible={menuOpen}
-        title="Menu"
-        onClose={() => setMenuOpen(false)}
-      >
-        {MENU.map((entry) => (
-          <Pressable
-            key={entry.route}
-            accessibilityRole="button"
-            accessibilityLabel={entry.label}
-            onPress={() => {
-              setMenuOpen(false);
-              router.push(entry.route as never);
-            }}
-            style={styles.menuItem}
-          >
-            <Ionicons name={entry.icon} size={21} color={theme.text} />
-            <ThemedText style={styles.menuText}>{entry.label}</ThemedText>
-          </Pressable>
-        ))}
-      </Sheet>
+      {menuOpen ? (
+        <PropertyMenuDrawer onClose={() => setMenuOpen(false)} />
+      ) : null}
     </View>
   );
 }
@@ -511,7 +472,7 @@ function PurposeChips({
   const accent = theme.info;
   return (
     <View style={[styles.purpose, { borderColor: theme.border }]}>
-      {(["SALE", "RENT"] as const).map((purpose, index) => (
+      {(["RENT", "SALE"] as const).map((purpose, index) => (
         <Pressable
           key={purpose}
           accessibilityRole="button"
@@ -751,11 +712,4 @@ const styles = StyleSheet.create({
   sortValue: { fontSize: 12, fontWeight: "700" },
   count: { fontSize: 11 },
   sortHint: { fontSize: 11, lineHeight: 17, marginHorizontal: Spacing.three },
-  menuItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.three,
-    minHeight: 48,
-  },
-  menuText: { fontSize: 15, fontWeight: "600" },
 });

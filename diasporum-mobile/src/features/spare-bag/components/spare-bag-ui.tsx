@@ -106,12 +106,14 @@ export function ScreenHeader({
   subtitle,
   back = false,
   centered = false,
+  left,
   right,
 }: {
   title: string;
   subtitle?: string;
   back?: boolean;
   centered?: boolean;
+  left?: React.ReactNode;
   right?: React.ReactNode;
 }) {
   const theme = useTheme();
@@ -128,6 +130,7 @@ export function ScreenHeader({
           <Ionicons name="chevron-back" size={24} color={theme.text} />
         </Pressable>
       ) : null}
+      {left}
       <View style={[styles.headerCopy, centered && styles.headerCopyCentered]}>
         <ThemedText style={[styles.headerTitle, centered && styles.headerTitleCentered]} numberOfLines={centered ? 1 : undefined}>{title}</ThemedText>
         {subtitle ? <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={centered && styles.headerTitleCentered}>{subtitle}</ThemedText> : null}
@@ -247,24 +250,13 @@ export function ListingCard({
         onPress={() => router.push(`/(app)/spare-bag/${listing.id}` as never)}
         style={styles.cardBody}
       >
-        <ThemedText style={styles.cardTitle}>{listing.title}</ThemedText>
-        <RouteView listing={listing} />
-        <View style={styles.quantityRow}>
-          <Ionicons name={listing.listingType === "SENDER_REQUEST" ? "cube-outline" : "briefcase-outline"} size={17} color={theme.primary} />
-          <ThemedText type="small">{quantitySummary(listing)}</ThemedText>
+        <ThemedText style={styles.cardTitle} numberOfLines={2}>{listing.title}</ThemedText>
+        <View style={styles.metaRow}>
+          <Ionicons name="airplane-outline" size={14} color={theme.primary} />
+          <ThemedText style={styles.metaRoute}>{listing.originAirport.iataCode} → {listing.destinationAirport.iataCode}</ThemedText>
+          <Ionicons name="calendar-outline" size={13} color={theme.textSecondary} />
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.metaDates}>{formatShortDateRange(listing)}</ThemedText>
         </View>
-        {listing.listingType === "PASSENGER_OFFER" && listing.maxSingleParcelKg != null ? (
-          <ThemedText type="small" themeColor="textSecondary">Up to {listing.maxSingleParcelKg} kg per parcel</ThemedText>
-        ) : null}
-        {listing.categories.length ? (
-          <View style={styles.categoryRow}>
-            {listing.categories.slice(0, 3).map((category) => (
-              <View key={category.key} style={[styles.category, { backgroundColor: theme.backgroundElement }]}>
-                <ThemedText type="small" themeColor="textSecondary">{category.displayName}</ThemedText>
-              </View>
-            ))}
-          </View>
-        ) : null}
       </Pressable>
       <View style={[styles.cardFooter, { borderTopColor: theme.border }]}>
         <View style={styles.footerCopy}>
@@ -369,11 +361,11 @@ const styles = StyleSheet.create({
   noticeCopy: { flex: 1, gap: Spacing.one },
   card: { borderWidth: StyleSheet.hairlineWidth, borderRadius: BorderRadius.xl, overflow: "hidden", shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
   cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: Spacing.two, paddingHorizontal: Spacing.three, paddingTop: Spacing.three },
-  cardBody: { padding: Spacing.three, gap: Spacing.three },
-  cardTitle: { fontSize: 19, lineHeight: 25, fontWeight: "700" },
-  quantityRow: { flexDirection: "row", alignItems: "center", gap: Spacing.two },
-  categoryRow: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.one },
-  category: { borderRadius: BorderRadius.full, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },
+  cardBody: { padding: Spacing.three, paddingTop: Spacing.two, gap: Spacing.two },
+  cardTitle: { fontSize: 17, lineHeight: 23, fontWeight: "700" },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: Spacing.one },
+  metaRoute: { fontSize: 14, lineHeight: 20, fontWeight: "700" },
+  metaDates: { flex: 1, minWidth: 0 },
   cardFooter: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderTopWidth: StyleSheet.hairlineWidth },
   footerCopy: { flex: 1, gap: 2 },
   price: { fontSize: 16, lineHeight: 22, fontWeight: "800" },

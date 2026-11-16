@@ -120,7 +120,7 @@ describe("Property filter mapping", () => {
 
   it("clears incompatible purpose/type fields without assuming a currency", () => {
     const draft = {
-      ...emptyFilters(),
+      ...emptyFilters("SALE"),
       propertyTypeId: "land",
       bedrooms: "2",
       bathrooms: "1",

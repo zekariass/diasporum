@@ -1,6 +1,6 @@
 /**
  * FeatureNav — horizontal scrollable strip for the Posts content experiences
- * (Feed, Vids, Help, Polls). Other Diasporum features live in the left-side
+ * (Feed, Clips, Help, Polls). Other Diasporum features live in the left-side
  * FeatureDrawer. Modern underline-tab style: icon stacked above a short
  * label, active item uses a filled icon variant in the brand colour with a
  * 3 px indicator bar. Stateless: caller owns activeKey and handles onSelect.
@@ -31,9 +31,9 @@ export const FEATURES: Feature[] = [
   { key: "feed", icon: "home-outline", activeIcon: "home", label: "Feed" },
   {
     key: "reels",
-    icon: "play-circle-outline",
-    activeIcon: "play-circle",
-    label: "Vids",
+    icon: "film-outline",
+    activeIcon: "film",
+    label: "Clips",
   },
   {
     key: "help",

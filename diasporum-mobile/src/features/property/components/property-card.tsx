@@ -1,6 +1,7 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  PanResponder,
   Pressable,
   StyleSheet,
   View,
@@ -89,7 +90,7 @@ export function PropertyCard({
       : null);
 
   const nextPhoto = useCallback(async () => {
-    if (galleryBusy) return;
+    if (galleryBusy || singlePhoto) return;
     if (mediaIds) {
       setPhotoIndex((index) => (index + 1) % mediaIds.length);
       return;
@@ -113,7 +114,28 @@ export function PropertyCard({
     } finally {
       setGalleryBusy(false);
     }
-  }, [apiClient, galleryBusy, item.coverMediaId, mediaIds, property.id]);
+  }, [apiClient, galleryBusy, item.coverMediaId, mediaIds, property.id, singlePhoto]);
+
+  const prevPhoto = useCallback(() => {
+    if (!mediaIds || mediaIds.length < 2) return;
+    setPhotoIndex((index) => (index - 1 + mediaIds.length) % mediaIds.length);
+  }, [mediaIds]);
+
+  // Horizontal swipe on the photo cycles the gallery — left = next photo,
+  // right = previous. Vertical-dominant moves stay with the list's scroll.
+  const swipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+          Math.abs(gesture.dx) > 14 &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.4,
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx <= -30) void nextPhoto();
+          else if (gesture.dx >= 30) prevPhoto();
+        },
+      }),
+    [nextPhoto, prevPhoto],
+  );
 
   const enquire = useCallback(async () => {
     if (enquiring) return;
@@ -135,7 +157,10 @@ export function PropertyCard({
 
   return (
     <View style={styles.card}>
-      <View style={[styles.media, { backgroundColor: theme.backgroundElement }]}>
+      <View
+        style={[styles.media, { backgroundColor: theme.backgroundElement }]}
+        {...swipeResponder.panHandlers}
+      >
         <Pressable
           onPress={() => onPress(property.id)}
           accessibilityRole="button"

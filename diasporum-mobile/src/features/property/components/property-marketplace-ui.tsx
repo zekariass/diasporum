@@ -67,7 +67,7 @@ export function PurposeSelector({
     <View
       style={[styles.segment, { backgroundColor: theme.backgroundElement }]}
     >
-      {(["SALE", "RENT"] as const).map((purpose) => (
+      {(["RENT", "SALE"] as const).map((purpose) => (
         <Pressable
           key={purpose}
           accessibilityRole="button"

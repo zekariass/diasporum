@@ -43,6 +43,10 @@ let mockParams: Record<string, string> = {};
 
 jest.mock("@/global.css", () => ({}));
 jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
+jest.mock("@react-native-community/datetimepicker", () => ({
+  __esModule: true,
+  default: () => null,
+}));
 jest.mock("expo-image-picker", () => ({
   requestMediaLibraryPermissionsAsync: async () => ({ granted: true }),
   launchImageLibraryAsync: async () => ({ canceled: true, assets: [] }),
@@ -770,11 +774,15 @@ describe("vehicle details", () => {
 
 describe("vehicle editor", () => {
   async function completeRequiredFields(businessAccount?: string) {
+    await fireEvent.press(
+      await screen.findByLabelText("Vehicle category (required)"),
+    );
     await fireEvent.press(await screen.findByText("Cars"));
     await waitFor(() =>
       expect(
-        screen.getByText("Cars").parent?.props.accessibilityState?.selected,
-      ).toBe(true),
+        screen.getByLabelText("Vehicle category (required)").props
+          .accessibilityValue?.text,
+      ).toBe("Cars"),
     );
     await fireEvent.changeText(
       screen.getByLabelText("Title"),
@@ -792,6 +800,7 @@ describe("vehicle editor", () => {
     await fireEvent.press(screen.getByLabelText("Continue"));
     expect(await screen.findByText("List as")).toBeTruthy();
     if (businessAccount) {
+      await fireEvent.press(screen.getByLabelText("Advertise as"));
       expect(await screen.findByText(businessAccount)).toBeTruthy();
       expect(screen.queryByText("Billing Only")).toBeNull();
       await fireEvent.press(screen.getByText(businessAccount));

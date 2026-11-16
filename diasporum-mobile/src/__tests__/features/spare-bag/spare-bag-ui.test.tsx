@@ -26,6 +26,7 @@ jest.mock("@react-native-community/datetimepicker", () => ({ __esModule: true, d
 jest.mock("expo-router", () => ({
   useRouter: () => mockRouter,
   useLocalSearchParams: () => mockParams,
+  usePathname: () => "/spare-bag",
 }));
 jest.mock("@/core/session/session-provider", () => ({
   useSession: () => ({ apiClient: mockClient, session: { me: { id: "user-1" }, memberships: mockMemberships } }),
@@ -143,18 +144,30 @@ async function chooseRoute() {
 }
 
 describe("Spare Bag home and discovery", () => {
-  it("shows the banner, latest listings, and quick-access destinations", async () => {
+  it("shows the banner, listing tabs, and drawer destinations", async () => {
     await renderScreen(<SpareBagScreen />);
     expect(screen.getByText("Send parcels with travellers.")).toBeTruthy();
     expect(await screen.findByText("Documents to London")).toBeTruthy();
-    await fireEvent.press(screen.getByLabelText("My Spare Bag"));
-    expect(mockRouter.push).toHaveBeenCalledWith("/(app)/spare-bag/my");
-    await fireEvent.press(screen.getByLabelText("Saved"));
-    expect(mockRouter.push).toHaveBeenCalledWith("/(app)/spare-bag/saved");
-    await fireEvent.press(screen.getByLabelText("Requests"));
-    expect(mockRouter.push).toHaveBeenCalledWith("/(app)/spare-bag/contacts");
+    await fireEvent.press(screen.getByLabelText("Spare Bag menu"));
+    await fireEvent.press(await screen.findByLabelText("My Spare Bag"));
+    await waitFor(() => expect(mockRouter.push).toHaveBeenCalledWith("/(app)/spare-bag/my"));
+    await fireEvent.press(screen.getByLabelText("Spare Bag menu"));
+    await fireEvent.press(await screen.findByLabelText("Saved"));
+    await waitFor(() => expect(mockRouter.push).toHaveBeenCalledWith("/(app)/spare-bag/saved"));
+    await fireEvent.press(screen.getByLabelText("Spare Bag menu"));
+    await fireEvent.press(await screen.findByLabelText("Requests"));
+    await waitFor(() => expect(mockRouter.push).toHaveBeenCalledWith("/(app)/spare-bag/contacts"));
     await fireEvent.press(screen.getByLabelText("See all listings"));
     expect(mockRouter.push).toHaveBeenCalledWith("/(app)/spare-bag/discover");
+  });
+
+  it("switches between Sender Requests and Traveller Offers tabs", async () => {
+    await renderScreen(<SpareBagScreen />);
+    await waitFor(() => expect(mockClient.get).toHaveBeenCalledWith(expect.stringContaining("listingType=SENDER_REQUEST"), { authenticated: true }));
+    await fireEvent.press(await screen.findByLabelText("Traveller Offers"));
+    await waitFor(() => expect(mockClient.get).toHaveBeenCalledWith(expect.stringContaining("listingType=PASSENGER_OFFER"), { authenticated: true }));
+    await fireEvent.press(screen.getByLabelText("Sender Requests"));
+    await waitFor(() => expect(mockClient.get).toHaveBeenCalledWith(expect.stringContaining("listingType=SENDER_REQUEST"), { authenticated: true }));
   });
 
   it("opens the create chooser from the header and routes both options", async () => {

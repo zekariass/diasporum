@@ -107,6 +107,8 @@ export function Field({
   icon,
   hint,
   maxLength,
+  required,
+  error,
 }: {
   label: string;
   value: string;
@@ -119,6 +121,8 @@ export function Field({
   icon?: keyof typeof Ionicons.glyphMap;
   hint?: string;
   maxLength?: number;
+  required?: boolean;
+  error?: string;
 }) {
   const theme = useTheme();
   const formScroll = useContext(FormScrollContext);
@@ -127,12 +131,24 @@ export function Field({
   const [multilineHeight, setMultilineHeight] = useState<number | null>(null);
   return (
     <View style={styles.field}>
-      <ThemedText style={styles.label}>{label}</ThemedText>
+      <ThemedText style={styles.label}>
+        {label}
+        {required ? (
+          <ThemedText style={[styles.label, { color: theme.error }]}>
+            {" "}
+            *
+          </ThemedText>
+        ) : null}
+      </ThemedText>
       <View
         style={[
           styles.inputShell,
           {
-            borderColor: focused ? theme.primary : theme.border,
+            borderColor: error
+              ? theme.error
+              : focused
+                ? theme.primary
+                : theme.border,
             backgroundColor: focused
               ? theme.background
               : theme.backgroundElement,
@@ -168,7 +184,7 @@ export function Field({
           secureTextEntry={secureTextEntry}
           autoCapitalize={autoCapitalize}
           maxLength={maxLength}
-          accessibilityLabel={label}
+          accessibilityLabel={required ? `${label} (required)` : label}
           onContentSizeChange={
             multiline
               ? (event) => {
@@ -198,7 +214,15 @@ export function Field({
           ]}
         />
       </View>
-      {hint ? (
+      {error ? (
+        <ThemedText
+          style={[styles.fieldHint, { color: theme.error }]}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          {error}
+        </ThemedText>
+      ) : hint ? (
         <ThemedText themeColor="textSecondary" style={styles.fieldHint}>
           {hint}
         </ThemedText>
@@ -206,6 +230,8 @@ export function Field({
     </View>
   );
 }
+
+export { DatePickerField } from "@/shared/components/date-picker-field";
 
 const RADIUS_MIN = 1;
 const RADIUS_MAX = 100;

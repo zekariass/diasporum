@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/themed-text";
@@ -17,6 +17,7 @@ import { CollectionState, DetailRow, formatDate, RouteView, SafetyNotice, Screen
 export default function ContactRequestsScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { apiClient } = useSession();
   const api = useMemo(() => createSpareBagApi(apiClient), [apiClient]);
   const [direction, setDirection] = useState<ContactDirection>("INCOMING");
@@ -112,7 +113,7 @@ export default function ContactRequestsScreen() {
             </View>
           }
           renderItem={({ item }) => <ContactCard contact={item} acting={actingId === item.id} onAccept={() => void action(item, () => api.accept(item.id))} onDecline={() => void action(item, () => api.decline(item.id))} onCancel={() => void action(item, () => api.cancel(item.id))} onClose={() => void action(item, () => api.closeContact(item.id))} onConversation={() => void openConversation(item)} onReport={() => report(item)} />}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}
           ListEmptyComponent={<CollectionState loading={loading} error={null} empty={!loading} onRetry={() => { setLoading(true); void load(); }} emptyTitle={direction === "INCOMING" ? "No received requests" : "No sent requests"} emptyMessage="Compatible contact requests will appear here. An introduction is not a booking or delivery guarantee." />}
           ListFooterComponent={<View style={styles.footer}>{loadingMore ? <ThemedText style={styles.loadingMore}>Loading more…</ThemedText> : <SafetyNotice compact />}</View>}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} tintColor={theme.primary} />}

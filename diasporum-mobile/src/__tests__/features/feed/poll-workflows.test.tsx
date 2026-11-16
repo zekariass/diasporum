@@ -21,6 +21,11 @@ const mockRouter = {
   back: jest.fn(),
   canGoBack: jest.fn(() => true),
 };
+const mockApiClient = {
+  get: jest.fn(),
+  post: jest.fn(),
+  delete: jest.fn(),
+};
 const mockSafeBack = jest.fn();
 let mockParams: Record<string, string> = {};
 let mockSession = defaultSession();
@@ -89,7 +94,7 @@ jest.mock("expo-router", () => ({
   useFocusEffect: jest.fn(),
 }));
 jest.mock("@/core/session/session-provider", () => ({
-  useSession: () => ({ apiClient: {}, session: mockSession }),
+  useSession: () => ({ apiClient: mockApiClient, session: mockSession }),
 }));
 jest.mock("@/features/feed/services/feed-api", () => ({
   createFeedApi: () => mockFeedApi,
@@ -233,6 +238,15 @@ function mount(component: React.ReactElement) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockApiClient.get.mockResolvedValue({
+    following: false,
+    followedBy: false,
+    mutual: false,
+    friends: false,
+    blockedByMe: false,
+  });
+  mockApiClient.post.mockResolvedValue({});
+  mockApiClient.delete.mockResolvedValue({});
   mockParams = {};
   mockSession = defaultSession();
   mockFeedState.items = [makeFeedItem()];

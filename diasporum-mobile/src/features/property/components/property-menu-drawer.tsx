@@ -1,0 +1,319 @@
+/**
+ * PropertyMenuDrawer — left slide-in navigation drawer for the property
+ * browser, opened from the header's hamburger icon. Parent mounts it
+ * conditionally (`{open && <PropertyMenuDrawer/>}`); it slides in on mount
+ * and animates out before calling `onClose` — the same behaviour as
+ * EventFilterDrawer and the app-wide FeatureDrawer.
+ */
+
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+} from "react";
+import {
+  Animated,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import { usePathname, useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { ThemedText } from "@/components/themed-text";
+import { useTheme } from "@/hooks/use-theme";
+import { BrandColors } from "@/shared/theme/colors";
+import { BorderRadius, Spacing } from "@/shared/theme/spacing";
+
+type IconName = ComponentProps<typeof Ionicons>["name"];
+
+interface DrawerItem {
+  key: string;
+  label: string;
+  icon: IconName;
+  route: string;
+  /** Bottom-tab destinations use navigate() so they don't stack. */
+  tab?: boolean;
+  isActive: (pathname: string) => boolean;
+}
+
+const startsWith =
+  (prefix: string) =>
+  (pathname: string) =>
+    pathname.startsWith(prefix);
+
+const ITEMS: DrawerItem[] = [
+  {
+    key: "feeds",
+    label: "Diasporum Feeds",
+    icon: "newspaper-outline",
+    route: "/(app)/(tabs)",
+    tab: true,
+    isActive: (pathname) => pathname === "/" || pathname === "/index",
+  },
+  {
+    key: "my",
+    label: "My properties",
+    icon: "person-outline",
+    route: "/(app)/properties/my",
+    isActive: startsWith("/properties/my"),
+  },
+  {
+    key: "create",
+    label: "Create property",
+    icon: "add-circle-outline",
+    route: "/(app)/properties/create",
+    isActive: startsWith("/properties/create"),
+  },
+  {
+    key: "saved",
+    label: "Saved properties",
+    icon: "bookmark-outline",
+    route: "/(app)/properties/saved",
+    isActive: startsWith("/properties/saved"),
+  },
+];
+
+export function PropertyMenuDrawer({ onClose }: { onClose: () => void }) {
+  const theme = useTheme();
+  const accent = theme.info;
+  const router = useRouter();
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const drawerWidth = Math.min(320, Math.round(width * 0.85));
+
+  const [slide] = useState(() => new Animated.Value(-drawerWidth));
+
+  useEffect(() => {
+    Animated.timing(slide, {
+      toValue: 0,
+      duration: 260,
+      useNativeDriver: true,
+    }).start();
+  }, [slide]);
+
+  const close = useCallback(() => {
+    Animated.timing(slide, {
+      toValue: -drawerWidth,
+      duration: 220,
+      useNativeDriver: true,
+    }).start(() => onClose());
+  }, [slide, drawerWidth, onClose]);
+
+  const go = useCallback(
+    (item: DrawerItem) => {
+      Animated.timing(slide, {
+        toValue: -drawerWidth,
+        duration: 200,
+        useNativeDriver: true,
+      }).start(() => {
+        onClose();
+        if (item.tab) router.navigate(item.route as never);
+        else router.push(item.route as never);
+      });
+    },
+    [slide, drawerWidth, onClose, router],
+  );
+
+  const backdropOpacity = useMemo(
+    () =>
+      slide.interpolate({
+        inputRange: [-drawerWidth, 0],
+        outputRange: [0, 0.5],
+        extrapolate: "clamp",
+      }),
+    [slide, drawerWidth],
+  );
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={close}
+    >
+      <View style={styles.overlay}>
+        <Animated.View
+          style={[styles.backdrop, { opacity: backdropOpacity }]}
+          pointerEvents="auto"
+        >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={close}
+            accessibilityLabel="Close menu"
+            accessibilityRole="button"
+          />
+        </Animated.View>
+
+        <Animated.View
+          style={[
+            styles.panel,
+            {
+              width: drawerWidth,
+              backgroundColor: theme.background,
+              borderRightColor: theme.border,
+              paddingTop: insets.top,
+              paddingBottom: insets.bottom,
+              transform: [{ translateX: slide }],
+            },
+          ]}
+        >
+          <View style={[styles.header, { borderBottomColor: theme.border }]}>
+            <View style={styles.brand}>
+              <View style={[styles.brandMark, { borderColor: accent }]}>
+                <Ionicons name="home" size={15} color={accent} />
+              </View>
+              <ThemedText style={[styles.brandText, { color: accent }]}>
+                Diasporum
+              </ThemedText>
+            </View>
+            <Pressable
+              onPress={close}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Close menu"
+              style={[
+                styles.closeButton,
+                { backgroundColor: theme.backgroundElement },
+              ]}
+            >
+              <Ionicons name="close" size={18} color={theme.text} />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {ITEMS.map((item) => {
+              const active = item.isActive(pathname);
+              return (
+                <Pressable
+                  key={item.key}
+                  onPress={() => go(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.label}
+                  accessibilityState={{ selected: active }}
+                  style={({ pressed }) => [
+                    styles.item,
+                    active && { backgroundColor: theme.infoSurface },
+                    pressed && !active && styles.itemPressed,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.itemIcon,
+                      {
+                        backgroundColor: active
+                          ? accent
+                          : theme.backgroundElement,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name={item.icon}
+                      size={19}
+                      color={active ? BrandColors.white : theme.textSecondary}
+                    />
+                  </View>
+                  <ThemedText
+                    style={[
+                      styles.itemLabel,
+                      active && { color: accent, fontWeight: "800" },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {item.label}
+                  </ThemedText>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={16}
+                    color={active ? accent : theme.textSecondary}
+                  />
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  overlay: { flex: 1 },
+  backdrop: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: BrandColors.black,
+  },
+  panel: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    shadowColor: BrandColors.black,
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    shadowOffset: { width: 4, height: 0 },
+    elevation: 16,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.three,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  brand: { flexDirection: "row", alignItems: "center", gap: Spacing.two },
+  brandMark: {
+    width: 28,
+    height: 28,
+    borderRadius: BorderRadius.full,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  brandText: { fontSize: 19, fontWeight: "700" },
+  closeButton: {
+    width: 34,
+    height: 34,
+    borderRadius: BorderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  list: { flex: 1 },
+  listContent: { padding: Spacing.three, gap: Spacing.one },
+  item: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.two,
+    minHeight: 52,
+    borderRadius: BorderRadius.md,
+  },
+  itemPressed: { opacity: 0.65 },
+  itemIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: BorderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  itemLabel: { flex: 1, fontSize: 15, fontWeight: "600" },
+});

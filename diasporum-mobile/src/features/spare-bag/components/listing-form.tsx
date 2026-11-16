@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import { ThemedText } from "@/components/themed-text";
 import { PrimaryButton } from "@/shared/components/primary-button";
@@ -174,6 +175,7 @@ export function ListingForm({
   onSubmit: (request: ListingRequest, publish?: boolean) => Promise<Listing>;
 }) {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { apiClient, session } = useSession();
   const api = useMemo(() => createSpareBagApi(apiClient), [apiClient]);
   const [form, setForm] = useState(() => initialState(listingType, listing));
@@ -294,7 +296,7 @@ export function ListingForm({
 
   return (
     <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.five }]} keyboardShouldPersistTaps="handled">
       <StepProgress step={step} titles={steps} />
       <ThemedText style={styles.title}>{steps[step]}</ThemedText>
 

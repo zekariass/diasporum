@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Crypto from "expo-crypto";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -22,6 +22,7 @@ export default function ContactCompositionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { apiClient } = useSession();
   const api = useMemo(() => createSpareBagApi(apiClient), [apiClient]);
   const [target, setTarget] = useState<Listing | null>(null);
@@ -103,7 +104,7 @@ export default function ContactCompositionScreen() {
       <ThemedView style={styles.root}>
         <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
           <ScreenHeader back title="Contact request" />
-          <View style={styles.confirmation}>
+          <View style={[styles.confirmation, { paddingBottom: insets.bottom + Spacing.four }]}>
             <View style={[styles.successIcon, { backgroundColor: theme.successSurface }]}><Ionicons name="checkmark" size={42} color={theme.success} /></View>
             <ThemedText style={styles.confirmationTitle}>Contact request sent</ThemedText>
             <ThemedText themeColor="textSecondary" style={styles.confirmationCopy}>Your request for {target.title} is now pending. The other listing owner can accept or decline it. This is not a booking or a guarantee of carriage.</ThemedText>
@@ -120,7 +121,7 @@ export default function ContactCompositionScreen() {
       <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
         <ScreenHeader back title={target?.listingType === "SENDER_REQUEST" ? "Respond to Request" : "Send Contact Request"} subtitle="An introduction, not a booking" />
         {loading ? <LoadingScreen /> : !target ? <ErrorState message={error ?? "Listing not found."} onRetry={() => void load()} /> : (
-          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.five }]} keyboardShouldPersistTaps="handled">
             <View style={styles.intro}>
               <ThemedText style={styles.title}>Connect both listings</ThemedText>
               <ThemedText themeColor="textSecondary">Choose your compatible {target.listingType === "PASSENGER_OFFER" ? "sender request" : "passenger offer"}. The exact route and overlapping dates are checked again by the backend.</ThemedText>

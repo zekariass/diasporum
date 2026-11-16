@@ -49,7 +49,8 @@ export function VehicleCard({
   const media = useMemo(
     () =>
       [...item.media].sort(
-        (a, b) => Number(b.cover) - Number(a.cover) || a.sortOrder - b.sortOrder,
+        (a, b) =>
+          Number(b.cover) - Number(a.cover) || a.sortOrder - b.sortOrder,
       ),
     [item.media],
   );
@@ -60,12 +61,33 @@ export function VehicleCard({
   const published = formatVehiclePublished(vehicle.publishedAt);
   const subtitle = vehicleSubtitle(vehicle);
   const highlight = firstDescriptionLine(vehicle.description);
-  const specs = [
-    vehicle.modelYear != null ? String(vehicle.modelYear) : null,
-    vehicle.transmission ? vehicleLabel(vehicle.transmission) : null,
-    vehicle.fuelType ? vehicleLabel(vehicle.fuelType) : null,
-    formatVehicleMileageCompact(vehicle),
-  ].filter((value): value is string => Boolean(value));
+  const specs: {
+    key: string;
+    icon: React.ComponentProps<typeof Ionicons>["name"];
+    value: string | null;
+  }[] = [
+    {
+      key: "year",
+      icon: "calendar-outline",
+      value: vehicle.modelYear == null ? null : String(vehicle.modelYear),
+    },
+    {
+      key: "mileage",
+      icon: "speedometer-outline",
+      value: formatVehicleMileageCompact(vehicle),
+    },
+    {
+      key: "fuel",
+      icon: "water-outline",
+      value: vehicle.fuelType ? vehicleLabel(vehicle.fuelType) : null,
+    },
+    {
+      key: "transmission",
+      icon: "options-outline",
+      value: vehicle.transmission ? vehicleLabel(vehicle.transmission) : null,
+    },
+  ];
+  const visibleSpecs = specs.filter((spec) => spec.value);
   const sellerName =
     item.listedBy?.name ??
     item.seller?.businessName ??
@@ -73,8 +95,14 @@ export function VehicleCard({
     (item.seller?.username ? `@${item.seller.username}` : null);
   const rating = item.listedBy?.averageRating;
   const reviews = item.listedBy?.reviewCount;
+  const locality = location === "General area not provided" ? null : location;
   return (
-    <View style={[styles.card, { borderBottomColor: theme.border }]}>
+    <View
+      style={[
+        styles.card,
+        { backgroundColor: theme.background, borderColor: theme.border },
+      ]}
+    >
       <Pressable
         onPress={() => onPress(vehicle.id)}
         accessibilityRole="button"
@@ -82,6 +110,7 @@ export function VehicleCard({
         style={({ pressed }) => [pressed && styles.pressed]}
       >
         <View
+          style={styles.gallery}
           onLayout={(event) => setGalleryWidth(event.nativeEvent.layout.width)}
         >
           {media.length > 1 && galleryWidth > 0 ? (
@@ -99,9 +128,7 @@ export function VehicleCard({
               })}
               onMomentumScrollEnd={(event) =>
                 setPage(
-                  Math.round(
-                    event.nativeEvent.contentOffset.x / galleryWidth,
-                  ),
+                  Math.round(event.nativeEvent.contentOffset.x / galleryWidth),
                 )
               }
               renderItem={({ item: entry, index }) => (
@@ -123,6 +150,44 @@ export function VehicleCard({
               label={`${vehicle.title} cover image`}
             />
           )}
+          <View style={styles.imageTopRow} pointerEvents="box-none">
+            <View
+              style={[
+                styles.purposeBadge,
+                {
+                  backgroundColor:
+                    vehicle.listingPurpose === "RENT"
+                      ? BrandColors.primaryDark
+                      : BrandColors.primary,
+                },
+              ]}
+            >
+              <ThemedText style={styles.purposeText}>
+                {vehicle.listingPurpose === "RENT" ? "For Rent" : "For Sale"}
+              </ThemedText>
+            </View>
+            {onToggleSave ? (
+              <Pressable
+                onPress={() => onToggleSave(item)}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  vehicle.saved
+                    ? `Unsave ${vehicle.title}`
+                    : `Save ${vehicle.title}`
+                }
+                style={({ pressed }) => [
+                  styles.imageSaveButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Ionicons
+                  name={vehicle.saved ? "heart" : "heart-outline"}
+                  size={22}
+                  color={vehicle.saved ? BrandColors.error : BrandColors.black}
+                />
+              </Pressable>
+            ) : null}
+          </View>
           {media.length > 1 ? (
             <View
               style={styles.dots}
@@ -136,10 +201,34 @@ export function VehicleCard({
               ))}
             </View>
           ) : null}
+          {media.length ? (
+            <View style={styles.photoCount}>
+              <Ionicons
+                name="images-outline"
+                size={13}
+                color={BrandColors.white}
+              />
+              <ThemedText style={styles.photoCountText}>
+                {page + 1} / {media.length}
+              </ThemedText>
+            </View>
+          ) : null}
         </View>
         <View style={styles.content}>
+          <ThemedText style={styles.title} numberOfLines={2}>
+            {vehicle.title}
+          </ThemedText>
+          {subtitle ? (
+            <ThemedText
+              style={styles.subtitle}
+              themeColor="textSecondary"
+              numberOfLines={1}
+            >
+              {subtitle}
+            </ThemedText>
+          ) : null}
           <View style={styles.priceRow}>
-            <ThemedText style={styles.price}>
+            <ThemedText style={[styles.price, { color: theme.primaryDark }]}>
               {formatVehiclePrice(vehicle)}
             </ThemedText>
             <View style={styles.priceAside}>
@@ -160,25 +249,20 @@ export function VehicleCard({
                   onPress={() => onContact(item)}
                   accessibilityRole="button"
                   accessibilityLabel={`Message seller of ${vehicle.title}`}
-                  style={styles.contactButton}
+                  style={[
+                    styles.contactButton,
+                    { backgroundColor: theme.primarySurface },
+                  ]}
                 >
                   <Ionicons
-                    name="call-outline"
-                    size={21}
-                    color={theme.text}
+                    name="chatbubble-ellipses-outline"
+                    size={20}
+                    color={theme.primaryDark}
                   />
                 </Pressable>
               ) : null}
             </View>
           </View>
-          <ThemedText style={styles.title} numberOfLines={2}>
-            {vehicle.title}
-          </ThemedText>
-          {subtitle ? (
-            <ThemedText style={styles.subtitle} numberOfLines={1}>
-              {subtitle}
-            </ThemedText>
-          ) : null}
           {highlight ? (
             <ThemedText
               style={[styles.highlight, { color: theme.primaryDark }]}
@@ -187,30 +271,47 @@ export function VehicleCard({
               {highlight}
             </ThemedText>
           ) : null}
-          {specs.length ? (
+          {visibleSpecs.length ? (
             <View style={styles.specs}>
-              {specs.map((spec) => (
+              {visibleSpecs.map((spec) => (
                 <View
-                  key={spec}
+                  key={spec.key}
                   style={[
                     styles.spec,
                     { backgroundColor: theme.backgroundElement },
                   ]}
                 >
-                  <ThemedText style={styles.specText}>{spec}</ThemedText>
+                  <Ionicons
+                    name={spec.icon}
+                    size={15}
+                    color={theme.textSecondary}
+                  />
+                  <ThemedText style={styles.specText}>{spec.value}</ThemedText>
                 </View>
               ))}
             </View>
           ) : null}
-          {sellerName || rating != null || distance ? (
+          {locality || distance ? (
+            <View style={styles.locationRow}>
+              <Ionicons
+                name="location-outline"
+                size={16}
+                color={theme.textSecondary}
+              />
+              <ThemedText
+                themeColor="textSecondary"
+                style={styles.location}
+                numberOfLines={1}
+              >
+                {[locality, distance].filter(Boolean).join(" · ")}
+              </ThemedText>
+            </View>
+          ) : null}
+          {sellerName || rating != null ? (
             <View style={styles.sellerRow}>
               {rating != null ? (
                 <View style={styles.rating}>
-                  <Ionicons
-                    name="star"
-                    size={14}
-                    color={BrandColors.warning}
-                  />
+                  <Ionicons name="star" size={14} color={BrandColors.warning} />
                   <ThemedText style={styles.ratingText}>
                     {rating.toFixed(1)}
                     {reviews != null ? ` (${reviews})` : ""}
@@ -226,49 +327,30 @@ export function VehicleCard({
                   {sellerName}
                 </ThemedText>
               ) : null}
-              <ThemedText
-                themeColor="textSecondary"
-                style={styles.distance}
-                numberOfLines={1}
-              >
-                {[distance, location === "General area not provided" ? null : location]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </ThemedText>
             </View>
           ) : null}
         </View>
       </Pressable>
       <View style={[styles.footer, { borderTopColor: theme.border }]}>
-        {onToggleSave ? (
-          <Pressable
-            onPress={() => onToggleSave(item)}
-            accessibilityRole="button"
-            accessibilityLabel={
-              vehicle.saved
-                ? `Unsave ${vehicle.title}`
-                : `Save ${vehicle.title}`
-            }
-            style={({ pressed }) => [
-              styles.saveButton,
-              pressed && styles.pressed,
-            ]}
+        <ThemedText style={styles.date} themeColor="textSecondary">
+          {published ?? "Vehicle listing"}
+        </ThemedText>
+        <Pressable
+          onPress={() => onPress(vehicle.id)}
+          accessibilityRole="button"
+          accessibilityLabel={`View details for ${vehicle.title}`}
+          style={({ pressed }) => [
+            styles.detailsButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <ThemedText
+            style={[styles.detailsText, { color: theme.primaryDark }]}
           >
-            <Ionicons
-              name={vehicle.saved ? "heart" : "heart-outline"}
-              size={22}
-              color={vehicle.saved ? BrandColors.error : theme.text}
-            />
-            <ThemedText style={styles.saveText}>Save</ThemedText>
-          </Pressable>
-        ) : (
-          <View />
-        )}
-        {published ? (
-          <ThemedText style={styles.date} themeColor="textSecondary">
-            {published}
+            View details
           </ThemedText>
-        ) : null}
+          <Ionicons name="arrow-forward" size={16} color={theme.primaryDark} />
+        </Pressable>
       </View>
     </View>
   );
@@ -434,17 +516,52 @@ export function VehicleImage({
 
 const styles = StyleSheet.create({
   card: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginHorizontal: Spacing.four,
+    marginBottom: Spacing.four,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 18,
+    overflow: "hidden",
   },
   pressed: { opacity: 0.78 },
+  gallery: { position: "relative" },
   cover: { width: "100%", aspectRatio: 1.6 },
   placeholder: { alignItems: "center", justifyContent: "center" },
+  imageTopRow: {
+    position: "absolute",
+    top: Spacing.three,
+    left: Spacing.three,
+    right: Spacing.three,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  purposeBadge: {
+    borderRadius: BorderRadius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  purposeText: {
+    color: BrandColors.white,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "700",
+  },
+  imageSaveButton: {
+    width: 44,
+    height: 44,
+    marginTop: -6,
+    marginRight: -6,
+    borderRadius: BorderRadius.full,
+    backgroundColor: BrandColors.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   dots: {
     position: "absolute",
-    bottom: 10,
+    bottom: 19,
     alignSelf: "center",
     flexDirection: "row",
-    gap: 6,
+    gap: 5,
   },
   dot: {
     width: 6,
@@ -452,8 +569,36 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: "rgba(255,255,255,0.55)",
   },
-  dotActive: { backgroundColor: BrandColors.white, width: 8, height: 8, borderRadius: 4 },
-  content: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, gap: 5 },
+  dotActive: {
+    backgroundColor: BrandColors.white,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  photoCount: {
+    position: "absolute",
+    right: Spacing.three,
+    bottom: Spacing.two,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: BorderRadius.full,
+    backgroundColor: "rgba(0,0,0,0.68)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  photoCountText: {
+    color: BrandColors.white,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: "600",
+  },
+  content: {
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.three,
+    paddingBottom: Spacing.two,
+    gap: 6,
+  },
   priceRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -461,35 +606,45 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   priceAside: { flexDirection: "row", alignItems: "center", gap: Spacing.two },
-  price: { fontSize: 22, lineHeight: 28, fontWeight: "800" },
+  price: {
+    flexShrink: 1,
+    fontSize: 23,
+    lineHeight: 29,
+    fontWeight: "800",
+  },
   contactButton: {
     width: 44,
     height: 44,
-    marginRight: -10,
-    marginTop: -8,
+    marginRight: -6,
+    marginVertical: -8,
+    borderRadius: BorderRadius.full,
     alignItems: "center",
     justifyContent: "center",
   },
-  title: { fontSize: 17, lineHeight: 23, fontWeight: "700" },
-  subtitle: { fontSize: 14, lineHeight: 20 },
-  highlight: { fontSize: 14, lineHeight: 19, fontWeight: "600" },
-  specs: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 4 },
+  title: { fontSize: 18, lineHeight: 24, fontWeight: "700" },
+  subtitle: { fontSize: 13, lineHeight: 19 },
+  highlight: { fontSize: 13, lineHeight: 19, fontWeight: "600" },
+  specs: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 3 },
   spec: {
-    borderRadius: BorderRadius.full,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-  },
-  specText: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
-  sellerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
-    marginTop: 4,
+    gap: 5,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
   },
+  specText: { fontSize: 12, lineHeight: 17, fontWeight: "600" },
+  locationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 2,
+  },
+  location: { flexShrink: 1, fontSize: 13, lineHeight: 18 },
+  sellerRow: { flexDirection: "row", alignItems: "center", gap: 7 },
   rating: { flexDirection: "row", alignItems: "center", gap: 4 },
   ratingText: { fontSize: 13, lineHeight: 18, fontWeight: "600" },
   seller: { flexShrink: 1, fontSize: 13, lineHeight: 18 },
-  distance: { marginLeft: "auto", fontSize: 13, lineHeight: 18 },
   status: {
     borderRadius: BorderRadius.full,
     paddingHorizontal: 8,
@@ -498,23 +653,22 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 10, fontWeight: "700" },
   footer: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: Spacing.three,
+    marginTop: Spacing.one,
     paddingHorizontal: Spacing.four,
-    paddingVertical: 4,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    minHeight: 48,
+    gap: Spacing.two,
+    minHeight: 50,
   },
-  saveButton: {
+  detailsButton: {
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    minHeight: 44,
-    paddingHorizontal: 4,
+    gap: 6,
   },
-  saveText: { fontSize: 15, fontWeight: "600" },
-  date: { fontSize: 12, lineHeight: 18 },
+  detailsText: { fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  date: { flexShrink: 1, fontSize: 12, lineHeight: 18 },
   facts: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   fact: {
     flex: 1,

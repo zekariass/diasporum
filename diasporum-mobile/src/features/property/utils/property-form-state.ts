@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {
   FurnishedStatus,
   ListingPurpose,
@@ -62,7 +63,7 @@ export function initialPropertyForm(countryId: string, communityId?: string): Pr
     title: "",
     description: "",
     priceAmount: "",
-    currencyCode: "EUR",
+    currencyCode: "GBP",
     pricePeriod: "MONTH",
     bedrooms: "",
     bathrooms: "",
@@ -145,49 +146,171 @@ export const PROPERTY_STEP_TITLES = [
   "Photos",
 ] as const;
 
-/** Validates only the fields owned by one wizard step — the submit path still runs validatePropertyForm. */
-export function validatePropertyStep(form: PropertyFormState, step: number): string | null {
-  if (step === 0) {
-    if (!form.propertyTypeId) return "Choose a property type.";
-    if (!form.title.trim() || form.title.trim().length > 220) return "Enter a title of up to 220 characters.";
-    if (!form.description.trim() || form.description.trim().length > 20000) return "Enter a description of up to 20,000 characters.";
-    return null;
-  }
-  if (step === 1) {
-    if (!validNonnegative(form.priceAmount)) return "Enter a valid, non-negative price.";
-    if (!/^[A-Z]{3}$/.test(form.currencyCode)) return "Use a three-letter currency code, such as EUR.";
-    if (form.floorArea.trim() && !validNonnegative(form.floorArea)) return "Floor area must be non-negative.";
-    for (const value of [form.bedrooms, form.bathrooms, form.receptionRooms]) {
-      if (value.trim() && (!Number.isInteger(Number(value)) || Number(value) < 0)) return "Room counts must be non-negative whole numbers.";
-    }
-    if (form.listingPurpose === "RENT" && form.minimumTenancyMonths.trim() && (!Number.isInteger(Number(form.minimumTenancyMonths)) || Number(form.minimumTenancyMonths) <= 0)) return "Minimum tenancy must be a positive whole number.";
-    return null;
-  }
-  if (step === 2) {
-    if (form.visibilityScope === "COMMUNITY" && !form.communityId) return "Choose a community audience.";
-    if (form.visibilityScope === "SELECTED_COMMUNITIES" && form.communityIds.length === 0) return "Choose at least one community.";
-    if (!form.city.trim() && !form.addressLine1.trim()) return "Enter a city for the public location.";
-    const hasLat = form.latitude.trim() !== "";
-    const hasLng = form.longitude.trim() !== "";
-    if (hasLat !== hasLng) return "Enter both latitude and longitude, or leave both empty.";
-    if (hasLat) {
-      const latitude = Number(form.latitude);
-      const longitude = Number(form.longitude);
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return "Enter valid coordinates for the private address.";
-    }
-    return null;
-  }
-  if (step === 3 && form.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) return "Enter a valid contact email.";
-  return null;
+/** Field-keyed validation messages — rendered inline under each control so users can see exactly what to fix. */
+export type PropertyFieldErrors = Record<string, string>;
+
+function nonnegativeAmount(message: string) {
+  return z
+    .string(message)
+    .refine(
+      (value) =>
+        value.trim() !== "" &&
+        Number.isFinite(Number(value)) &&
+        Number(value) >= 0,
+      message,
+    );
 }
 
-export function validatePropertyForm(form: PropertyFormState): string | null {
-  if (!form.countryId) return "Your current country is required.";
-  for (let step = 0; step < PROPERTY_STEP_TITLES.length; step++) {
-    const message = validatePropertyStep(form, step);
-    if (message) return message;
+function optionalNonnegativeAmount(message: string) {
+  return z
+    .string()
+    .refine(
+      (value) =>
+        value.trim() === "" ||
+        (Number.isFinite(Number(value)) && Number(value) >= 0),
+      message,
+    );
+}
+
+function optionalNonnegativeInt(message: string) {
+  return z
+    .string()
+    .refine(
+      (value) =>
+        value.trim() === "" ||
+        (Number.isInteger(Number(value)) && Number(value) >= 0),
+      message,
+    );
+}
+
+const ROOM_COUNT_MESSAGE = "Room counts must be non-negative whole numbers.";
+
+const STEP_SCHEMAS = [
+  z.object({
+    propertyTypeId: z
+      .string("Choose a property type.")
+      .min(1, "Choose a property type."),
+    title: z
+      .string("Enter a title of up to 220 characters.")
+      .refine(
+        (value) => value.trim().length > 0 && value.trim().length <= 220,
+        "Enter a title of up to 220 characters.",
+      ),
+    description: z
+      .string("Enter a description of up to 20,000 characters.")
+      .refine(
+        (value) => value.trim().length > 0 && value.trim().length <= 20000,
+        "Enter a description of up to 20,000 characters.",
+      ),
+  }),
+  z.object({
+    priceAmount: nonnegativeAmount("Enter a valid, non-negative price."),
+    currencyCode: z
+      .string("Use a three-letter currency code, such as GBP.")
+      .regex(/^[A-Z]{3}$/, "Use a three-letter currency code, such as GBP."),
+    floorArea: optionalNonnegativeAmount("Floor area must be non-negative."),
+    bedrooms: optionalNonnegativeInt(ROOM_COUNT_MESSAGE),
+    bathrooms: optionalNonnegativeInt(ROOM_COUNT_MESSAGE),
+    receptionRooms: optionalNonnegativeInt(ROOM_COUNT_MESSAGE),
+    availabilityDate: z
+      .string()
+      .refine((value) => {
+        const trimmed = value.trim();
+        if (!trimmed) return true;
+        return (
+          /^\d{4}-\d{2}-\d{2}$/.test(trimmed) &&
+          !Number.isNaN(new Date(`${trimmed}T12:00:00`).getTime())
+        );
+      }, "Choose a valid availability date."),
+  }),
+  z.object({
+    latitude: z
+      .string()
+      .refine(
+        (value) =>
+          value.trim() === "" ||
+          (Number.isFinite(Number(value)) &&
+            Number(value) >= -90 &&
+            Number(value) <= 90),
+        "Enter valid coordinates for the private address.",
+      ),
+    longitude: z
+      .string()
+      .refine(
+        (value) =>
+          value.trim() === "" ||
+          (Number.isFinite(Number(value)) &&
+            Number(value) >= -180 &&
+            Number(value) <= 180),
+        "Enter valid coordinates for the private address.",
+      ),
+  }),
+  z.object({
+    email: z
+      .string()
+      .refine(
+        (value) =>
+          value.trim() === "" ||
+          /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.trim()),
+        "Enter a valid contact email.",
+      ),
+  }),
+] as const;
+
+/** Validates only the fields owned by one wizard step — the submit path still checks every step. */
+export function propertyStepErrors(
+  form: PropertyFormState,
+  step: number,
+): PropertyFieldErrors {
+  const errors: PropertyFieldErrors = {};
+  const schema = STEP_SCHEMAS[step];
+  const parsed = schema?.safeParse(form);
+  for (const issue of parsed?.error?.issues ?? []) {
+    const key = String(issue.path[0] ?? "form");
+    if (!errors[key]) errors[key] = issue.message;
   }
-  return null;
+
+  // Cross-field rules that a single field schema cannot express.
+  if (step === 1 && form.listingPurpose === "RENT") {
+    if (
+      form.rentalDeposit.trim() &&
+      (!Number.isFinite(Number(form.rentalDeposit)) ||
+        Number(form.rentalDeposit) < 0)
+    )
+      errors.rentalDeposit ??= "Deposit must be a non-negative amount.";
+    if (
+      form.minimumTenancyMonths.trim() &&
+      (!Number.isInteger(Number(form.minimumTenancyMonths)) ||
+        Number(form.minimumTenancyMonths) <= 0)
+    )
+      errors.minimumTenancyMonths ??=
+        "Minimum tenancy must be a positive whole number.";
+  }
+  if (step === 2) {
+    if (form.visibilityScope === "COMMUNITY" && !form.communityId)
+      errors.communityId ??= "Choose a community audience.";
+    if (
+      form.visibilityScope === "SELECTED_COMMUNITIES" &&
+      form.communityIds.length === 0
+    )
+      errors.communityIds ??= "Choose at least one community.";
+    if (!form.city.trim() && !form.addressLine1.trim())
+      errors.city ??= "Enter a city for the public location.";
+    const hasLatitude = form.latitude.trim() !== "";
+    const hasLongitude = form.longitude.trim() !== "";
+    if (hasLatitude !== hasLongitude)
+      errors.latitude ??=
+        "Enter both latitude and longitude, or leave both empty.";
+  }
+  return errors;
+}
+
+/** First wizard step containing validation errors, or -1 when the whole form is valid. */
+export function firstInvalidPropertyStep(form: PropertyFormState): number {
+  for (let step = 0; step < PROPERTY_STEP_TITLES.length; step += 1) {
+    if (Object.keys(propertyStepErrors(form, step)).length > 0) return step;
+  }
+  return -1;
 }
 
 export function propertyCommandFromForm(form: PropertyFormState): PropertyCommand {
@@ -249,7 +372,4 @@ function optionalNumber(value: string): number | undefined {
 }
 function optionalString(value: number | null): string {
   return value === null ? "" : String(value);
-}
-function validNonnegative(value: string): boolean {
-  return value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
 }

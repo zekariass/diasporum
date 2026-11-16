@@ -417,9 +417,7 @@ export default function VehiclesScreen() {
         ]);
       }
     } catch {
-      setSearchSaveError(
-        "Could not update saved searches. Please try again.",
-      );
+      setSearchSaveError("Could not update saved searches. Please try again.");
     } finally {
       savingSearch.current = false;
     }
@@ -432,9 +430,7 @@ export default function VehiclesScreen() {
         previous.filter((entry) => entry.id !== id),
       );
     } catch {
-      setSearchSaveError(
-        "Could not update saved searches. Please try again.",
-      );
+      setSearchSaveError("Could not update saved searches. Please try again.");
     }
   }
 
@@ -593,35 +589,129 @@ export default function VehiclesScreen() {
             ListHeaderComponentStyle={styles.discoveryHeader}
             ListHeaderComponent={
               <>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.filterBar}
-                >
+                <View style={styles.titleRow}>
+                  <View style={styles.titleCopy}>
+                    <ThemedText style={styles.screenTitle}>Vehicles</ThemedText>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Filter by location and community"
+                      onPress={() => openFilters("Location & community")}
+                      style={styles.contextButton}
+                    >
+                      <ThemedText
+                        style={styles.contextText}
+                        themeColor="textSecondary"
+                        numberOfLines={1}
+                      >
+                        {contextName}
+                      </ThemedText>
+                      <Ionicons
+                        name="chevron-down"
+                        size={15}
+                        color={theme.textSecondary}
+                      />
+                    </Pressable>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Saved vehicles"
+                    onPress={() =>
+                      router.push("/(app)/vehicles/saved" as never)
+                    }
+                    style={({ pressed }) => [
+                      styles.savedVehiclesButton,
+                      { borderColor: theme.border },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Ionicons
+                      name="bookmark-outline"
+                      size={22}
+                      color={theme.primaryDark}
+                    />
+                  </Pressable>
+                </View>
+                <View style={styles.searchRow}>
+                  <View
+                    style={[
+                      styles.homeSearch,
+                      {
+                        backgroundColor: theme.backgroundElement,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name="search"
+                      size={20}
+                      color={theme.textSecondary}
+                    />
+                    <TextInput
+                      value={keyword}
+                      onChangeText={setKeyword}
+                      onSubmitEditing={() =>
+                        setDebouncedKeyword(keyword.trim())
+                      }
+                      placeholder="Search make, model or keyword..."
+                      accessibilityLabel="Search vehicles"
+                      placeholderTextColor={theme.textSecondary}
+                      autoCorrect={false}
+                      returnKeyType="search"
+                      style={[styles.homeSearchInput, { color: theme.text }]}
+                    />
+                    {keyword ? (
+                      <Pressable
+                        onPress={() => setKeyword("")}
+                        accessibilityRole="button"
+                        accessibilityLabel="Clear vehicle search"
+                        hitSlop={8}
+                        style={styles.clearSearch}
+                      >
+                        <Ionicons
+                          name="close-circle"
+                          size={19}
+                          color={theme.textSecondary}
+                        />
+                      </Pressable>
+                    ) : null}
+                  </View>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Toggle vehicle filters"
                     accessibilityState={{ selected: filtered }}
                     onPress={() => openFilters()}
-                    style={[
+                    style={({ pressed }) => [
                       styles.filterToggle,
-                      { backgroundColor: theme.text },
+                      {
+                        backgroundColor: filtered ? theme.primary : theme.text,
+                      },
+                      pressed && styles.pressed,
                     ]}
                   >
                     <Ionicons
                       name="options"
-                      size={19}
+                      size={21}
                       color={theme.background}
                     />
                     {activeFilters ? (
                       <View
                         style={[
-                          styles.filterDot,
+                          styles.filterCount,
                           { borderColor: theme.background },
                         ]}
-                      />
+                      >
+                        <ThemedText style={styles.filterCountText}>
+                          {activeFilters > 99 ? "99+" : activeFilters}
+                        </ThemedText>
+                      </View>
                     ) : null}
                   </Pressable>
+                </View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.filterBar}
+                >
                   <DropdownPill
                     label={`Sort vehicles: ${sortLabel}`}
                     text={sortLabel}
@@ -683,9 +773,7 @@ export default function VehiclesScreen() {
                   />
                   <DropdownPill
                     label="Filter by category"
-                    text={
-                      category ? category.category.displayName : "Category"
-                    }
+                    text={category ? category.category.displayName : "Category"}
                     active={Boolean(categoryId)}
                     onPress={() => openFilters("Vehicle type")}
                   />
@@ -702,13 +790,6 @@ export default function VehiclesScreen() {
                     onPress={() => openFilters()}
                   />
                   <DropdownPill
-                    label="Search by keyword"
-                    text={keyword || "Keyword"}
-                    icon="search"
-                    active={Boolean(keyword.trim())}
-                    onPress={() => openFilters("Keyword")}
-                  />
-                  <DropdownPill
                     label="Filter by location"
                     text={
                       city.trim()
@@ -721,10 +802,10 @@ export default function VehiclesScreen() {
                     }
                     active={Boolean(
                       city.trim() ||
-                        region.trim() ||
-                        communityId ||
-                        origin ||
-                        currentCountryOnly,
+                      region.trim() ||
+                      communityId ||
+                      origin ||
+                      currentCountryOnly,
                     )}
                     onPress={() => openFilters("Location & community")}
                   />
@@ -738,6 +819,26 @@ export default function VehiclesScreen() {
                       onPress={() => setShowSearches(true)}
                     />
                   ) : null}
+                  {filtered ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear all vehicle filters"
+                      onPress={clearFilters}
+                      style={({ pressed }) => [
+                        styles.clearFiltersButton,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.clearFiltersText,
+                          { color: theme.primaryDark },
+                        ]}
+                      >
+                        Clear all
+                      </ThemedText>
+                    </Pressable>
+                  ) : null}
                 </ScrollView>
                 <View style={styles.resultRow}>
                   <ThemedText
@@ -749,9 +850,7 @@ export default function VehiclesScreen() {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={
-                      currentSavedSearch
-                        ? "Remove saved search"
-                        : "Save search"
+                      currentSavedSearch ? "Remove saved search" : "Save search"
                     }
                     onPress={() => void toggleSavedSearch()}
                     style={({ pressed }) => [
@@ -763,9 +862,7 @@ export default function VehiclesScreen() {
                       Save search
                     </ThemedText>
                     <Ionicons
-                      name={
-                        currentSavedSearch ? "heart" : "heart-outline"
-                      }
+                      name={currentSavedSearch ? "heart" : "heart-outline"}
                       size={20}
                       color={
                         currentSavedSearch ? BrandColors.error : theme.text
@@ -822,8 +919,7 @@ export default function VehiclesScreen() {
               />
             )}
             onEndReached={() => {
-              if (cursor && !loadingRef.current)
-                void load(filterKey, cursor);
+              if (cursor && !loadingRef.current) void load(filterKey, cursor);
             }}
             onEndReachedThreshold={0.4}
             refreshControl={
@@ -867,24 +963,9 @@ export default function VehiclesScreen() {
             contentContainerStyle={
               items.length === 0
                 ? styles.empty
-                : [
-                    styles.list,
-                    { paddingBottom: 88 + insets.bottom },
-                  ]
+                : [styles.list, { paddingBottom: 88 + insets.bottom }]
             }
           />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Saved vehicles"
-            onPress={() => router.push("/(app)/vehicles/saved" as never)}
-            style={({ pressed }) => [
-              styles.savedFab,
-              { bottom: Spacing.four + insets.bottom },
-              pressed && styles.pressed,
-            ]}
-          >
-            <Ionicons name="heart" size={24} color={BrandColors.white} />
-          </Pressable>
         </View>
         {showFilters ? (
           <Sheet
@@ -911,49 +992,6 @@ export default function VehiclesScreen() {
             }
           >
             <PurposeControl value={purpose} onChange={setPurpose} />
-            <FilterSection
-              title="Keyword"
-              icon="search"
-              onLayout={sectionLayout}
-            >
-              <View
-                style={[
-                  styles.keywordSearch,
-                  {
-                    backgroundColor: theme.backgroundElement,
-                    borderColor: theme.border,
-                  },
-                ]}
-              >
-                <Ionicons
-                  name="search"
-                  size={19}
-                  color={theme.textSecondary}
-                />
-                <TextInput
-                  value={keyword}
-                  onChangeText={setKeyword}
-                  placeholder="Search make, model or keyword..."
-                  accessibilityLabel="Search vehicles"
-                  placeholderTextColor={theme.textSecondary}
-                  style={[styles.keywordInput, { color: theme.text }]}
-                  returnKeyType="search"
-                />
-                {keyword ? (
-                  <Pressable
-                    onPress={() => setKeyword("")}
-                    accessibilityRole="button"
-                    accessibilityLabel="Clear vehicle search"
-                  >
-                    <Ionicons
-                      name="close-circle"
-                      size={19}
-                      color={theme.textSecondary}
-                    />
-                  </Pressable>
-                ) : null}
-              </View>
-            </FilterSection>
             <FilterSection
               title="Vehicle type"
               icon="car-outline"
@@ -1403,11 +1441,7 @@ export default function VehiclesScreen() {
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Ionicons
-                    name="bookmark"
-                    size={18}
-                    color={theme.primary}
-                  />
+                  <Ionicons name="bookmark" size={18} color={theme.primary} />
                   <View style={styles.savedInfo}>
                     <ThemedText style={styles.savedName} numberOfLines={1}>
                       {entry.name}
@@ -1417,10 +1451,11 @@ export default function VehiclesScreen() {
                       themeColor="textSecondary"
                     >
                       Saved{" "}
-                      {new Date(entry.createdAt).toLocaleDateString(
-                        undefined,
-                        { day: "numeric", month: "short", year: "numeric" },
-                      )}
+                      {new Date(entry.createdAt).toLocaleDateString(undefined, {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
                     </ThemedText>
                   </View>
                 </Pressable>
@@ -1480,11 +1515,7 @@ function DropdownPill({
       ]}
     >
       {icon ? (
-        <Ionicons
-          name={icon}
-          size={15}
-          color={active ? accent : theme.text}
-        />
+        <Ionicons name={icon} size={15} color={active ? accent : theme.text} />
       ) : active ? (
         <Ionicons name="checkmark" size={15} color={accent} />
       ) : null}
@@ -1688,32 +1719,103 @@ function FilterSection({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   body: { flex: 1, width: "100%", maxWidth: 720, alignSelf: "center" },
-  discoveryHeader: { gap: 4, paddingTop: 4 },
+  discoveryHeader: { gap: 6, paddingTop: Spacing.two },
   pressed: { opacity: 0.7 },
+  titleRow: {
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.one,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.three,
+  },
+  titleCopy: { flex: 1, gap: 2 },
+  screenTitle: { fontSize: 28, lineHeight: 34, fontWeight: "800" },
+  contextButton: {
+    maxWidth: "100%",
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+  },
+  contextText: { flexShrink: 1, fontSize: 14, lineHeight: 20 },
+  savedVehiclesButton: {
+    width: 44,
+    height: 44,
+    borderWidth: 1,
+    borderRadius: BorderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  searchRow: {
+    paddingHorizontal: Spacing.four,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  homeSearch: {
+    flex: 1,
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: Spacing.three,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.two,
+  },
+  homeSearchInput: {
+    flex: 1,
+    minHeight: 46,
+    paddingVertical: 0,
+    fontSize: 14,
+  },
+  clearSearch: {
+    width: 32,
+    height: 32,
+    marginRight: -6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   filterBar: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.two,
     paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
+    paddingVertical: Spacing.one,
   },
   filterToggle: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
-  filterDot: {
+  filterCount: {
     position: "absolute",
-    top: 7,
-    right: 7,
-    width: 9,
-    height: 9,
-    borderRadius: 5,
+    top: -5,
+    right: -5,
+    minWidth: 21,
+    height: 21,
+    paddingHorizontal: 4,
+    borderRadius: BorderRadius.full,
     backgroundColor: BrandColors.error,
-    borderWidth: 1.5,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
   },
+  filterCountText: {
+    color: BrandColors.white,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "800",
+  },
+  clearFiltersButton: {
+    minHeight: 44,
+    paddingHorizontal: Spacing.two,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clearFiltersText: { fontSize: 14, fontWeight: "700" },
   pill: {
     minHeight: 44,
     flexDirection: "row",
@@ -1740,32 +1842,6 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   saveSearchText: { fontSize: 15, fontWeight: "600" },
-  savedFab: {
-    position: "absolute",
-    right: Spacing.four,
-    bottom: Spacing.four,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: BrandColors.error,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: BrandColors.black,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  keywordSearch: {
-    borderWidth: 1,
-    borderRadius: 12,
-    minHeight: 44,
-    paddingHorizontal: Spacing.two,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.two,
-  },
-  keywordInput: { flex: 1, fontSize: 14, minHeight: 44 },
   savedRow: {
     flexDirection: "row",
     alignItems: "center",

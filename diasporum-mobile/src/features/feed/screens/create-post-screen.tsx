@@ -35,6 +35,8 @@ import { BrandColors } from "@/shared/theme/colors";
 import { Spacing, BorderRadius } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
 import { ApiError } from "@/core/api/api-error";
+import { OptionPicker } from "@/shared/components/option-picker";
+import { FormattingToolbar, continueList } from "../components/formatting-toolbar";
 import type {
   CategoryView,
   CreateHelpPostRequest,
@@ -152,6 +154,7 @@ export default function CreatePostScreen() {
         : "general",
   );
   const [body, setBody] = useState("");
+  const [bodySel, setBodySel] = useState({ start: 0, end: 0 });
   const [helpKind, setHelpKind] = useState<HelpKind>("REQUEST");
   const [helpTitle, setHelpTitle] = useState("");
   const [helpExpiryDays, setHelpExpiryDays] = useState<number | null>(null);
@@ -194,8 +197,22 @@ export default function CreatePostScreen() {
           community.destinationCountryId,
           categoryModule,
         );
-        if (!cancelled)
-          setCategories(response.items.filter((category) => category.active));
+        if (!cancelled) {
+          const active = response.items.filter((category) => category.active);
+          setCategories(active);
+          // Default to the first category (ordered by admin-curated
+          // sort_order server-side); re-pick when the current selection
+          // isn't in the freshly loaded module/community list.
+          setCategoryId((current) =>
+            current && active.some((c) => c.id === current)
+              ? current
+              : active[0]?.id ?? null);
+          // Polls carry their own category field — same default.
+          setPoll((current) =>
+            current.categoryId && active.some((c) => c.id === current.categoryId)
+              ? current
+              : { ...current, categoryId: active[0]?.id ?? "" });
+        }
       } catch {
         if (!cancelled) setError("Failed to load post categories.");
       } finally {
@@ -460,10 +477,9 @@ export default function CreatePostScreen() {
   const canPost =
     !submitting &&
     (mode === "poll"
-      ? !!poll.question.trim()
-      : mode === "help"
-        ? !!helpTitle.trim() && !!body.trim()
-        : !!body.trim());
+      ? !!poll.question.trim() && !!poll.categoryId
+      : !!categoryId &&
+        (mode === "help" ? !!helpTitle.trim() && !!body.trim() : !!body.trim()));
 
   function publicationFingerprint() {
     return JSON.stringify({
@@ -879,6 +895,15 @@ export default function CreatePostScreen() {
                     </ThemedText>
                   </ThemedText>
                 )}
+                <FormattingToolbar
+                  text={body}
+                  selection={bodySel}
+                  disabled={submitting}
+                  onChange={({ text, selection }) => {
+                    setBody(text.slice(0, 4000));
+                    setBodySel(selection);
+                  }}
+                />
                 <TextInput
                   style={[
                     styles.textInput,
@@ -894,7 +919,17 @@ export default function CreatePostScreen() {
                   }
                   placeholderTextColor={theme.textMuted}
                   value={body}
-                  onChangeText={setBody}
+                  onChangeText={(t) => {
+                    const cont = continueList(body, bodySel, t);
+                    if (cont) {
+                      setBody(cont.text);
+                      setBodySel(cont.selection);
+                    } else {
+                      setBody(t);
+                    }
+                  }}
+                  selection={bodySel}
+                  onSelectionChange={(e) => setBodySel(e.nativeEvent.selection)}
                   multiline
                   autoFocus={mode !== "help"}
                   maxLength={4000}
@@ -1152,48 +1187,15 @@ export default function CreatePostScreen() {
                 {categoriesLoading ? (
                   <ActivityIndicator size="small" color={BrandColors.primary} />
                 ) : (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    keyboardShouldPersistTaps="handled"
-                    contentContainerStyle={styles.categoryChips}
-                  >
-                    {categories.map((c) => (
-                      <Pressable
-                        key={c.id}
-                        onPress={() => setCategoryId(c.id)}
-                        style={[
-                          styles.helpKindBtn,
-                          {
-                            borderColor:
-                              categoryId === c.id
-                                ? BrandColors.primary
-                                : theme.border,
-                            backgroundColor:
-                              categoryId === c.id
-                                ? BrandColors.primarySurface
-                                : "transparent",
-                          },
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Category ${c.name}`}
-                        accessibilityState={{ selected: categoryId === c.id }}
-                      >
-                        <ThemedText
-                          style={{
-                            color:
-                              categoryId === c.id
-                                ? BrandColors.primary
-                                : theme.textSecondary,
-                            fontSize: 13,
-                            fontWeight: "600",
-                          }}
-                        >
-                          {c.name}
-                        </ThemedText>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
+                  <OptionPicker
+                    options={categories.map((c) => ({ id: c.id, label: c.name }))}
+                    selectedId={categoryId}
+                    onSelect={setCategoryId}
+                    placeholder="Choose a category"
+                    searchable={categories.length > 8}
+                    icon="grid-outline"
+                    variant="soft"
+                  />
                 )}
               </View>
             )}
@@ -1205,20 +1207,22 @@ export default function CreatePostScreen() {
                   style={styles.categoryLabel}
                   themeColor="textSecondary"
                 >
-                  Hashtags
+                  Tags
                 </ThemedText>
                 <View
-                  style={[styles.tagInputRow, { borderColor: theme.border }]}
+                  style={[
+                    styles.tagInputRow,
+                    { backgroundColor: theme.backgroundElement },
+                  ]}
                 >
                   <ThemedText
-                    style={styles.tagPrefix}
-                    themeColor="textSecondary"
+                    style={[styles.tagPrefix, { color: theme.primary }]}
                   >
                     #
                   </ThemedText>
                   <TextInput
                     style={[styles.tagInputField, { color: theme.text }]}
-                    placeholder="Add a hashtag"
+                    placeholder="Add a tag"
                     placeholderTextColor={theme.textMuted}
                     value={tagInput}
                     onChangeText={(text) =>
@@ -1228,14 +1232,14 @@ export default function CreatePostScreen() {
                     returnKeyType="done"
                     autoCapitalize="none"
                     maxLength={60}
-                    accessibilityLabel="Hashtag input"
+                    accessibilityLabel="Tag input"
                   />
                   <Pressable
                     onPress={() => addTag(tagInput)}
                     disabled={!tagCanAdd}
                     style={[styles.tagAddBtn, !tagCanAdd && { opacity: 0.4 }]}
                     accessibilityRole="button"
-                    accessibilityLabel="Add hashtag"
+                    accessibilityLabel="Add tag"
                     accessibilityState={{ disabled: !tagCanAdd }}
                   >
                     <ThemedText
@@ -1261,7 +1265,7 @@ export default function CreatePostScreen() {
                         onPress={() => addTag(s.displayName)}
                         style={styles.suggestItem}
                         accessibilityRole="button"
-                        accessibilityLabel={`Use hashtag ${s.displayName}`}
+                        accessibilityLabel={`Use tag ${s.displayName}`}
                       >
                         <ThemedText style={styles.suggestText}>
                           #{s.displayName}
@@ -1281,16 +1285,23 @@ export default function CreatePostScreen() {
                     {tags.map((t) => (
                       <View
                         key={t}
-                        style={[styles.tagChip, { borderColor: theme.border }]}
+                        style={[
+                          styles.tagChip,
+                          { backgroundColor: theme.primarySurface },
+                        ]}
                       >
-                        <ThemedText style={styles.tagChipText}>#{t}</ThemedText>
+                        <ThemedText
+                          style={[styles.tagChipText, { color: theme.primary }]}
+                        >
+                          #{t}
+                        </ThemedText>
                         <Pressable
                           onPress={() =>
                             setTags((current) => current.filter((x) => x !== t))
                           }
                           hitSlop={6}
                           accessibilityRole="button"
-                          accessibilityLabel={`Remove hashtag ${t}`}
+                          accessibilityLabel={`Remove tag ${t}`}
                         >
                           <ThemedText
                             style={styles.tagChipRemove}
@@ -1548,18 +1559,17 @@ const styles = StyleSheet.create({
   tagInputRow: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: BorderRadius.md,
+    borderRadius: 12,
     paddingLeft: Spacing.three,
     paddingRight: 4,
-    gap: Spacing.one,
+    gap: Spacing.two,
   },
-  tagPrefix: { fontSize: 14, fontWeight: "600" },
-  tagInputField: { flex: 1, fontSize: 14, paddingVertical: 8 },
+  tagPrefix: { fontSize: 15, fontWeight: "700" },
+  tagInputField: { flex: 1, fontSize: 14, paddingVertical: 9 },
   tagAddBtn: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: 6,
-    borderRadius: BorderRadius.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 10,
     backgroundColor: BrandColors.primary,
   },
   tagAddText: { fontSize: 13, fontWeight: "600" },
@@ -1567,12 +1577,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.full,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  tagChipText: { fontSize: 13, color: BrandColors.primary },
+  tagChipText: { fontSize: 13, fontWeight: "600" },
   tagChipRemove: { fontSize: 14, fontWeight: "600" },
   suggestBox: {
     borderWidth: StyleSheet.hairlineWidth,

@@ -16,11 +16,9 @@ import {
   StyleSheet,
   View,
 } from "react-native";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { safeBack } from "@/core/navigation/safe-back";
@@ -352,75 +350,52 @@ export default function EventDetailScreen() {
 
   return (
     <ThemedView style={s.root}>
-      <StatusBar style="auto" />
-      <SafeAreaView style={s.safeArea} edges={["top", "left", "right"]}>
-        {/* Header */}
-        <View style={[s.header, { borderBottomColor: theme.border }]}>
-          <Pressable
-            onPress={safeBack}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <Ionicons name="chevron-back" size={24} color={theme.text} />
-          </Pressable>
-          <ThemedText type="title" style={s.headerTitle} numberOfLines={1}>
-            Event
-          </ThemedText>
-          <Pressable
-            onPress={() => void toggleSave()}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={
-              detail.saved ? "Remove from saved events" : "Save event"
-            }
-          >
-            <Ionicons
-              name={detail.saved ? "bookmark" : "bookmark-outline"}
-              size={22}
-              color={detail.saved ? BrandColors.primary : theme.text}
-            />
-          </Pressable>
+      <StatusBar style="light" />
+      <ScrollView
+        style={s.scroll}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refresh}
+            tintColor={BrandColors.primary}
+          />
+        }
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: Spacing.five + insets.bottom }}
+      >
+        {/* Full-bleed hero cover; the scrim keeps the status bar and the
+            floating nav readable over any image */}
+        <View style={s.coverWrap}>
+          <EventCover
+            eventId={e.id}
+            coverMediaId={e.coverMediaId}
+            style={s.cover}
+          />
+          <LinearGradient
+            colors={["rgba(0,0,0,0.45)", "transparent"]}
+            style={s.coverScrim}
+            pointerEvents="none"
+          />
+          {fewSpotsLeft && (
+            <View style={s.urgencyBadge}>
+              <Ionicons name="flame" size={11} color="#3F6212" />
+              <ThemedText style={s.urgencyText}>Few spots left</ThemedText>
+            </View>
+          )}
+          {e.visibilityScope === "COUNTRY" && !fewSpotsLeft && (
+            <View style={s.scopeBadge}>
+              <Ionicons
+                name="globe-outline"
+                size={11}
+                color={BrandColors.white}
+              />
+              <ThemedText style={s.scopeBadgeText}>Country-wide</ThemedText>
+            </View>
+          )}
+          <DateBadge day={dayBadge.day} month={dayBadge.month} />
         </View>
 
-        <ScrollView
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={refresh}
-              tintColor={BrandColors.primary}
-            />
-          }
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[
-            s.content,
-            { paddingBottom: Spacing.four + insets.bottom },
-          ]}
-        >
-          {/* Hero cover with the same overlay badges as the list card */}
-          <View style={s.coverWrap}>
-            <EventCover
-              eventId={e.id}
-              coverMediaId={e.coverMediaId}
-              style={s.cover}
-            />
-            {fewSpotsLeft && (
-              <View style={s.urgencyBadge}>
-                <Ionicons name="flame" size={11} color="#3F6212" />
-                <ThemedText style={s.urgencyText}>Few spots left</ThemedText>
-              </View>
-            )}
-            {e.visibilityScope === "COUNTRY" && !fewSpotsLeft && (
-              <View style={s.scopeBadge}>
-                <Ionicons
-                  name="globe-outline"
-                  size={11}
-                  color={BrandColors.white}
-                />
-                <ThemedText style={s.scopeBadgeText}>Country-wide</ThemedText>
-              </View>
-            )}
-          </View>
+        <View style={s.content}>
 
           {/* Status banners */}
           {cancelled && (
@@ -487,49 +462,66 @@ export default function EventDetailScreen() {
             </View>
           )}
 
-          {/* Title + category */}
-          <ThemedText style={s.title}>{e.title}</ThemedText>
-          <View style={s.tagRow}>
-            {detail.category && (
-              <Tag
-                label={detail.category.displayName}
-                icon="pricetag-outline"
-              />
-            )}
-            <Tag label="Free" icon="ticket-outline" />
-            <Tag
-              label={
-                e.visibilityScope === "COUNTRY" ? "Country-wide" : "Community"
-              }
-              icon={
-                e.visibilityScope === "COUNTRY"
-                  ? "globe-outline"
-                  : "people-outline"
-              }
-            />
-            <Tag
-              label={isOnline ? "Online" : "In person"}
-              icon={isOnline ? "videocam-outline" : "location-outline"}
-            />
+          {/* Title + quick facts */}
+          <View style={s.titleBlock}>
+            <ThemedText style={s.title}>{e.title}</ThemedText>
+            <View style={s.chipRow}>
+              {detail.category && (
+                <View
+                  style={[s.chip, { backgroundColor: theme.primarySurface }]}
+                >
+                  <ThemedText style={[s.chipText, { color: theme.primary }]}>
+                    {detail.category.displayName}
+                  </ThemedText>
+                </View>
+              )}
+              <View
+                style={[s.chip, { backgroundColor: theme.backgroundElement }]}
+              >
+                <ThemedText style={s.chipText} themeColor="textSecondary">
+                  Free
+                </ThemedText>
+              </View>
+              <View
+                style={[s.chip, { backgroundColor: theme.backgroundElement }]}
+              >
+                <ThemedText style={s.chipText} themeColor="textSecondary">
+                  {e.visibilityScope === "COUNTRY"
+                    ? "Country-wide"
+                    : "Community"}
+                </ThemedText>
+              </View>
+            </View>
           </View>
 
-          {/* Details card — when / where / who / organizer */}
-          <View
-            style={[
-              s.card,
-              {
-                borderColor: theme.border,
-                backgroundColor: theme.background,
-              },
-            ]}
-          >
-            <InfoRow
-              icon="calendar-outline"
-              label="When"
-              leading={
-                <DateBadge day={dayBadge.day} month={dayBadge.month} />
-              }
+          {/* Host */}
+          <View style={s.hostRow}>
+            <View
+              style={[s.hostAvatar, { backgroundColor: theme.primarySurface }]}
             >
+              {detail.businessAccountName ? (
+                <Ionicons
+                  name="business-outline"
+                  size={16}
+                  color={theme.primary}
+                />
+              ) : (
+                <ThemedText style={[s.hostInitial, { color: theme.primary }]}>
+                  {organizerInitial}
+                </ThemedText>
+              )}
+            </View>
+            <View style={s.hostBody}>
+              <ThemedText style={s.hostLabel} themeColor="textSecondary">
+                Hosted by
+              </ThemedText>
+              <ThemedText style={s.hostName}>{organizerName}</ThemedText>
+            </View>
+          </View>
+
+          {/* Details — when / where / who's coming */}
+          <View>
+            <InfoRow icon="calendar-outline">
               <ThemedText style={s.infoValue}>
                 {formatEventDate(e.startsAt, e.timezone)}
                 {e.endsAt
@@ -539,29 +531,45 @@ export default function EventDetailScreen() {
               <ThemedText style={s.infoSub} themeColor="textSecondary">
                 {e.timezone}
               </ThemedText>
+              {!isDraft && (
+                <Pressable
+                  onPress={() => void addToCalendar()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add to calendar"
+                  hitSlop={6}
+                >
+                  <ThemedText style={s.inlineLink}>
+                    Add to calendar
+                  </ThemedText>
+                </Pressable>
+              )}
             </InfoRow>
 
-            {((isOnline && e.externalUrl) || e.locationName) && (
-              <CardDivider />
-            )}
+            {((isOnline && e.externalUrl) || e.locationName) && <RowDivider />}
             {isOnline && e.externalUrl ? (
-              <InfoRow icon="link-outline" label="Join online">
+              <InfoRow icon="link-outline">
                 <Pressable
                   onPress={() => void openLink(e.externalUrl as string)}
+                  style={s.linkRow}
                 >
                   <ThemedText style={s.link} numberOfLines={1}>
                     {e.externalUrl}
                   </ThemedText>
+                  <Ionicons
+                    name="open-outline"
+                    size={14}
+                    color={BrandColors.primary}
+                  />
                 </Pressable>
               </InfoRow>
             ) : e.locationName ? (
-              <InfoRow icon="location-outline" label="Where">
+              <InfoRow icon="location-outline">
                 <ThemedText style={s.infoValue}>{e.locationName}</ThemedText>
               </InfoRow>
             ) : null}
 
-            <CardDivider />
-            <InfoRow icon="people-outline" label="Participants">
+            <RowDivider />
+            <InfoRow icon="people-outline">
               <ThemedText style={s.infoValue}>
                 {detail.counts.going} going
                 {e.capacity !== null ? ` of ${e.capacity}` : ""}
@@ -618,94 +626,31 @@ export default function EventDetailScreen() {
                   }
                   accessibilityRole="button"
                   accessibilityLabel="View all participants"
+                  style={s.seeAllRow}
                 >
-                  <ThemedText style={s.viewAllLink}>
+                  <ThemedText style={s.seeAllText}>
                     View all participants
                   </ThemedText>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={14}
+                    color={BrandColors.primary}
+                  />
                 </Pressable>
               )}
             </InfoRow>
-
-            <CardDivider />
-            <InfoRow
-              icon="person-circle-outline"
-              label="Organizer"
-              leading={
-                <View
-                  style={[
-                    s.orgAvatar,
-                    { backgroundColor: theme.primarySurface },
-                  ]}
-                >
-                  {detail.businessAccountName ? (
-                    <Ionicons
-                      name="business-outline"
-                      size={16}
-                      color={theme.primary}
-                    />
-                  ) : (
-                    <ThemedText
-                      style={[s.orgInitial, { color: theme.primary }]}
-                    >
-                      {organizerInitial}
-                    </ThemedText>
-                  )}
-                </View>
-              }
-            >
-              <ThemedText style={s.infoValue}>{organizerName}</ThemedText>
-            </InfoRow>
           </View>
 
-          {/* Description */}
-          <ThemedText style={s.sectionTitle}>About this event</ThemedText>
-          <ThemedText style={s.description}>{e.description}</ThemedText>
-
-          {/* Share / calendar */}
-          {!isDraft && (
-            <View style={s.shareRow}>
-              <Pressable
-                onPress={() => void addToCalendar()}
-                accessibilityRole="button"
-                accessibilityLabel="Add to calendar"
-                style={[s.shareBtn, { borderColor: theme.border }]}
-              >
-                <Ionicons
-                  name="calendar-outline"
-                  size={15}
-                  color={theme.text}
-                />
-                <ThemedText style={s.shareBtnText}>Add to calendar</ThemedText>
-              </Pressable>
-              <Pressable
-                onPress={() => void share()}
-                accessibilityRole="button"
-                accessibilityLabel="Share event"
-                style={[s.shareBtn, { borderColor: theme.border }]}
-              >
-                <Ionicons
-                  name="share-social-outline"
-                  size={15}
-                  color={theme.text}
-                />
-                <ThemedText style={s.shareBtnText}>Share</ThemedText>
-              </Pressable>
-            </View>
-          )}
+          {/* About */}
+          <View style={s.section}>
+            <ThemedText style={s.sectionTitle}>About this event</ThemedText>
+            <ThemedText style={s.description}>{e.description}</ThemedText>
+          </View>
 
           {/* RSVP */}
           {!rsvpBlocked && (
-            <View
-              style={[
-                s.card,
-                s.sectionCard,
-                {
-                  borderColor: theme.border,
-                  backgroundColor: theme.background,
-                },
-              ]}
-            >
-              <ThemedText style={s.cardTitle}>Your RSVP</ThemedText>
+            <View style={s.section}>
+              <ThemedText style={s.sectionTitle}>Are you going?</ThemedText>
               {actionError && (
                 <ThemedText
                   style={[s.actionError, { color: BrandColors.error }]}
@@ -713,7 +658,12 @@ export default function EventDetailScreen() {
                   {actionError}
                 </ThemedText>
               )}
-              <View style={s.rsvpRow}>
+              <View
+                style={[
+                  s.segControl,
+                  { backgroundColor: theme.backgroundElement },
+                ]}
+              >
                 <RsvpBtn
                   active={detail.myRsvp === "GOING"}
                   busy={rsvpBusy}
@@ -757,17 +707,8 @@ export default function EventDetailScreen() {
 
           {/* Manager actions */}
           {detail.canManage && (
-            <View
-              style={[
-                s.card,
-                s.sectionCard,
-                {
-                  borderColor: theme.border,
-                  backgroundColor: theme.background,
-                },
-              ]}
-            >
-              <ThemedText style={s.cardTitle}>Manage</ThemedText>
+            <View style={s.section}>
+              <ThemedText style={s.sectionTitle}>Manage event</ThemedText>
               <View style={s.manageRow}>
                 <ManageBtn
                   label="Edit"
@@ -836,66 +777,91 @@ export default function EventDetailScreen() {
               </ThemedText>
             </Pressable>
           )}
-        </ScrollView>
-      </SafeAreaView>
-    </ThemedView>
-  );
-}
+        </View>
+      </ScrollView>
 
-function Tag({
-  label,
-  icon,
-}: {
-  label: string;
-  icon: React.ComponentProps<typeof Ionicons>["name"];
-}) {
-  const theme = useTheme();
-  return (
-    <View style={[s.tag, { backgroundColor: theme.backgroundElement }]}>
-      <Ionicons name={icon} size={11} color={theme.textSecondary} />
-      <ThemedText style={s.tagText} themeColor="textSecondary">
-        {label}
-      </ThemedText>
-    </View>
+      {/* Floating nav over the hero */}
+      <View
+        style={[s.floatingHeader, { top: insets.top + Spacing.two }]}
+        pointerEvents="box-none"
+      >
+        <Pressable
+          onPress={safeBack}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          style={s.navBtn}
+        >
+          <Ionicons name="chevron-back" size={22} color={BrandColors.white} />
+        </Pressable>
+        <View style={s.navActions}>
+          {!isDraft && (
+            <Pressable
+              onPress={() => void share()}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Share event"
+              style={s.navBtn}
+            >
+              <Ionicons
+                name="share-social-outline"
+                size={19}
+                color={BrandColors.white}
+              />
+            </Pressable>
+          )}
+          <Pressable
+            onPress={() => void toggleSave()}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={
+              detail.saved ? "Remove from saved events" : "Save event"
+            }
+            style={s.navBtn}
+          >
+            <Ionicons
+              name={detail.saved ? "bookmark" : "bookmark-outline"}
+              size={19}
+              color={detail.saved ? BrandColors.primary : BrandColors.white}
+            />
+          </Pressable>
+        </View>
+      </View>
+    </ThemedView>
   );
 }
 
 function InfoRow({
   icon,
-  label,
-  leading,
   children,
 }: {
   icon: React.ComponentProps<typeof Ionicons>["name"];
-  label: string;
-  /** Replaces the default tinted icon chip (date badge, avatar, …). */
-  leading?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const theme = useTheme();
   return (
     <View style={s.infoRow}>
-      {leading ?? (
-        <View
-          style={[s.infoIcon, { backgroundColor: theme.backgroundElement }]}
-        >
-          <Ionicons name={icon} size={18} color={theme.textSecondary} />
-        </View>
-      )}
-      <View style={s.infoBody}>
-        <ThemedText style={s.infoLabel} themeColor="textSecondary">
-          {label}
-        </ThemedText>
-        {children}
-      </View>
+      <Ionicons
+        name={icon}
+        size={20}
+        color={theme.textSecondary}
+        style={s.infoIcon}
+      />
+      <View style={s.infoBody}>{children}</View>
     </View>
   );
 }
 
+/** Raised card that straddles the cover's bottom edge — the "NOV 20" tile. */
 function DateBadge({ day, month }: { day: string; month: string }) {
   const theme = useTheme();
   return (
-    <View style={[s.dateBadge, { backgroundColor: theme.primarySurface }]}>
+    <View
+      style={[
+        s.dateBadge,
+        { backgroundColor: theme.background, borderColor: theme.border },
+      ]}
+    >
       <ThemedText style={[s.dateBadgeDay, { color: theme.primary }]}>
         {day}
       </ThemedText>
@@ -906,9 +872,9 @@ function DateBadge({ day, month }: { day: string; month: string }) {
   );
 }
 
-function CardDivider() {
+function RowDivider() {
   const theme = useTheme();
-  return <View style={[s.cardDivider, { backgroundColor: theme.border }]} />;
+  return <View style={[s.rowDivider, { backgroundColor: theme.border }]} />;
 }
 
 function RsvpBtn({
@@ -922,7 +888,6 @@ function RsvpBtn({
   busy: boolean;
   onPress: () => void;
 }) {
-  const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -931,14 +896,13 @@ function RsvpBtn({
       accessibilityLabel={label}
       accessibilityState={{ selected: active, disabled: busy }}
       style={[
-        s.rsvpBtn,
-        { borderColor: active ? BrandColors.primary : theme.border },
+        s.segBtn,
         active && { backgroundColor: BrandColors.primary },
         busy && { opacity: 0.6 },
       ]}
     >
       <ThemedText
-        style={[s.rsvpBtnText, active && { color: BrandColors.white }]}
+        style={[s.segBtnText, active && { color: BrandColors.white }]}
       >
         {busy ? "…" : label}
       </ThemedText>
@@ -963,7 +927,14 @@ function ManageBtn({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={[s.manageBtn, { borderColor: theme.border }]}
+      style={[
+        s.manageBtn,
+        {
+          backgroundColor: danger
+            ? BrandColors.errorSurface
+            : theme.backgroundElement,
+        },
+      ]}
     >
       <Ionicons
         name={icon}
@@ -981,23 +952,39 @@ function ManageBtn({
 
 const s = StyleSheet.create({
   root: { flex: 1 },
-  safeArea: { flex: 1 },
-  header: {
+  scroll: { flex: 1 },
+  floatingHeader: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    zIndex: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerTitle: { fontSize: 18 },
-  content: { padding: Spacing.four, gap: Spacing.three },
+  navActions: { flexDirection: "row", gap: Spacing.two },
+  navBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(17,24,39,0.45)",
+  },
   coverWrap: { position: "relative" },
-  cover: { borderRadius: BorderRadius.lg },
+  cover: { width: "100%", aspectRatio: 4 / 3 },
+  coverScrim: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 110,
+  },
   urgencyBadge: {
     position: "absolute",
-    top: Spacing.two,
-    left: Spacing.two,
+    right: Spacing.two,
+    bottom: Spacing.two,
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
@@ -1015,8 +1002,8 @@ const s = StyleSheet.create({
   },
   scopeBadge: {
     position: "absolute",
-    top: Spacing.two,
-    left: Spacing.two,
+    right: Spacing.two,
+    bottom: Spacing.two,
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
@@ -1030,17 +1017,29 @@ const s = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
   },
-  card: {
+  dateBadge: {
+    position: "absolute",
+    left: 20,
+    bottom: -22,
+    width: 54,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.three,
+    alignItems: "center",
+    shadowColor: BrandColors.black,
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
   },
-  sectionCard: { gap: Spacing.three },
-  cardTitle: { fontSize: 16, fontWeight: "700" },
-  cardDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 36 + Spacing.three,
+  dateBadgeDay: { fontSize: 17, fontWeight: "800", lineHeight: 19 },
+  dateBadgeMonth: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    lineHeight: 11,
   },
+  content: { paddingHorizontal: 20, paddingTop: 38, gap: Spacing.four },
   banner: {
     flexDirection: "row",
     alignItems: "center",
@@ -1051,98 +1050,91 @@ const s = StyleSheet.create({
   bannerText: { flex: 1 },
   bannerTitle: { fontSize: 14, fontWeight: "700" },
   bannerBody: { fontSize: 13, marginTop: 2 },
+  titleBlock: { gap: 12 },
   title: {
     fontSize: 24,
     fontWeight: "800",
     lineHeight: 30,
     letterSpacing: -0.3,
   },
-  tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  tag: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  chip: {
     borderRadius: BorderRadius.full,
-    paddingHorizontal: 9,
+    paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  tagText: { fontSize: 12, fontWeight: "600" },
+  chipText: { fontSize: 12, fontWeight: "700" },
+  hostRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.three,
+  },
+  hostAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  hostInitial: { fontSize: 15, fontWeight: "800" },
+  hostBody: { flex: 1, gap: 1 },
+  hostLabel: { fontSize: 12 },
+  hostName: { fontSize: 15, fontWeight: "700" },
   infoRow: {
     flexDirection: "row",
     gap: Spacing.three,
     alignItems: "flex-start",
     paddingVertical: Spacing.two,
   },
-  infoIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  infoIcon: { width: 24, marginTop: 3, textAlign: "center" },
+  infoBody: { flex: 1 },
+  infoValue: { fontSize: 15, lineHeight: 21 },
+  infoSub: { fontSize: 13, marginTop: 2 },
+  inlineLink: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: BrandColors.primary,
+    marginTop: 6,
+  },
+  linkRow: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 4,
     marginTop: 2,
   },
-  dateBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: BorderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 2,
-  },
-  dateBadgeDay: { fontSize: 13, fontWeight: "800", lineHeight: 15 },
-  dateBadgeMonth: {
-    fontSize: 8,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    lineHeight: 10,
-  },
-  orgAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 2,
-  },
-  orgInitial: { fontSize: 15, fontWeight: "800" },
+  link: { fontSize: 15, color: BrandColors.primary, flexShrink: 1 },
+  rowDivider: { height: StyleSheet.hairlineWidth, marginLeft: 40 },
   capacityBlock: { marginTop: Spacing.two, gap: 6 },
   capacityTrack: { height: 6, borderRadius: 3, overflow: "hidden" },
   capacityFill: { height: 6, borderRadius: 3 },
   capacityText: { fontSize: 12, fontWeight: "600" },
-  infoBody: { flex: 1 },
-  infoLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
+  seeAllRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    marginTop: Spacing.two,
   },
-  infoValue: { fontSize: 15, lineHeight: 21, marginTop: 2 },
-  infoSub: { fontSize: 13, marginTop: 2 },
-  viewAllLink: {
+  seeAllText: {
     fontSize: 13,
     fontWeight: "600",
     color: BrandColors.primary,
-    textDecorationLine: "underline",
-    marginTop: 4,
   },
-  link: {
-    fontSize: 15,
-    color: BrandColors.primary,
-    textDecorationLine: "underline",
-    marginTop: 2,
-  },
-  sectionTitle: { fontSize: 16, fontWeight: "700", marginTop: Spacing.two },
+  section: { gap: Spacing.three },
+  sectionTitle: { fontSize: 16, fontWeight: "700" },
   description: { fontSize: 15, lineHeight: 22 },
-  rsvpRow: { flexDirection: "row", gap: Spacing.two },
-  rsvpBtn: {
-    flex: 1,
-    borderWidth: 1.5,
+  segControl: {
+    flexDirection: "row",
     borderRadius: BorderRadius.full,
-    paddingVertical: 11,
+    padding: 4,
+  },
+  segBtn: {
+    flex: 1,
+    borderRadius: BorderRadius.full,
+    paddingVertical: 10,
     alignItems: "center",
     justifyContent: "center",
   },
-  rsvpBtnText: { fontSize: 14, fontWeight: "700" },
+  segBtnText: { fontSize: 14, fontWeight: "700" },
   waitlistNote: { fontSize: 13 },
   removeRsvp: {
     fontSize: 13,
@@ -1157,24 +1149,11 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    borderWidth: 1,
     borderRadius: BorderRadius.md,
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
   manageBtnText: { fontSize: 13, fontWeight: "700" },
-  shareRow: { flexDirection: "row", gap: Spacing.two },
-  shareBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderWidth: 1.5,
-    borderRadius: BorderRadius.full,
-    paddingVertical: 11,
-  },
-  shareBtnText: { fontSize: 13, fontWeight: "700" },
   reportBtn: {
     flexDirection: "row",
     alignItems: "center",

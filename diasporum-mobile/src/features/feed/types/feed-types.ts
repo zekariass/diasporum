@@ -11,6 +11,7 @@ export interface ProfileSummary {
   accountStatus: string;
   profileCompleted: boolean;
   avatarMediaId: string | null;
+  bio?: string | null;
 }
 
 // ---- FeedItem (FeedService.FeedItem — JSON field order follows record order) ----

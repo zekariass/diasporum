@@ -18,6 +18,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import { SelectField } from "@/shared/components/select-field";
+import { MultiSelectField } from "@/shared/components/multi-select-field";
 import { CURRENCY_OPTIONS } from "@/shared/utils/currencies";
 import { createBusinessApi } from "@/features/business/services/business-api";
 import { createCommunityApi } from "@/features/communities/services/community-api";
@@ -34,6 +35,7 @@ import type {
 import type { PropertyFormState } from "../utils/property-form-state";
 import {
   Chip,
+  DatePickerField,
   Field,
   FormScrollContext,
   FormSection,
@@ -94,6 +96,7 @@ interface Props {
   existingMediaCount?: number;
   step?: number;
   mediaSlot?: React.ReactNode;
+  errors?: Record<string, string>;
 }
 
 export function PropertyForm({
@@ -102,6 +105,7 @@ export function PropertyForm({
   existingMediaCount = 0,
   step = 0,
   mediaSlot,
+  errors = {},
 }: Props) {
   const theme = useTheme();
   const { apiClient, session } = useSession();
@@ -110,6 +114,7 @@ export function PropertyForm({
   const [accounts, setAccounts] = useState<BusinessAccount[]>([]);
   const [profiles, setProfiles] = useState<Business[]>([]);
   const [communities, setCommunities] = useState<CommunityView[]>([]);
+  const [optionsLoaded, setOptionsLoaded] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
@@ -234,6 +239,7 @@ export function PropertyForm({
               community.destinationCountryId === state.countryId,
           ),
         );
+        setOptionsLoaded(true);
       })
       .catch(() =>
         setFormError(
@@ -241,6 +247,27 @@ export function PropertyForm({
         ),
       );
   }, [apiClient, session?.memberships, state.countryId]);
+
+  // A business account is required before listing as one — clear any stale
+  // selection (e.g. a revoked account or missing route param) once options load.
+  useEffect(() => {
+    if (!optionsLoaded) return;
+    if (
+      state.businessAccountId &&
+      !accounts.some((account) => account.id === state.businessAccountId)
+    ) {
+      onChange({ businessAccountId: undefined, businessListingId: undefined });
+    }
+  }, [optionsLoaded, accounts, state.businessAccountId, onChange]);
+
+  // Validation errors point at fields — bring the first one into view.
+  const errorCount = Object.keys(errors).length;
+  const previousErrorCount = useRef(0);
+  useEffect(() => {
+    if (errorCount > previousErrorCount.current)
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+    previousErrorCount.current = errorCount;
+  }, [errorCount]);
 
   // Eligible public Business Profiles for the selected owning account.
   const [profilesAccountId, setProfilesAccountId] = useState<
@@ -324,22 +351,6 @@ export function PropertyForm({
     }
   }
 
-  function toggleAmenity(id: string) {
-    onChange({
-      amenityIds: state.amenityIds.includes(id)
-        ? state.amenityIds.filter((value) => value !== id)
-        : [...state.amenityIds, id],
-    });
-  }
-
-  function toggleCommunity(id: string) {
-    onChange({
-      communityIds: state.communityIds.includes(id)
-        ? state.communityIds.filter((value) => value !== id)
-        : [...state.communityIds, id],
-    });
-  }
-
   const currentStep = STEP_CONTENT[step] ?? STEP_CONTENT[0];
   const totalPhotos = existingMediaCount + state.images.length;
   const remainingPhotos = Math.max(0, 12 - totalPhotos);
@@ -408,7 +419,8 @@ export function PropertyForm({
               icon="create-outline"
             >
               <SelectField
-                label="Property type (required)"
+                label="Property type"
+                required
                 value={state.propertyTypeId}
                 options={types.map((propertyType) => ({
                   id: propertyType.id,
@@ -420,23 +432,28 @@ export function PropertyForm({
                 inputStyle={styles.selectInput}
                 leadingIcon="business-outline"
                 hint="Options are based on your current country."
+                error={errors.propertyTypeId}
               />
               <Field
-                label="Title (required)"
+                label="Title"
+                required
                 value={state.title}
                 onChangeText={(title) => onChange({ title })}
                 placeholder="e.g. Bright two-bedroom apartment"
                 maxLength={220}
                 hint={`${state.title.length}/220 characters`}
+                error={errors.title}
               />
               <Field
-                label="Description (required)"
+                label="Description"
+                required
                 value={state.description}
                 onChangeText={(description) => onChange({ description })}
                 multiline
                 placeholder="Describe the property, neighbourhood, key features, and terms."
                 maxLength={20000}
                 hint="Include the details that would matter most to you as a buyer or tenant."
+                error={errors.description}
               />
             </FormSection>
           </View>
@@ -453,28 +470,26 @@ export function PropertyForm({
               }
               icon="cash-outline"
             >
-              <View style={styles.twoColumns}>
-                <View style={styles.column}>
-                  <Field
-                    label="Price (required)"
-                    value={state.priceAmount}
-                    onChangeText={(priceAmount) => onChange({ priceAmount })}
-                    keyboardType="decimal-pad"
-                    placeholder="0.00"
-                  />
-                </View>
-                <View style={styles.currency}>
-                  <SelectField
-                    label="Currency"
-                    value={state.currencyCode}
-                    options={CURRENCY_OPTIONS}
-                    onChange={(currencyCode) => onChange({ currencyCode })}
-                    modalTitle="Currency"
-                    searchPlaceholder="Search currencies"
-                    inputStyle={styles.selectInput}
-                  />
-                </View>
-              </View>
+              <Field
+                label="Price"
+                required
+                value={state.priceAmount}
+                onChangeText={(priceAmount) => onChange({ priceAmount })}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                error={errors.priceAmount}
+              />
+              <SelectField
+                label="Currency"
+                value={state.currencyCode}
+                options={CURRENCY_OPTIONS}
+                onChange={(currencyCode) => onChange({ currencyCode })}
+                modalTitle="Currency"
+                searchPlaceholder="Search currencies"
+                inputStyle={styles.selectInput}
+                leadingIcon="cash-outline"
+                error={errors.currencyCode}
+              />
               {state.listingPurpose === "RENT" ? (
                 <View style={styles.fieldGroup}>
                   <ThemedText style={styles.label}>Rental period</ThemedText>
@@ -513,6 +528,14 @@ export function PropertyForm({
                   onChange={(receptionRooms) => onChange({ receptionRooms })}
                 />
               </View>
+              {errors.bedrooms || errors.bathrooms || errors.receptionRooms ? (
+                <ThemedText
+                  style={[styles.smallHint, { color: theme.error }]}
+                  accessibilityRole="alert"
+                >
+                  {errors.bedrooms ?? errors.bathrooms ?? errors.receptionRooms}
+                </ThemedText>
+              ) : null}
               <View style={styles.twoColumns}>
                 <View style={styles.column}>
                   <Field
@@ -521,6 +544,7 @@ export function PropertyForm({
                     onChangeText={(floorArea) => onChange({ floorArea })}
                     keyboardType="decimal-pad"
                     placeholder="e.g. 85"
+                    error={errors.floorArea}
                   />
                 </View>
                 <View style={styles.column}>
@@ -599,6 +623,7 @@ export function PropertyForm({
                   keyboardType="decimal-pad"
                   placeholder={`Amount in ${state.currencyCode}`}
                   icon="wallet-outline"
+                  error={errors.rentalDeposit}
                 />
                 <StepperInput
                   label="Minimum tenancy"
@@ -609,17 +634,34 @@ export function PropertyForm({
                   }
                   max={36}
                 />
-                <View style={styles.chipWrap}>
-                  <Chip
-                    label={
-                      state.billsIncluded
-                        ? "Bills included"
-                        : "Bills not included"
+                {errors.minimumTenancyMonths ? (
+                  <ThemedText
+                    style={[styles.smallHint, { color: theme.error }]}
+                    accessibilityRole="alert"
+                  >
+                    {errors.minimumTenancyMonths}
+                  </ThemedText>
+                ) : null}
+                <View style={styles.fieldGroup}>
+                  <ThemedText style={styles.label}>Bills</ThemedText>
+                  <SegmentedControl
+                    options={[
+                      {
+                        id: "INCLUDED",
+                        label: "Bills included",
+                        icon: "checkmark-circle-outline",
+                      },
+                      {
+                        id: "EXCLUDED",
+                        label: "Not included",
+                        icon: "close-circle-outline",
+                      },
+                    ]}
+                    value={state.billsIncluded ? "INCLUDED" : "EXCLUDED"}
+                    onChange={(value) =>
+                      onChange({ billsIncluded: value === "INCLUDED" })
                     }
-                    active={state.billsIncluded}
-                    onPress={() =>
-                      onChange({ billsIncluded: !state.billsIncluded })
-                    }
+                    accessibilityLabel="Bills included"
                   />
                 </View>
               </FormSection>
@@ -629,15 +671,14 @@ export function PropertyForm({
               description="Let people know when the property can be occupied."
               icon="calendar-outline"
             >
-              <Field
-                label="Available from (YYYY-MM-DD)"
+              <DatePickerField
+                label="Available from"
                 value={state.availabilityDate}
-                onChangeText={(availabilityDate) =>
+                onChange={(availabilityDate) =>
                   onChange({ availabilityDate })
                 }
-                placeholder="YYYY-MM-DD"
-                icon="calendar-outline"
                 hint="Optional — leave blank if the date is flexible."
+                error={errors.availabilityDate}
               />
             </FormSection>
           </View>
@@ -645,46 +686,46 @@ export function PropertyForm({
 
         {step === 2 ? (
           <View style={styles.step}>
-            <FormSection
-              title="List as"
-              description="Advertise personally or through a business account you manage."
-              icon="person-circle-outline"
-            >
-              <View style={styles.chipWrap}>
-                <Chip
-                  label="Personal"
-                  active={!state.businessAccountId}
-                  onPress={() =>
-                    onChange({
-                      businessAccountId: undefined,
-                      businessListingId: undefined,
-                    })
-                  }
-                />
-                {accounts.map((account) => (
+            {accounts.length ? (
+              <FormSection
+                title="List as"
+                description="Advertise personally or through a business account you manage."
+                icon="person-circle-outline"
+              >
+                <View style={styles.chipWrap}>
                   <Chip
-                    key={account.id}
-                    label={account.accountName}
-                    active={state.businessAccountId === account.id}
+                    label="Personal"
+                    active={!state.businessAccountId}
                     onPress={() =>
                       onChange({
-                        businessAccountId: account.id,
-                        businessListingId:
-                          state.businessAccountId === account.id
-                            ? state.businessListingId
-                            : undefined,
+                        businessAccountId: undefined,
+                        businessListingId: undefined,
                       })
                     }
-                    accessibilityLabel={`List as ${account.accountName}`}
                   />
-                ))}
-              </View>
-              {accounts.length ? (
+                  {accounts.map((account) => (
+                    <Chip
+                      key={account.id}
+                      label={account.accountName}
+                      active={state.businessAccountId === account.id}
+                      onPress={() =>
+                        onChange({
+                          businessAccountId: account.id,
+                          businessListingId:
+                            state.businessAccountId === account.id
+                              ? state.businessListingId
+                              : undefined,
+                        })
+                      }
+                      accessibilityLabel={`List as ${account.accountName}`}
+                    />
+                  ))}
+                </View>
                 <ThemedText themeColor="textSecondary" style={styles.smallHint}>
                   Business permissions are verified again when you save.
                 </ThemedText>
-              ) : null}
-            </FormSection>
+              </FormSection>
+            ) : null}
             {state.businessAccountId ? (
               <FormSection
                 title="Public business profile"
@@ -737,28 +778,34 @@ export function PropertyForm({
                 accessibilityLabel="Audience"
               />
               {state.visibilityScope === "COMMUNITY" ? (
-                <View style={styles.chipWrap}>
-                  {communities.map((community) => (
-                    <Chip
-                      key={community.id}
-                      label={community.name}
-                      active={state.communityId === community.id}
-                      onPress={() => onChange({ communityId: community.id })}
-                    />
-                  ))}
-                </View>
+                <SelectField
+                  label="Community"
+                  value={state.communityId}
+                  options={communities.map((community) => ({
+                    id: community.id,
+                    label: community.name,
+                  }))}
+                  onChange={(communityId) => onChange({ communityId })}
+                  modalTitle="Community"
+                  searchPlaceholder="Search communities"
+                  inputStyle={styles.selectInput}
+                  error={errors.communityId}
+                />
               ) : null}
               {state.visibilityScope === "SELECTED_COMMUNITIES" ? (
-                <View style={styles.chipWrap}>
-                  {communities.map((community) => (
-                    <Chip
-                      key={community.id}
-                      label={community.name}
-                      active={state.communityIds.includes(community.id)}
-                      onPress={() => toggleCommunity(community.id)}
-                    />
-                  ))}
-                </View>
+                <MultiSelectField
+                  label="Communities"
+                  values={state.communityIds}
+                  options={communities.map((community) => ({
+                    id: community.id,
+                    label: community.name,
+                  }))}
+                  onChange={(communityIds) => onChange({ communityIds })}
+                  modalTitle="Communities"
+                  searchPlaceholder="Search communities"
+                  inputStyle={styles.selectInput}
+                  error={errors.communityIds}
+                />
               ) : null}
             </FormSection>
             <FormSection
@@ -798,10 +845,12 @@ export function PropertyForm({
               <View style={styles.twoColumns}>
                 <View style={styles.column}>
                   <Field
-                    label="City (required)"
+                    label="City"
+                    required
                     value={state.city}
                     onChangeText={(city) => onChange({ city })}
                     placeholder="City"
+                    error={errors.city}
                   />
                 </View>
                 <View style={styles.column}>
@@ -834,6 +883,7 @@ export function PropertyForm({
                       onChangeText={(latitude) => onChange({ latitude })}
                       keyboardType="decimal-pad"
                       placeholder="50.1109"
+                      error={errors.latitude}
                     />
                   </View>
                   <View style={styles.column}>
@@ -843,6 +893,7 @@ export function PropertyForm({
                       onChangeText={(longitude) => onChange({ longitude })}
                       keyboardType="decimal-pad"
                       placeholder="8.6821"
+                      error={errors.longitude}
                     />
                   </View>
                 </View>
@@ -858,16 +909,20 @@ export function PropertyForm({
               description="Select everything included with the property."
               icon="sparkles-outline"
             >
-              <View style={styles.chipWrap}>
-                {amenities.map((amenity) => (
-                  <Chip
-                    key={amenity.id}
-                    label={amenity.displayName}
-                    active={state.amenityIds.includes(amenity.id)}
-                    onPress={() => toggleAmenity(amenity.id)}
-                  />
-                ))}
-              </View>
+              <MultiSelectField
+                label="Amenities"
+                values={state.amenityIds}
+                options={amenities.map((amenity) => ({
+                  id: amenity.id,
+                  label: amenity.displayName,
+                }))}
+                onChange={(amenityIds) => onChange({ amenityIds })}
+                placeholder="Choose amenities"
+                modalTitle="Amenities"
+                searchPlaceholder="Search amenities"
+                inputStyle={styles.selectInput}
+                leadingIcon="sparkles-outline"
+              />
               {!amenities.length ? (
                 <ThemedText themeColor="textSecondary" style={styles.smallHint}>
                   No amenities configured for this country yet.
@@ -939,6 +994,7 @@ export function PropertyForm({
                   placeholder="you@example.com"
                   icon="mail-outline"
                   autoCapitalize="none"
+                  error={errors.email}
                 />
                 {state.email ? (
                   <ContactVisibility
@@ -1189,7 +1245,6 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   column: { flex: 1, minWidth: 0 },
-  currency: { width: 124 },
   selectInput: { minHeight: 52, paddingHorizontal: Spacing.three },
   coordinateFields: { gap: Spacing.two },
   privacyNote: {

@@ -4,7 +4,7 @@ import type {
   PropertyType,
 } from "../types/property-types";
 
-export const emptyFilters = (listingPurpose: ListingPurpose = "SALE") => ({
+export const emptyFilters = (listingPurpose: ListingPurpose = "RENT") => ({
   listingPurpose,
   propertyTypeId: "",
   city: "",

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -32,6 +33,8 @@ import {
   validateVehicleForm,
   validateVehicleStep,
   vehicleFormStateFromDetail,
+  vehicleStepErrors,
+  type VehicleFieldErrors,
   type VehicleFormState,
 } from "../utils/vehicle-form";
 
@@ -68,7 +71,9 @@ export default function VehicleEditorScreen({
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<VehicleFieldErrors>({});
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const saving = savingMode !== null;
   const effectiveEdit = edit || createdId !== null;
   const lastStep = VEHICLE_STEP_TITLES.length - 1;
@@ -101,19 +106,60 @@ export default function VehicleEditorScreen({
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const shown = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      () => setKeyboardOpen(true),
+    );
+    const hidden = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => setKeyboardOpen(false),
+    );
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, []);
+
   const onChange = useCallback((patch: Partial<VehicleFormState>) => {
     setForm((previous) => ({ ...previous, ...patch }));
     setError(null);
+    setFieldErrors((previous) => {
+      if (!Object.keys(previous).length) return previous;
+      if ("categoryId" in patch) return {};
+      const next = { ...previous };
+      for (const key of Object.keys(patch)) delete next[key];
+      if ("additionalAttributes" in patch) {
+        for (const key of Object.keys(next)) {
+          if (key.startsWith("attribute:")) delete next[key];
+        }
+      }
+      if ("visibilityScope" in patch) {
+        delete next.communityId;
+        delete next.selectedCommunityIds;
+      }
+      if ("businessAccountId" in patch) delete next.businessListingId;
+      return next;
+    });
   }, []);
 
   const advance = useCallback(() => {
-    const message = validateVehicleStep(form, step, true, new Date(), category);
-    setError(message);
-    if (!message) setStep((current) => Math.min(current + 1, lastStep));
+    const stepErrors = vehicleStepErrors(
+      form,
+      step,
+      true,
+      new Date(),
+      category,
+    );
+    setFieldErrors(stepErrors);
+    if (!Object.keys(stepErrors).length) {
+      setStep((current) => Math.min(current + 1, lastStep));
+    }
   }, [category, form, lastStep, step]);
 
   const back = useCallback(() => {
     setError(null);
+    setFieldErrors({});
     setStep((current) => Math.max(0, current - 1));
   }, []);
 
@@ -128,12 +174,16 @@ export default function VehicleEditorScreen({
         (_, index) =>
           validateVehicleStep(form, index, publishing, now, category) !== null,
       );
-      setStep(errorStep >= 0 ? errorStep : lastStep);
-      setError(validation);
+      const target = errorStep >= 0 ? errorStep : lastStep;
+      setStep(target);
+      setFieldErrors(
+        vehicleStepErrors(form, target, publishing, now, category),
+      );
       return;
     }
     setSavingMode(draft ? "draft" : "publish");
     setError(null);
+    setFieldErrors({});
     const uploaded: string[] = [];
     let mediaCommitted = false;
     try {
@@ -214,7 +264,7 @@ export default function VehicleEditorScreen({
           </Pressable>
           <View style={styles.headerHeading}>
             <ThemedText type="title" style={styles.headerTitle}>
-              {effectiveEdit ? "Edit vehicle" : "Create vehicle"}
+              {effectiveEdit ? "Edit vehicle listing" : "Create vehicle listing"}
             </ThemedText>
             <ThemedText
               themeColor="textSecondary"
@@ -283,6 +333,7 @@ export default function VehicleEditorScreen({
             editing={effectiveEdit}
             step={step}
             onChange={onChange}
+            errors={fieldErrors}
           />
           <View
             style={[
@@ -290,7 +341,9 @@ export default function VehicleEditorScreen({
               {
                 backgroundColor: theme.background,
                 borderTopColor: theme.border,
-                paddingBottom: Math.max(insets.bottom, Spacing.two),
+                paddingBottom: keyboardOpen
+                  ? Math.max(insets.bottom, Spacing.two) * 0.25
+                  : Math.max(insets.bottom, Spacing.two),
               },
             ]}
           >

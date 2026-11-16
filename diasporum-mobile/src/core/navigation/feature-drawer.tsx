@@ -5,7 +5,7 @@
  *
  * Menu items are gated by the backend-provided community module snapshot
  * (session.access) — in Extended communities only permitted modules appear.
- * "Posts" is the parent destination for the existing Feed/Vids/Help/Polls
+ * "Posts" is the parent destination for the existing Feed/Clips/Help/Polls
  * content experience (the home tab).
  */
 
@@ -151,6 +151,15 @@ const SECTIONS: { title: string | null; items: DrawerFeature[] }[] = [
         route: "/(app)/businesses",
         module: "BUSINESS_DIRECTORY",
         isActive: startsWith("/business"),
+      },
+      {
+        key: "shop",
+        label: "Shopping",
+        icon: "bag-outline",
+        activeIcon: "bag",
+        route: "/(app)/shop",
+        module: "SHOP_MARKETPLACE",
+        isActive: startsWith("/shop"),
       },
       {
         key: "services",

@@ -20,6 +20,8 @@ import { router } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { ThemedText } from "@/components/themed-text";
 import { useSession } from "@/core/session/session-provider";
+import { createFeedApi } from "../services/feed-api";
+import { createSocialApi } from "@/features/profile/services/social-api";
 import { useTheme } from "@/hooks/use-theme";
 import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
@@ -65,6 +67,17 @@ const MAX_RATIO = 1.91; // wide landscape
 /** Measured image aspect ratios — shared across mounts (feed → detail) so the
  * media frame keeps its real shape instead of resizing after the bitmap lands. */
 const mediaRatios = new Map<string, number>();
+/** Viewer→author follow state shared across mounts/screens; a fresh fetch
+ * still runs on mount so stale entries correct themselves quickly. */
+const followStates = new Map<string, boolean>();
+/** Cap module-level caches so long sessions can't grow them without bound. */
+function cacheSet<K, V>(map: Map<K, V>, key: K, value: V, max = 500) {
+  if (map.size >= max && !map.has(key)) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+  map.set(key, value);
+}
 function clampRatio(w: number, h: number) {
   return Math.min(MAX_RATIO, Math.max(MIN_RATIO, w / h));
 }
@@ -168,7 +181,7 @@ export function PostMedia({
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const onDimensions = (w: number, h: number) => {
     const r = clampRatio(w, h);
-    if (firstImageId) mediaRatios.set(firstImageId, r);
+    if (firstImageId) cacheSet(mediaRatios, firstImageId, r);
     setRatio(r);
   };
   const resolveViewer = useCallback(
@@ -279,6 +292,9 @@ export const PostItem = React.memo(function PostItem({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const theme = useTheme();
+  const { apiClient, session } = useSession();
+  const socialApi = React.useMemo(() => createSocialApi(apiClient), [apiClient]);
+  const feedApi = React.useMemo(() => createFeedApi(apiClient), [apiClient]);
   const typeLabel = TYPE_LABEL[item.contentType];
   const helpKind = item.payload?.helpKind as string | undefined;
   const helpStatus = item.payload?.helpStatus as string | undefined;
@@ -288,8 +304,46 @@ export const PostItem = React.memo(function PostItem({
   const typeIcon = TYPE_ICON[item.contentType];
   const handle = item.author?.username ?? item.author?.displayName ?? "member";
   const reacted = !!item.viewerReaction;
+  const authorId = item.author?.id ?? null;
+  const isOwn = isOwner || (authorId != null && authorId === session?.me.id);
+  const [following, setFollowing] = useState<boolean | null>(() =>
+    authorId ? (followStates.get(authorId) ?? null) : null,
+  );
+  const [followBusy, setFollowBusy] = useState(false);
+
+  useEffect(() => {
+    if (!authorId || isOwn) return;
+    let cancelled = false;
+    socialApi
+      .relationship(authorId)
+      .then((r) => {
+        cacheSet(followStates, authorId, r.following);
+        if (!cancelled) setFollowing(r.following);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [socialApi, authorId, isOwn]);
+
+  const followAuthor = useCallback(() => {
+    if (!authorId || following !== false || followBusy) return;
+    setFollowBusy(true);
+    setFollowing(true);
+    cacheSet(followStates, authorId, true);
+    socialApi
+      .follow(authorId)
+      .catch(() => {
+        setFollowing(false);
+        cacheSet(followStates, authorId, false);
+      })
+      .finally(() => setFollowBusy(false));
+  }, [socialApi, authorId, following, followBusy]);
 
   const share = () => {
+    // Track the share so the count updates in place via feed-updates; the
+    // system sheet opens regardless of the tracking call's result.
+    void feedApi.sharePost(item.sourceId, "SYSTEM_SHARE").catch(() => {});
     void Share.share({
       message: item.body
         ? `${item.body.slice(0, 140)}`
@@ -321,17 +375,18 @@ export const PostItem = React.memo(function PostItem({
     <Pressable
       onPress={isPoll ? undefined : onPress}
       style={({ pressed }) => [
-        styles.card,
+        styles.row,
         {
           backgroundColor: isPoll ? theme.primarySurface : theme.background,
-          borderColor: isPoll ? theme.primaryLight : theme.border,
+          borderBottomColor: isPoll ? theme.primaryLight : theme.border,
         },
-        pressed && styles.cardPressed,
+        pressed && styles.rowPressed,
       ]}
       testID={isPoll ? "poll-post-card" : "post-card"}
       accessibilityRole={isPoll ? undefined : "button"}
     >
-      {/* Avatar column */}
+      {/* Avatar column — the connector line under the avatar is the
+          Threads-style thread cue; it appears when the post has replies. */}
       <View style={styles.avatarCol}>
         <Avatar
           name={item.author?.displayName}
@@ -339,6 +394,11 @@ export const PostItem = React.memo(function PostItem({
           userId={item.author?.id}
           size={42}
         />
+        {item.commentCount > 0 ? (
+          <View
+            style={[styles.threadLine, { backgroundColor: theme.border }]}
+          />
+        ) : null}
       </View>
 
       {/* Content column */}
@@ -348,6 +408,26 @@ export const PostItem = React.memo(function PostItem({
           <ThemedText style={styles.name} numberOfLines={1}>
             {handle}
           </ThemedText>
+          {!isOwn && following === false ? (
+            <Pressable
+              onPress={followAuthor}
+              disabled={followBusy}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={`Follow ${handle}`}
+              style={({ pressed }) => [
+                styles.followBtn,
+                { borderColor: theme.primary },
+                (pressed || followBusy) && styles.actionPressed,
+              ]}
+            >
+              <ThemedText
+                style={[styles.followBtnText, { color: theme.primary }]}
+              >
+                Follow
+              </ThemedText>
+            </Pressable>
+          ) : null}
           <ThemedText style={styles.time} themeColor="textSecondary">
             {timeAgo(item.publishedAt)}
           </ThemedText>
@@ -590,14 +670,14 @@ export const PostItem = React.memo(function PostItem({
                     <ThemedText style={styles.menuText}>Close poll</ThemedText>
                   </Pressable>
                 ) : null}
-                {!isOwner && item.contentType === "POLL" && onReport ? (
+                {!isOwner && onReport ? (
                   <Pressable
                     onPress={() => {
                       closeMenu();
                       onReport();
                     }}
                     style={styles.menuItem}
-                    accessibilityLabel="Report poll"
+                    accessibilityLabel="Report post"
                   >
                     <Ionicons
                       name="flag-outline"
@@ -685,13 +765,11 @@ export const PostItem = React.memo(function PostItem({
               size={20}
               color={theme.textSecondary}
             />
-            {isPoll ? (
-              <ThemedText
-                style={[styles.count, { color: theme.textSecondary }]}
-              >
-                Share
-              </ThemedText>
-            ) : null}
+            <ThemedText
+              style={[styles.count, { color: theme.textSecondary }]}
+            >
+              {isPoll ? "Share" : compact(item.shareCount)}
+            </ThemedText>
           </Pressable>
 
           <Pressable
@@ -729,29 +807,35 @@ export const PostItem = React.memo(function PostItem({
 });
 
 const styles = StyleSheet.create({
-  card: {
+  row: {
     flexDirection: "row",
     gap: 12,
-    width: "97%",
+    width: "100%",
     maxWidth: 720,
     alignSelf: "center",
-    marginTop: 12,
-    paddingHorizontal: Spacing.two,
-    paddingTop: Spacing.three,
-    paddingBottom: Spacing.two,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: BorderRadius.xl,
-    shadowColor: BrandColors.black,
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 1,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  cardPressed: { opacity: 0.96, transform: [{ scale: 0.995 }] },
-  avatarCol: { width: 42, flexShrink: 0, paddingTop: 1 },
+  rowPressed: { opacity: 0.7 },
+  avatarCol: { width: 42, flexShrink: 0, paddingTop: 1, alignItems: "center" },
+  threadLine: {
+    width: 2,
+    flexGrow: 1,
+    marginTop: 6,
+    marginBottom: -12,
+    borderRadius: 1,
+  },
   body: { flex: 1, minWidth: 0, gap: 4 },
   header: { flexDirection: "row", alignItems: "center", gap: 7, minHeight: 24 },
   name: { fontSize: 15, fontWeight: "700", lineHeight: 21, flexShrink: 1 },
+  followBtn: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: 9,
+    paddingVertical: 1,
+  },
+  followBtnText: { fontSize: 12, fontWeight: "700", lineHeight: 18 },
   time: { fontSize: 13, fontWeight: "400", lineHeight: 20 },
   category: { fontSize: 12, fontWeight: "400", lineHeight: 20, flexShrink: 1 },
   moreBtn: { marginLeft: "auto", paddingLeft: 8 },
@@ -794,8 +878,8 @@ const styles = StyleSheet.create({
   docText: { fontSize: 13, fontWeight: "500" },
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   tag: { fontSize: 14, fontWeight: "600", color: BrandColors.primary },
-  gallery: { marginTop: 10, marginRight: -Spacing.two },
-  galleryContent: { gap: 8, paddingRight: Spacing.two },
+  gallery: { marginTop: 10, marginRight: -Spacing.three },
+  galleryContent: { gap: 8, paddingRight: Spacing.three },
   galleryItem: {
     width: 200,
     height: 250,

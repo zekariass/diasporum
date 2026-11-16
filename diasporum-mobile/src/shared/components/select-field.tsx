@@ -34,6 +34,8 @@ export function SelectField({
   inputStyle,
   leadingIcon,
   hint,
+  required,
+  error,
 }: {
   label: string;
   value: string | undefined;
@@ -45,6 +47,8 @@ export function SelectField({
   inputStyle?: StyleProp<ViewStyle>;
   leadingIcon?: keyof typeof Ionicons.glyphMap;
   hint?: string;
+  required?: boolean;
+  error?: string;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -54,16 +58,24 @@ export function SelectField({
 
   return (
     <View style={styles.field}>
-      <ThemedText style={styles.label}>{label}</ThemedText>
+      <ThemedText style={styles.label}>
+        {label}
+        {required ? (
+          <ThemedText style={[styles.label, { color: theme.error }]}>
+            {" "}
+            *
+          </ThemedText>
+        ) : null}
+      </ThemedText>
       <Pressable
         onPress={() => setOpen(true)}
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={required ? `${label} (required)` : label}
         accessibilityValue={selected ? { text: selected.label } : undefined}
         style={[
           styles.input,
           {
-            borderColor: theme.border,
+            borderColor: error ? theme.error : theme.border,
             backgroundColor: theme.backgroundElement,
           },
           inputStyle,
@@ -80,7 +92,15 @@ export function SelectField({
         </ThemedText>
         <Ionicons name="chevron-down" size={16} color={theme.textSecondary} />
       </Pressable>
-      {hint ? (
+      {error ? (
+        <ThemedText
+          style={[styles.hint, { color: theme.error }]}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          {error}
+        </ThemedText>
+      ) : hint ? (
         <ThemedText themeColor="textSecondary" style={styles.hint}>
           {hint}
         </ThemedText>

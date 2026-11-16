@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {
   VehicleAttributePolicy,
   VehicleAttributeValue,
@@ -255,6 +256,341 @@ export const VEHICLE_STEP_TITLES = [
   "Review",
 ] as const;
 
+/** Field-keyed validation messages — rendered inline under each control. */
+export type VehicleFieldErrors = Record<string, string>;
+
+const requiredText = (message: string) =>
+  z.string().refine((value) => value.trim().length > 0, message);
+
+function optionalNumberInRange(
+  label: string,
+  minimum: number,
+  maximum?: number,
+) {
+  return z.string().refine((value) => {
+    const raw = value.trim();
+    if (!raw) return true;
+    const parsed = Number(raw);
+    return (
+      Number.isFinite(parsed) &&
+      parsed >= minimum &&
+      (maximum === undefined || parsed <= maximum)
+    );
+  }, maximum === undefined
+    ? `${label} must be at least ${minimum}.`
+    : `${label} must be between ${minimum} and ${maximum}.`);
+}
+
+function optionalNonnegative(label: string) {
+  return z.string().refine((value) => {
+    const raw = value.trim();
+    return !raw || (Number.isFinite(Number(raw)) && Number(raw) >= 0);
+  }, `${label} must be at least 0.`);
+}
+
+function optionalIsoDate(label: string) {
+  return z
+    .string()
+    .refine(
+      (value) => !value || validDate(value),
+      `${label} must use YYYY-MM-DD.`,
+    );
+}
+
+const basicsSchema = z.object({
+  categoryId: requiredText("Select a vehicle category."),
+  title: requiredText("Enter a vehicle title."),
+  description: requiredText("Enter a vehicle description."),
+});
+
+const specificationSchema = z.object({
+  modelYear: optionalNumberInRange("Model year", 1886, 2200),
+  registrationYear: optionalNumberInRange("Registration year", 1886, 2200),
+  mileage: optionalNumberInRange("Mileage", 0),
+  engineSizeCc: optionalNumberInRange("Engine size", 0),
+  doors: optionalNumberInRange("Doors", 1),
+  seats: optionalNumberInRange("Seats", 1),
+  previousOwners: optionalNumberInRange("Previous owners", 0),
+  motExpiry: optionalIsoDate("MOT expiry"),
+});
+
+function pricingSchema(publishing: boolean, now: Date) {
+  return z
+    .object({
+      priceAmount: z
+        .string()
+        .refine((value) => {
+          const raw = value.trim();
+          return (
+            !raw || (Number.isFinite(Number(raw)) && Number(raw) >= 0)
+          );
+        }, "Price must be at least 0.")
+        .refine(
+          (value) => value.trim() !== "",
+          "Enter a non-negative vehicle price.",
+        ),
+      rentalDeposit: optionalNonnegative("Rental deposit"),
+      mileageAllowance: optionalNonnegative("Mileage allowance"),
+      currencyCode: z
+        .string()
+        .regex(/^[A-Za-z]{3}$/, "Enter a three-letter currency."),
+      expiresAt: optionalIsoDate("Listing expiry"),
+    })
+    .superRefine((form, ctx) => {
+      if (
+        form.expiresAt &&
+        validDate(form.expiresAt) &&
+        publishing &&
+        new Date(`${form.expiresAt}T23:59:59.999Z`).getTime() <= now.getTime()
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["expiresAt"],
+          message: "Listing expiry must be in the future before publishing.",
+        });
+      }
+    });
+}
+
+const audienceSchema = z
+  .object({
+    visibilityScope: z.string(),
+    communityId: z.string(),
+    selectedCommunityIds: z.array(z.string()),
+  })
+  .superRefine((form, ctx) => {
+    if (form.visibilityScope === "COMMUNITY" && !form.communityId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["communityId"],
+        message: "Select an active community for this vehicle.",
+      });
+    }
+    if (
+      form.visibilityScope === "SELECTED_COMMUNITIES" &&
+      form.selectedCommunityIds.length === 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["selectedCommunityIds"],
+        message: "Select at least one community for this vehicle.",
+      });
+    }
+  });
+
+const CONTACT_CHANNEL_FIELDS: Record<
+  string,
+  "contactPhone" | "contactWhatsapp" | "contactEmail"
+> = {
+  PHONE: "contactPhone",
+  WHATSAPP: "contactWhatsapp",
+  EMAIL: "contactEmail",
+};
+
+const CONTACT_CHANNEL_MESSAGES: Record<string, string> = {
+  PHONE: "Phone is preferred but no phone number was provided.",
+  WHATSAPP: "WhatsApp is preferred but no WhatsApp number was provided.",
+  EMAIL: "Email is preferred but no email address was provided.",
+};
+
+const contactSchema = z
+  .object({
+    contactPhone: z.string(),
+    contactWhatsapp: z.string(),
+    contactEmail: z.string(),
+    contactPreferredMethod: z.string(),
+  })
+  .superRefine((form, ctx) => {
+    const hasChannel = Boolean(
+      form.contactPhone.trim() ||
+        form.contactWhatsapp.trim() ||
+        form.contactEmail.trim(),
+    );
+    const preferredField = CONTACT_CHANNEL_FIELDS[form.contactPreferredMethod];
+    if (!hasChannel) {
+      if (preferredField) {
+        ctx.addIssue({
+          code: "custom",
+          path: [preferredField],
+          message:
+            "Add the matching contact channel or choose in-app messaging.",
+        });
+      }
+      return;
+    }
+    if (
+      form.contactEmail.trim() &&
+      !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.contactEmail.trim())
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["contactEmail"],
+        message: "Enter a valid contact email address.",
+      });
+    }
+    if (preferredField && !String(form[preferredField]).trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: [preferredField],
+        message: CONTACT_CHANNEL_MESSAGES[form.contactPreferredMethod],
+      });
+    }
+  });
+
+function locationMediaSchema(publishing: boolean) {
+  return z
+    .object({
+      city: z.string(),
+      region: z.string(),
+      formattedAddress: z.string(),
+      discoveryLatitude: z.number().nullable(),
+      discoveryLongitude: z.number().nullable(),
+      media: z.array(z.unknown()),
+    })
+    .superRefine((form, ctx) => {
+      const hasLocation = Boolean(
+        form.city.trim() ||
+          form.region.trim() ||
+          form.formattedAddress.trim(),
+      );
+      if (publishing && !hasLocation) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["city"],
+          message: "Enter a public city, region, or general area.",
+        });
+      }
+      if (
+        !hasLocation &&
+        (form.discoveryLatitude !== null || form.discoveryLongitude !== null)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["formattedAddress"],
+          message:
+            "Enter a public general area before adding an approximate discovery point.",
+        });
+      }
+      if (
+        (form.discoveryLatitude === null) !==
+        (form.discoveryLongitude === null)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["discoveryLatitude"],
+          message: "The approximate discovery point is incomplete.",
+        });
+      }
+      if (form.media.length > 5) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["media"],
+          message: "Attach no more than five vehicle images.",
+        });
+      }
+    });
+}
+
+const PRICED_CORE_FIELDS = [
+  "pricePeriod",
+  "rentalDeposit",
+  "mileageAllowance",
+  "rentalConditions",
+];
+
+/** Attribute and required-core-field checks — these depend on the loaded category, not static schema. */
+function categoryErrors(
+  form: VehicleFormState,
+  category: VehicleCategory | undefined,
+  scope: "specs" | "pricing" | "all",
+): VehicleFieldErrors {
+  const errors: VehicleFieldErrors = {};
+  for (const required of category?.requiredCoreFields ?? []) {
+    const key = CORE_STATE_KEYS[required];
+    if (!key) continue;
+    const priced = PRICED_CORE_FIELDS.includes(required);
+    if (
+      (scope === "specs" && priced) ||
+      (scope === "pricing" && !priced)
+    ) {
+      continue;
+    }
+    if (!String(form[key] ?? "").trim()) {
+      errors[key] ??= `Complete the required ${required} field.`;
+    }
+  }
+  if (scope === "pricing") return errors;
+  for (const [key, policy] of Object.entries(category?.attributes ?? {})) {
+    const error = validateAttribute(
+      key,
+      form.additionalAttributes[key],
+      policy,
+    );
+    if (error) errors[`attribute:${key}`] ??= error;
+  }
+  for (const key of Object.keys(form.additionalAttributes)) {
+    if (
+      category &&
+      !category.attributes[key] &&
+      form.additionalAttributes[key].trim()
+    ) {
+      errors[`attribute:${key}`] ??=
+        `${key} is not approved for this vehicle category.`;
+    }
+  }
+  return errors;
+}
+
+function schemaErrors(
+  schema: z.ZodType,
+  value: unknown,
+): VehicleFieldErrors {
+  const errors: VehicleFieldErrors = {};
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    for (const issue of result.error.issues) {
+      const key = String(issue.path[0] ?? "form");
+      errors[key] ??= issue.message;
+    }
+  }
+  return errors;
+}
+
+function firstError(errors: VehicleFieldErrors): string | null {
+  return Object.values(errors)[0] ?? null;
+}
+
+/** Field-keyed validation for one wizard step — the submit path still checks every step. */
+export function vehicleStepErrors(
+  form: VehicleFormState,
+  step: number,
+  publishing = true,
+  now = new Date(),
+  category?: VehicleCategory,
+): VehicleFieldErrors {
+  if (step === 0) return schemaErrors(basicsSchema, form);
+  if (step === 1) {
+    return {
+      ...schemaErrors(specificationSchema, form),
+      ...categoryErrors(form, category, "specs"),
+    };
+  }
+  if (step === 2) {
+    return {
+      ...schemaErrors(pricingSchema(publishing, now), form),
+      ...categoryErrors(form, category, "pricing"),
+    };
+  }
+  if (step === 3) {
+    return {
+      ...schemaErrors(audienceSchema, form),
+      ...schemaErrors(contactSchema, form),
+    };
+  }
+  if (step === 4) return schemaErrors(locationMediaSchema(publishing), form);
+  return {};
+}
+
 /** Validates only the current wizard step; submission still runs the complete validator. */
 export function validateVehicleStep(
   form: VehicleFormState,
@@ -263,128 +599,7 @@ export function validateVehicleStep(
   now = new Date(),
   category?: VehicleCategory,
 ): string | null {
-  if (step === 0) {
-    if (!form.categoryId) return "Select a vehicle category.";
-    if (!form.title.trim()) return "Enter a vehicle title.";
-    if (!form.description.trim()) return "Enter a vehicle description.";
-    return null;
-  }
-  if (step === 1) {
-    const numericFields: [string, string, number, number?][] = [
-      ["Model year", form.modelYear, 1886, 2200],
-      ["Registration year", form.registrationYear, 1886, 2200],
-      ["Mileage", form.mileage, 0],
-      ["Engine size", form.engineSizeCc, 0],
-      ["Doors", form.doors, 1],
-      ["Seats", form.seats, 1],
-      ["Previous owners", form.previousOwners, 0],
-    ];
-    for (const [label, raw, minimum, maximum] of numericFields) {
-      if (!raw.trim()) continue;
-      const value = Number(raw);
-      if (
-        !Number.isFinite(value) ||
-        value < minimum ||
-        (maximum !== undefined && value > maximum)
-      ) {
-        return `${label} must be ${maximum === undefined ? `at least ${minimum}` : `between ${minimum} and ${maximum}`}.`;
-      }
-    }
-    if (form.motExpiry && !validDate(form.motExpiry))
-      return "MOT expiry must use YYYY-MM-DD.";
-    for (const required of category?.requiredCoreFields ?? []) {
-      const key = CORE_STATE_KEYS[required];
-      if (
-        key &&
-        ![
-          "pricePeriod",
-          "rentalDeposit",
-          "mileageAllowance",
-          "rentalConditions",
-        ].includes(required) &&
-        !String(form[key] ?? "").trim()
-      )
-        return `Complete the required ${required} field.`;
-    }
-    for (const [key, policy] of Object.entries(category?.attributes ?? {})) {
-      const error = validateAttribute(
-        key,
-        form.additionalAttributes[key],
-        policy,
-      );
-      if (error) return error;
-    }
-    for (const key of Object.keys(form.additionalAttributes)) {
-      if (
-        category &&
-        !category.attributes[key] &&
-        form.additionalAttributes[key].trim()
-      ) {
-        return `${key} is not approved for this vehicle category.`;
-      }
-    }
-    return null;
-  }
-  if (step === 2) {
-    const numericFields: [string, string][] = [
-      ["Price", form.priceAmount],
-      ["Rental deposit", form.rentalDeposit],
-      ["Mileage allowance", form.mileageAllowance],
-    ];
-    for (const [label, raw] of numericFields) {
-      if (raw.trim() && (!Number.isFinite(Number(raw)) || Number(raw) < 0)) {
-        return `${label} must be at least 0.`;
-      }
-    }
-    if (!form.priceAmount.trim()) return "Enter a non-negative vehicle price.";
-    if (!/^[A-Za-z]{3}$/.test(form.currencyCode))
-      return "Enter a three-letter currency.";
-    if (form.expiresAt) {
-      if (!validDate(form.expiresAt))
-        return "Listing expiry must use YYYY-MM-DD.";
-      if (
-        publishing &&
-        new Date(`${form.expiresAt}T23:59:59.999Z`).getTime() <= now.getTime()
-      ) {
-        return "Listing expiry must be in the future before publishing.";
-      }
-    }
-    return null;
-  }
-  if (step === 3) {
-    if (form.visibilityScope === "COMMUNITY" && !form.communityId) {
-      return "Select an active community for this vehicle.";
-    }
-    if (
-      form.visibilityScope === "SELECTED_COMMUNITIES" &&
-      form.selectedCommunityIds.length === 0
-    ) {
-      return "Select at least one community for this vehicle.";
-    }
-    return validateContact(form);
-  }
-  if (step === 4) {
-    const hasLocation = Boolean(
-      form.city.trim() || form.region.trim() || form.formattedAddress.trim(),
-    );
-    if (publishing && !hasLocation)
-      return "Enter a public city, region, or general area.";
-    if (
-      !hasLocation &&
-      (form.discoveryLatitude !== null || form.discoveryLongitude !== null)
-    ) {
-      return "Enter a public general area before adding an approximate discovery point.";
-    }
-    if (
-      (form.discoveryLatitude === null) !==
-      (form.discoveryLongitude === null)
-    ) {
-      return "The approximate discovery point is incomplete.";
-    }
-    if (form.media.length > 5)
-      return "Attach no more than five vehicle images.";
-  }
-  return null;
+  return firstError(vehicleStepErrors(form, step, publishing, now, category));
 }
 
 export function validateVehicleForm(
@@ -393,131 +608,15 @@ export function validateVehicleForm(
   now = new Date(),
   category?: VehicleCategory,
 ): string | null {
-  if (!form.categoryId) return "Select a vehicle category.";
-  if (!form.title.trim()) return "Enter a vehicle title.";
-  if (!form.description.trim()) return "Enter a vehicle description.";
-  if (form.visibilityScope === "COMMUNITY" && !form.communityId) {
-    return "Select an active community for this vehicle.";
-  }
-  if (
-    form.visibilityScope === "SELECTED_COMMUNITIES" &&
-    form.selectedCommunityIds.length === 0
-  ) {
-    return "Select at least one community for this vehicle.";
-  }
-  const numericFields: [string, string, number, number?][] = [
-    ["Model year", form.modelYear, 1886, 2200],
-    ["Registration year", form.registrationYear, 1886, 2200],
-    ["Mileage", form.mileage, 0],
-    ["Engine size", form.engineSizeCc, 0],
-    ["Doors", form.doors, 1],
-    ["Seats", form.seats, 1],
-    ["Previous owners", form.previousOwners, 0],
-    ["Price", form.priceAmount, 0],
-    ["Rental deposit", form.rentalDeposit, 0],
-    ["Mileage allowance", form.mileageAllowance, 0],
-  ];
-  for (const [label, raw, minimum, maximum] of numericFields) {
-    if (!raw.trim()) continue;
-    const value = Number(raw);
-    if (
-      !Number.isFinite(value) ||
-      value < minimum ||
-      (maximum !== undefined && value > maximum)
-    ) {
-      return `${label} must be ${maximum === undefined ? `at least ${minimum}` : `between ${minimum} and ${maximum}`}.`;
-    }
-  }
-  if (!form.priceAmount.trim()) return "Enter a non-negative vehicle price.";
-  if (!/^[A-Za-z]{3}$/.test(form.currencyCode))
-    return "Enter a three-letter currency.";
-  if (form.motExpiry && !validDate(form.motExpiry))
-    return "MOT expiry must use YYYY-MM-DD.";
-  if (form.expiresAt) {
-    if (!validDate(form.expiresAt))
-      return "Listing expiry must use YYYY-MM-DD.";
-    if (
-      publishing &&
-      new Date(`${form.expiresAt}T23:59:59.999Z`).getTime() <= now.getTime()
-    ) {
-      return "Listing expiry must be in the future before publishing.";
-    }
-  }
-  const hasLocation = Boolean(
-    form.city.trim() || form.region.trim() || form.formattedAddress.trim(),
+  return (
+    firstError(schemaErrors(basicsSchema, form)) ??
+    firstError(schemaErrors(audienceSchema, form)) ??
+    firstError(schemaErrors(specificationSchema, form)) ??
+    firstError(schemaErrors(pricingSchema(publishing, now), form)) ??
+    firstError(schemaErrors(locationMediaSchema(publishing), form)) ??
+    firstError(schemaErrors(contactSchema, form)) ??
+    firstError(categoryErrors(form, category, "all"))
   );
-  if (publishing && !hasLocation)
-    return "Enter a public city, region, or general area.";
-  if (
-    !hasLocation &&
-    (form.discoveryLatitude !== null || form.discoveryLongitude !== null)
-  ) {
-    return "Enter a public general area before adding an approximate discovery point.";
-  }
-  if (
-    (form.discoveryLatitude === null) !==
-    (form.discoveryLongitude === null)
-  ) {
-    return "The approximate discovery point is incomplete.";
-  }
-  if (form.media.length > 5) return "Attach no more than five vehicle images.";
-  const contact = validateContact(form);
-  if (contact) return contact;
-  for (const required of category?.requiredCoreFields ?? []) {
-    const key = CORE_STATE_KEYS[required];
-    if (key && !String(form[key] ?? "").trim())
-      return `Complete the required ${required} field.`;
-  }
-  for (const [key, policy] of Object.entries(category?.attributes ?? {})) {
-    const error = validateAttribute(
-      key,
-      form.additionalAttributes[key],
-      policy,
-    );
-    if (error) return error;
-  }
-  for (const key of Object.keys(form.additionalAttributes)) {
-    if (
-      category &&
-      !category.attributes[key] &&
-      form.additionalAttributes[key].trim()
-    ) {
-      return `${key} is not approved for this vehicle category.`;
-    }
-  }
-  return null;
-}
-
-function validateContact(form: VehicleFormState): string | null {
-  const hasChannel = Boolean(
-    form.contactPhone.trim() ||
-    form.contactWhatsapp.trim() ||
-    form.contactEmail.trim(),
-  );
-  if (!hasChannel) {
-    return ["PHONE", "WHATSAPP", "EMAIL"].includes(form.contactPreferredMethod)
-      ? "Add the matching contact channel or choose in-app messaging."
-      : null;
-  }
-  if (
-    form.contactEmail.trim() &&
-    !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.contactEmail.trim())
-  ) {
-    return "Enter a valid contact email address.";
-  }
-  if (form.contactPreferredMethod === "PHONE" && !form.contactPhone.trim()) {
-    return "Phone is preferred but no phone number was provided.";
-  }
-  if (
-    form.contactPreferredMethod === "WHATSAPP" &&
-    !form.contactWhatsapp.trim()
-  ) {
-    return "WhatsApp is preferred but no WhatsApp number was provided.";
-  }
-  if (form.contactPreferredMethod === "EMAIL" && !form.contactEmail.trim()) {
-    return "Email is preferred but no email address was provided.";
-  }
-  return null;
 }
 
 function validateAttribute(

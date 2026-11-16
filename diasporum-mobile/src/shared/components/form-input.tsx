@@ -41,7 +41,9 @@ export function FormInput({ label, error, hint, required, endAdornment, ...props
               borderColor: hasError ? BrandColors.error : theme.border,
               color: theme.text,
             },
+            props.multiline ? styles.multiline : null,
             endAdornment ? styles.inputWithAdornment : null,
+            props.style,
           ]}
           placeholderTextColor={theme.textSecondary}
           accessibilityLabel={required ? `${label} (required)` : label}
@@ -78,6 +80,11 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   inputWithAdornment: { paddingRight: Spacing.six },
+  multiline: {
+    minHeight: 120,
+    textAlignVertical: 'top',
+    paddingTop: Spacing.three,
+  },
   adornment: {
     position: 'absolute',
     right: 0,

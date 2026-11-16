@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -19,9 +19,12 @@ import { createDirectoryApi } from "@/features/business-directory/services/direc
 import type { BusinessAccount } from "@/features/business/types/business-types";
 import type { Business } from "@/features/business-directory/types/directory-types";
 import { useTheme } from "@/hooks/use-theme";
+import { DatePickerField } from "@/shared/components/date-picker-field";
+import { MultiSelectField } from "@/shared/components/multi-select-field";
 import { SelectField } from "@/shared/components/select-field";
 import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
+import { CURRENCY_OPTIONS } from "@/shared/utils/currencies";
 import { useCommunityNames } from "../hooks/use-community-names";
 import { createVehicleApi } from "../services/vehicle-api";
 import type {
@@ -35,6 +38,7 @@ import {
   moveVehicleMedia,
   setVehicleCover,
   vehicleFieldVisible,
+  type VehicleFieldErrors,
   type VehicleFormState,
 } from "../utils/vehicle-form";
 
@@ -123,11 +127,13 @@ export function VehicleForm({
   onChange,
   editing = false,
   step = 0,
+  errors = {},
 }: {
   state: VehicleFormState;
   onChange: (patch: Partial<VehicleFormState>) => void;
   editing?: boolean;
   step?: number;
+  errors?: VehicleFieldErrors;
 }) {
   const theme = useTheme();
   const { apiClient, session } = useSession();
@@ -147,7 +153,21 @@ export function VehicleForm({
     (item) => item.category.id === state.categoryId,
   );
   const visible = (field: string) => vehicleFieldVisible(category, field);
+  const requiredCore = (field: string) =>
+    category?.requiredCoreFields.includes(field) ?? false;
   const currentStep = STEP_CONTENT[step] ?? STEP_CONTENT[0];
+  const [minExpiryDate] = useState(
+    () => new Date(Date.now() + 24 * 60 * 60 * 1000),
+  );
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const errorCount = Object.keys(errors).length;
+  const previousErrorCount = useRef(0);
+  useEffect(() => {
+    if (errorCount > previousErrorCount.current) {
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+    }
+    previousErrorCount.current = errorCount;
+  }, [errorCount]);
 
   useEffect(() => {
     let active = true;
@@ -309,6 +329,7 @@ export function VehicleForm({
   return (
     <ScrollView
       key={step}
+      ref={scrollRef}
       style={styles.scroll}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
@@ -349,26 +370,26 @@ export function VehicleForm({
                 value === "SALE" ? "For sale" : "For rent"
               }
             />
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.groupLabel}>
-                Vehicle category
-              </ThemedText>
-              <ChoiceRow
-                values={categories.map((item) => item.category.id)}
-                current={state.categoryId}
-                onSelect={(categoryId) =>
-                  onChange({
-                    categoryId,
-                    additionalAttributes: {},
-                    featureIds: [],
-                  })
-                }
-                renderLabel={(id) =>
-                  categories.find((item) => item.category.id === id)?.category
-                    .displayName ?? "Category"
-                }
-              />
-            </View>
+            <SelectField
+              label="Vehicle category"
+              required
+              value={state.categoryId}
+              options={categories.map((item) => ({
+                id: item.category.id,
+                label: item.category.displayName,
+              }))}
+              placeholder="Select a category"
+              modalTitle="Vehicle category"
+              leadingIcon="grid-outline"
+              onChange={(categoryId) =>
+                onChange({
+                  categoryId,
+                  additionalAttributes: {},
+                  featureIds: [],
+                })
+              }
+              error={errors.categoryId}
+            />
             {categories.length === 0 ? (
               <View
                 style={[
@@ -395,18 +416,22 @@ export function VehicleForm({
           >
             <Field
               label="Title"
+              required
               value={state.title}
               placeholder="e.g. 2022 Volvo XC60 AWD"
               icon="car-outline"
+              error={errors.title}
               onChangeText={(title) => onChange({ title })}
             />
             <Field
               label="Description"
+              required
               value={state.description}
               multiline
               icon="document-text-outline"
               placeholder="Describe the condition, history and anything a buyer should know."
               hint="Include the details you would want to know before making an enquiry."
+              error={errors.description}
               onChangeText={(description) => onChange({ description })}
             />
           </Section>
@@ -459,9 +484,11 @@ export function VehicleForm({
                 <View style={styles.gridItem}>
                   <Field
                     label="Model year"
+                    required={requiredCore("modelYear")}
                     value={state.modelYear}
-                    numeric
+                    integer
                     placeholder="2022"
+                    error={errors.modelYear}
                     onChangeText={(modelYear) => onChange({ modelYear })}
                   />
                 </View>
@@ -470,9 +497,11 @@ export function VehicleForm({
                 <View style={styles.gridItem}>
                   <Field
                     label="Registration year"
+                    required={requiredCore("registrationYear")}
                     value={state.registrationYear}
-                    numeric
+                    integer
                     placeholder="2022"
+                    error={errors.registrationYear}
                     onChangeText={(registrationYear) =>
                       onChange({ registrationYear })
                     }
@@ -483,10 +512,12 @@ export function VehicleForm({
             {visible("mileage") ? (
               <Field
                 label="Mileage"
+                required={requiredCore("mileage")}
                 value={state.mileage}
-                numeric
+                integer
                 placeholder="e.g. 32000"
                 icon="speedometer-outline"
+                error={errors.mileage}
                 onChangeText={(mileage) => onChange({ mileage })}
               />
             ) : null}
@@ -502,35 +533,43 @@ export function VehicleForm({
             {visible("fuelType") ? (
               <SelectField
                 label="Fuel type"
+                required={requiredCore("fuelType")}
                 value={state.fuelType}
                 options={valueOptions(FUEL)}
                 leadingIcon="flash-outline"
+                error={errors.fuelType}
                 onChange={(fuelType) => onChange({ fuelType })}
               />
             ) : null}
             {visible("transmission") ? (
               <SelectField
                 label="Transmission"
+                required={requiredCore("transmission")}
                 value={state.transmission}
                 options={valueOptions(TRANSMISSION)}
                 leadingIcon="git-branch-outline"
+                error={errors.transmission}
                 onChange={(transmission) => onChange({ transmission })}
               />
             ) : null}
             {visible("driveType") ? (
               <SelectField
                 label="Drive type"
+                required={requiredCore("driveType")}
                 value={state.driveType}
                 options={valueOptions(DRIVE)}
+                error={errors.driveType}
                 onChange={(driveType) => onChange({ driveType })}
               />
             ) : null}
             {visible("bodyType") ? (
               <SelectField
                 label="Body type"
+                required={requiredCore("bodyType")}
                 value={state.bodyType}
                 options={valueOptions(BODY)}
                 leadingIcon="car-sport-outline"
+                error={errors.bodyType}
                 onChange={(bodyType) => onChange({ bodyType })}
               />
             ) : null}
@@ -545,8 +584,10 @@ export function VehicleForm({
                 <View style={styles.gridItem}>
                   <Field
                     label="Engine size (cc)"
+                    required={requiredCore("engineSizeCc")}
                     value={state.engineSizeCc}
-                    numeric
+                    integer
+                    error={errors.engineSizeCc}
                     onChangeText={(engineSizeCc) => onChange({ engineSizeCc })}
                   />
                 </View>
@@ -555,7 +596,9 @@ export function VehicleForm({
                 <View style={styles.gridItem}>
                   <Field
                     label="Colour"
+                    required={requiredCore("colour")}
                     value={state.colour}
+                    error={errors.colour}
                     onChangeText={(colour) => onChange({ colour })}
                   />
                 </View>
@@ -564,8 +607,10 @@ export function VehicleForm({
                 <View style={styles.gridItem}>
                   <Field
                     label="Doors"
+                    required={requiredCore("doors")}
                     value={state.doors}
-                    numeric
+                    integer
+                    error={errors.doors}
                     onChangeText={(doors) => onChange({ doors })}
                   />
                 </View>
@@ -574,8 +619,10 @@ export function VehicleForm({
                 <View style={styles.gridItem}>
                   <Field
                     label="Seats"
+                    required={requiredCore("seats")}
                     value={state.seats}
-                    numeric
+                    integer
+                    error={errors.seats}
                     onChangeText={(seats) => onChange({ seats })}
                   />
                 </View>
@@ -584,8 +631,10 @@ export function VehicleForm({
                 <View style={styles.gridItem}>
                   <Field
                     label="Previous owners"
+                    required={requiredCore("previousOwners")}
                     value={state.previousOwners}
-                    numeric
+                    integer
+                    error={errors.previousOwners}
                     onChangeText={(previousOwners) =>
                       onChange({ previousOwners })
                     }
@@ -594,11 +643,12 @@ export function VehicleForm({
               ) : null}
               {visible("motExpiry") ? (
                 <View style={styles.gridItem}>
-                  <Field
+                  <DatePickerField
                     label="MOT expiry"
-                    placeholder="YYYY-MM-DD"
+                    required={requiredCore("motExpiry")}
                     value={state.motExpiry}
-                    onChangeText={(motExpiry) => onChange({ motExpiry })}
+                    error={errors.motExpiry}
+                    onChange={(motExpiry) => onChange({ motExpiry })}
                   />
                 </View>
               ) : null}
@@ -606,22 +656,26 @@ export function VehicleForm({
             {visible("condition") ? (
               <SelectField
                 label="Condition"
+                required={requiredCore("condition")}
                 value={state.condition}
                 options={[
                   { id: "", label: "Not specified" },
                   ...valueOptions(CONDITION),
                 ]}
+                error={errors.condition}
                 onChange={(condition) => onChange({ condition })}
               />
             ) : null}
             {visible("serviceHistory") ? (
               <SelectField
                 label="Service history"
+                required={requiredCore("serviceHistory")}
                 value={state.serviceHistory}
                 options={[
                   { id: "", label: "Not specified" },
                   ...valueOptions(SERVICE_HISTORY),
                 ]}
+                error={errors.serviceHistory}
                 onChange={(serviceHistory) => onChange({ serviceHistory })}
               />
             ) : null}
@@ -649,12 +703,14 @@ export function VehicleForm({
                   return (
                     <SelectField
                       key={key}
-                      label={`${key}${policy.required ? " *" : ""}`}
+                      label={key}
+                      required={policy.required}
                       value={value}
                       options={[
                         { id: "", label: "Not specified" },
                         ...valueOptions(options),
                       ]}
+                      error={errors[`attribute:${key}`]}
                       onChange={update}
                     />
                   );
@@ -662,9 +718,11 @@ export function VehicleForm({
                 return (
                   <Field
                     key={key}
-                    label={`${key}${policy.required ? " *" : ""}`}
+                    label={key}
+                    required={policy.required}
                     value={value}
                     numeric={["NUMBER", "INTEGER"].includes(policy.type)}
+                    error={errors[`attribute:${key}`]}
                     onChangeText={update}
                   />
                 );
@@ -677,25 +735,20 @@ export function VehicleForm({
               description="Select everything included with the vehicle."
               icon="sparkles-outline"
             >
-              <View style={styles.wrap}>
-                {allowedFeatures.map((feature) => {
-                  const selected = state.featureIds.includes(feature.id);
-                  return (
-                    <SelectChip
-                      key={feature.id}
-                      text={feature.displayName}
-                      active={selected}
-                      onPress={() =>
-                        onChange({
-                          featureIds: selected
-                            ? state.featureIds.filter((id) => id !== feature.id)
-                            : [...state.featureIds, feature.id],
-                        })
-                      }
-                    />
-                  );
-                })}
-              </View>
+              <MultiSelectField
+                label="Vehicle features"
+                values={state.featureIds}
+                options={allowedFeatures.map((feature) => ({
+                  id: feature.id,
+                  label: feature.displayName,
+                }))}
+                placeholder="Select features"
+                modalTitle="Vehicle features"
+                searchPlaceholder="Search features"
+                leadingIcon="sparkles-outline"
+                error={errors.featureIds}
+                onChange={(featureIds) => onChange({ featureIds })}
+              />
             </Section>
           ) : null}
         </>
@@ -718,20 +771,25 @@ export function VehicleForm({
                       ? "Sale price"
                       : "Rental price"
                   }
+                  required
                   value={state.priceAmount}
                   numeric
                   placeholder="0.00"
                   icon="wallet-outline"
+                  error={errors.priceAmount}
                   onChangeText={(priceAmount) => onChange({ priceAmount })}
                 />
               </View>
               <View style={styles.currencyField}>
-                <Field
+                <SelectField
                   label="Currency"
+                  required
                   value={state.currencyCode}
-                  autoCapitalize="characters"
-                  placeholder="EUR"
-                  onChangeText={(currencyCode) => onChange({ currencyCode })}
+                  options={CURRENCY_OPTIONS}
+                  modalTitle="Currency"
+                  searchPlaceholder="Search currencies"
+                  error={errors.currencyCode}
+                  onChange={(currencyCode) => onChange({ currencyCode })}
                 />
               </View>
             </View>
@@ -752,12 +810,14 @@ export function VehicleForm({
                   label="Rental deposit (optional)"
                   value={state.rentalDeposit}
                   numeric
+                  error={errors.rentalDeposit}
                   onChangeText={(rentalDeposit) => onChange({ rentalDeposit })}
                 />
                 <Field
                   label="Mileage allowance (optional)"
                   value={state.mileageAllowance}
-                  numeric
+                  integer
+                  error={errors.mileageAllowance}
                   onChangeText={(mileageAllowance) =>
                     onChange({ mileageAllowance })
                   }
@@ -766,6 +826,7 @@ export function VehicleForm({
                   label="Rental conditions (optional)"
                   value={state.rentalConditions}
                   multiline
+                  error={errors.rentalConditions}
                   onChangeText={(rentalConditions) =>
                     onChange({ rentalConditions })
                   }
@@ -778,13 +839,13 @@ export function VehicleForm({
             description="Optionally choose when this listing should expire."
             icon="calendar-outline"
           >
-            <Field
+            <DatePickerField
               label="Listing expiry (optional)"
-              placeholder="YYYY-MM-DD"
               value={state.expiresAt}
-              icon="calendar-outline"
+              minimumDate={minExpiryDate}
               hint="Leave blank to keep the listing active without an expiry date."
-              onChangeText={(expiresAt) => onChange({ expiresAt })}
+              error={errors.expiresAt}
+              onChange={(expiresAt) => onChange({ expiresAt })}
             />
           </Section>
         </>
@@ -798,22 +859,24 @@ export function VehicleForm({
             icon="person-circle-outline"
           >
             {!editing ? (
-              <ChoiceRow
-                values={
-                  [null, ...accounts.map((account) => account.id)] as (
-                    | string
-                    | null
-                  )[]
-                }
-                current={state.businessAccountId}
-                onSelect={(businessAccountId) =>
-                  onChange({ businessAccountId, businessListingId: null })
-                }
-                renderLabel={(id) =>
-                  id === null
-                    ? "Personal"
-                    : (accounts.find((account) => account.id === id)
-                        ?.accountName ?? "Business")
+              <SelectField
+                label="Advertise as"
+                value={state.businessAccountId ?? ""}
+                options={[
+                  { id: "", label: "Personal" },
+                  ...accounts.map((account) => ({
+                    id: account.id,
+                    label: account.accountName,
+                  })),
+                ]}
+                placeholder="Personal"
+                modalTitle="Advertise as"
+                leadingIcon="person-circle-outline"
+                onChange={(businessAccountId) =>
+                  onChange({
+                    businessAccountId: businessAccountId || null,
+                    businessListingId: null,
+                  })
                 }
               />
             ) : (
@@ -822,31 +885,23 @@ export function VehicleForm({
               </ThemedText>
             )}
             {state.businessAccountId ? (
-              <>
-                <ChoiceRow
-                  label="Public business profile"
-                  values={
-                    [null, ...profiles.map((profile) => profile.id)] as (
-                      | string
-                      | null
-                    )[]
-                  }
-                  current={state.businessListingId}
-                  onSelect={(businessListingId) =>
-                    onChange({ businessListingId })
-                  }
-                  renderLabel={(id) =>
-                    id === null
-                      ? "No public profile"
-                      : (profiles.find((profile) => profile.id === id)?.name ??
-                        "Business Profile")
-                  }
-                />
-                <ThemedText style={styles.hint} themeColor="textSecondary">
-                  The profile is the public business identity shown on your
-                  listing.
-                </ThemedText>
-              </>
+              <SelectField
+                label="Public business profile"
+                value={state.businessListingId ?? ""}
+                options={[
+                  { id: "", label: "No public profile" },
+                  ...profiles.map((profile) => ({
+                    id: profile.id,
+                    label: profile.name,
+                  })),
+                ]}
+                placeholder="No public profile"
+                modalTitle="Public business profile"
+                hint="The profile is the public business identity shown on your listing."
+                onChange={(businessListingId) =>
+                  onChange({ businessListingId: businessListingId || null })
+                }
+              />
             ) : null}
           </Section>
           <Section
@@ -881,37 +936,36 @@ export function VehicleForm({
               }
             />
             {state.visibilityScope === "COMMUNITY" ? (
-              <ChoiceRow
+              <SelectField
                 label="Community"
-                values={memberships.map((membership) => membership.communityId)}
-                current={state.communityId}
-                onSelect={(communityId) => onChange({ communityId })}
-                renderLabel={communityName}
+                required
+                value={state.communityId}
+                options={memberships.map((membership) => ({
+                  id: membership.communityId,
+                  label: communityName(membership.communityId),
+                }))}
+                placeholder="Select a community"
+                modalTitle="Community"
+                error={errors.communityId}
+                onChange={(communityId) => onChange({ communityId })}
               />
             ) : null}
             {state.visibilityScope === "SELECTED_COMMUNITIES" ? (
-              <View style={styles.wrap}>
-                {memberships.map((membership) => {
-                  const id = membership.communityId;
-                  const selected = state.selectedCommunityIds.includes(id);
-                  return (
-                    <SelectChip
-                      key={id}
-                      text={communityName(id)}
-                      active={selected}
-                      onPress={() =>
-                        onChange({
-                          selectedCommunityIds: selected
-                            ? state.selectedCommunityIds.filter(
-                                (item) => item !== id,
-                              )
-                            : [...state.selectedCommunityIds, id],
-                        })
-                      }
-                    />
-                  );
-                })}
-              </View>
+              <MultiSelectField
+                label="Communities"
+                required
+                values={state.selectedCommunityIds}
+                options={memberships.map((membership) => ({
+                  id: membership.communityId,
+                  label: communityName(membership.communityId),
+                }))}
+                placeholder="Select communities"
+                modalTitle="Communities"
+                error={errors.selectedCommunityIds}
+                onChange={(selectedCommunityIds) =>
+                  onChange({ selectedCommunityIds })
+                }
+              />
             ) : null}
             {memberships.length === 0 && state.visibilityScope !== "COUNTRY" ? (
               <ThemedText style={styles.error} accessibilityRole="alert">
@@ -929,6 +983,7 @@ export function VehicleForm({
               value={state.contactPhone}
               keyboardType="phone-pad"
               icon="call-outline"
+              error={errors.contactPhone}
               onChangeText={(contactPhone) => onChange({ contactPhone })}
             />
             {state.contactPhone.trim() ? (
@@ -949,6 +1004,7 @@ export function VehicleForm({
               value={state.contactWhatsapp}
               keyboardType="phone-pad"
               icon="logo-whatsapp"
+              error={errors.contactWhatsapp}
               onChangeText={(contactWhatsapp) => onChange({ contactWhatsapp })}
             />
             {state.contactWhatsapp.trim() ? (
@@ -970,6 +1026,7 @@ export function VehicleForm({
               keyboardType="email-address"
               icon="mail-outline"
               autoCapitalize="none"
+              error={errors.contactEmail}
               onChangeText={(contactEmail) => onChange({ contactEmail })}
             />
             {state.contactEmail.trim() ? (
@@ -1014,6 +1071,7 @@ export function VehicleForm({
                 <Field
                   label="City"
                   value={state.city}
+                  error={errors.city}
                   onChangeText={(city) => onChange({ city })}
                 />
               </View>
@@ -1021,6 +1079,7 @@ export function VehicleForm({
                 <Field
                   label="Region"
                   value={state.region}
+                  error={errors.region}
                   onChangeText={(region) => onChange({ region })}
                 />
               </View>
@@ -1030,6 +1089,7 @@ export function VehicleForm({
               placeholder="e.g. Frankfurt, Hesse"
               value={state.formattedAddress}
               hint="This public description should not contain your exact address."
+              error={errors.formattedAddress}
               onChangeText={(formattedAddress) =>
                 onChange({ formattedAddress })
               }
@@ -1073,6 +1133,11 @@ export function VehicleForm({
                 </ThemedText>
               </View>
             ) : null}
+            {errors.discoveryLatitude ? (
+              <ThemedText style={styles.error} accessibilityRole="alert">
+                {errors.discoveryLatitude}
+              </ThemedText>
+            ) : null}
             {locationError ? (
               <ThemedText style={styles.error} accessibilityRole="alert">
                 {locationError}
@@ -1084,6 +1149,11 @@ export function VehicleForm({
             description="Use bright, clear photos. The first or selected cover appears in search results."
             icon="camera-outline"
           >
+            {errors.media ? (
+              <ThemedText style={styles.error} accessibilityRole="alert">
+                {errors.media}
+              </ThemedText>
+            ) : null}
             {state.media.length < 5 ? (
               <Pressable
                 onPress={() => void pickImages()}
@@ -1304,10 +1374,13 @@ function Field({
   placeholder,
   multiline = false,
   numeric = false,
+  integer = false,
   autoCapitalize = "sentences",
   keyboardType,
   icon,
   hint,
+  required = false,
+  error,
 }: {
   label: string;
   value: string;
@@ -1315,21 +1388,36 @@ function Field({
   placeholder?: string;
   multiline?: boolean;
   numeric?: boolean;
+  integer?: boolean;
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
   keyboardType?: KeyboardTypeOptions;
   icon?: keyof typeof Ionicons.glyphMap;
   hint?: string;
+  required?: boolean;
+  error?: string;
 }) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
   return (
     <View style={styles.field}>
-      <ThemedText style={styles.label}>{label}</ThemedText>
+      <ThemedText style={styles.label}>
+        {label}
+        {required ? (
+          <ThemedText style={[styles.label, { color: theme.error }]}>
+            {" "}
+            *
+          </ThemedText>
+        ) : null}
+      </ThemedText>
       <View
         style={[
           styles.inputShell,
           {
-            borderColor: focused ? theme.primary : theme.border,
+            borderColor: error
+              ? theme.error
+              : focused
+                ? theme.primary
+                : theme.border,
             backgroundColor: focused
               ? theme.background
               : theme.backgroundElement,
@@ -1352,7 +1440,10 @@ function Field({
           placeholderTextColor={theme.textSecondary}
           selectionColor={theme.primary}
           multiline={multiline}
-          keyboardType={keyboardType ?? (numeric ? "decimal-pad" : "default")}
+          keyboardType={
+            keyboardType ??
+            (integer ? "number-pad" : numeric ? "decimal-pad" : "default")
+          }
           autoCapitalize={autoCapitalize}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
@@ -1365,7 +1456,15 @@ function Field({
           ]}
         />
       </View>
-      {hint ? (
+      {error ? (
+        <ThemedText
+          style={[styles.fieldHint, { color: theme.error }]}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          {error}
+        </ThemedText>
+      ) : hint ? (
         <ThemedText themeColor="textSecondary" style={styles.fieldHint}>
           {hint}
         </ThemedText>

@@ -14,6 +14,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import { PollCard } from "./poll-card";
+import { OptionPicker } from "@/shared/components/option-picker";
 import type {
   CategoryView,
   CreatePollRequest,
@@ -74,6 +75,18 @@ const RESULT_VISIBILITY: {
     description: "Results become visible when voting ends.",
   },
 ];
+
+/** "Closes in 3 days" / "Closes tomorrow" / "This time has already passed". */
+function closingHintText(deadline: Date): string {
+  const ms = deadline.getTime() - Date.now();
+  if (ms <= 0) return "This time has already passed";
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `Closes in ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `Closes in ${hours} hr${hours === 1 ? "" : "s"}`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? "Closes tomorrow" : `Closes in ${days} days`;
+}
 
 export function emptyPollFormValue(): PollFormValue {
   return {
@@ -201,7 +214,7 @@ export function PollForm({
   allowDeadlineClear = true,
 }: PollFormProps) {
   const theme = useTheme();
-  const [settingsOpen, setSettingsOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [picker, setPicker] = useState<"date" | "time" | null>(null);
   const [questionTouched, setQuestionTouched] = useState(false);
@@ -228,6 +241,22 @@ export function PollForm({
 
   const deadline = value.closesAt ? new Date(value.closesAt) : null;
   const validDeadline = deadline && Number.isFinite(deadline.getTime()) ? deadline : null;
+
+  /** One-line summary shown on the collapsed settings header. */
+  const settingsSummary = [
+    validDeadline
+      ? `Ends ${validDeadline.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+      : "No end date",
+    value.allowMultiple ? "Multi-select" : "Single choice",
+    value.anonymousVoting ? "Anonymous" : null,
+    RESULT_VISIBILITY.find((item) => item.value === value.resultsVisibility)
+      ?.label ?? null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  /** Friendly relative hint for the chosen closing time. */
+  const closingHint = validDeadline ? closingHintText(validDeadline) : null;
 
   const questionInvalid = questionTouched && !value.question.trim();
   const normalizedOptions = value.options.map((option) =>
@@ -286,34 +315,16 @@ export function PollForm({
       {showCategory ? (
         <View style={styles.section}>
           <ThemedText style={styles.label}>FEED category *</ThemedText>
-          <View style={styles.choiceWrap}>
-            {categories.map((category) => {
-              const selected = value.categoryId === category.id;
-              return (
-                <Pressable
-                  key={category.id}
-                  onPress={() => update({ categoryId: category.id })}
-                  disabled={controlsDisabled}
-                  accessibilityRole="radio"
-                  accessibilityLabel={`Category ${category.name}`}
-                  accessibilityState={{ checked: selected, disabled: controlsDisabled }}
-                  style={[
-                    styles.choice,
-                    {
-                      borderColor: selected ? BrandColors.primary : theme.border,
-                      backgroundColor: selected
-                        ? BrandColors.primarySurface
-                        : theme.backgroundElement,
-                    },
-                  ]}
-                >
-                  <ThemedText style={selected ? styles.selectedChoiceText : undefined}>
-                    {category.name}
-                  </ThemedText>
-                </Pressable>
-              );
-            })}
-          </View>
+          <OptionPicker
+            options={categories.map((c) => ({ id: c.id, label: c.name }))}
+            selectedId={value.categoryId || null}
+            onSelect={(id) => update({ categoryId: id })}
+            placeholder="Choose a category"
+            searchable={categories.length > 8}
+            disabled={controlsDisabled}
+            icon="grid-outline"
+            variant="soft"
+          />
           {loadingCategories ? (
             <ThemedText style={styles.hint} themeColor="textSecondary">
               Loading categories…
@@ -328,13 +339,14 @@ export function PollForm({
 
       {/* Question — the primary focus */}
       <View style={styles.section}>
-        <ThemedText style={styles.sectionTitle}>Your Question</ThemedText>
+        <ThemedText style={styles.sectionTitle}>Your question</ThemedText>
         <View
           style={[
             styles.questionBox,
-            {
-              borderColor: questionInvalid ? BrandColors.error : theme.border,
-              backgroundColor: theme.backgroundElement,
+            { backgroundColor: theme.backgroundElement },
+            questionInvalid && {
+              borderWidth: 1,
+              borderColor: BrandColors.error,
             },
           ]}
         >
@@ -364,7 +376,7 @@ export function PollForm({
       {/* Answer options */}
       <View style={styles.section}>
         <View style={styles.labelRow}>
-          <ThemedText style={styles.sectionTitle}>Answer Options</ThemedText>
+          <ThemedText style={styles.sectionTitle}>Answer options</ThemedText>
           <ThemedText style={styles.hint} themeColor="textSecondary">
             {value.options.length} of {value.maxOptions}
           </ThemedText>
@@ -381,10 +393,8 @@ export function PollForm({
               key={index}
               style={[
                 styles.optionRow,
-                {
-                  borderColor: duplicate ? BrandColors.error : theme.border,
-                  backgroundColor: theme.backgroundElement,
-                },
+                { backgroundColor: theme.backgroundElement },
+                duplicate && { borderWidth: 1, borderColor: BrandColors.error },
               ]}
             >
               <ThemedText
@@ -445,199 +455,270 @@ export function PollForm({
             onPress={addOption}
             accessibilityRole="button"
             accessibilityLabel="Add poll option"
-            style={[styles.addOption, { borderColor: theme.border }]}
+            style={[styles.addOption, { backgroundColor: theme.primarySurface }]}
           >
-            <Ionicons name="add" size={18} color={BrandColors.primary} />
-            <ThemedText style={styles.addOptionText}>Add Option</ThemedText>
+            <Ionicons name="add" size={18} color={theme.primary} />
+            <ThemedText style={[styles.addOptionText, { color: theme.primary }]}>
+              Add option
+            </ThemedText>
           </Pressable>
         ) : null}
       </View>
 
-      {/* Poll settings — collapsible */}
+      {/* Poll settings — collapsible grouped card */}
       <View
-        style={[styles.settingsBox, { borderColor: theme.border }]}
+        style={[styles.settingsBox, { backgroundColor: theme.backgroundElement }]}
       >
         <Pressable
           onPress={() => setSettingsOpen((open) => !open)}
           accessibilityRole="button"
           accessibilityLabel="Poll settings"
           accessibilityState={{ expanded: settingsOpen }}
-          style={styles.settingsHeader}
+          style={({ pressed }) => [styles.settingsHeader, pressed && { opacity: 0.7 }]}
         >
-          <ThemedText style={styles.sectionTitle}>Poll Settings</ThemedText>
+          <View
+            style={[styles.headerIcon, { backgroundColor: theme.primarySurface }]}
+          >
+            <Ionicons name="options-outline" size={15} color={theme.primary} />
+          </View>
+          <View style={styles.flex}>
+            <ThemedText style={styles.sectionTitle}>Poll settings</ThemedText>
+            {!settingsOpen ? (
+              <ThemedText
+                style={styles.headerSummary}
+                themeColor="textSecondary"
+                numberOfLines={1}
+              >
+                {settingsSummary}
+              </ThemedText>
+            ) : null}
+          </View>
           <Ionicons
             name={settingsOpen ? "chevron-up" : "chevron-down"}
             size={18}
             color={theme.textSecondary}
           />
         </Pressable>
+
         {settingsOpen ? (
           <View style={styles.settingsBody}>
-            <View style={styles.toggleRow}>
-              <ThemedText style={styles.toggleLabel}>
-                Add closing date and time
+            {/* Closing time */}
+            <View style={styles.subSection}>
+              <ThemedText style={styles.groupLabel} themeColor="textSecondary">
+                CLOSES
               </ThemedText>
-              <Switch
-                value={value.closesAt !== null}
-                onValueChange={(enabled) =>
-                  update({
-                    closesAt: enabled
-                      ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-                      : null,
-                  })
-                }
-                disabled={
-                  controlsDisabled ||
-                  (!allowDeadlineClear && value.closesAt !== null)
-                }
-                accessibilityLabel="Add closing date and time"
-              />
-            </View>
-            {value.closesAt ? (
-              <View style={styles.deadlineRow}>
-                <Pressable
-                  onPress={() => setPicker("date")}
-                  disabled={controlsDisabled}
-                  accessibilityRole="button"
-                  accessibilityLabel="Choose closing date"
-                  style={[
-                    styles.deadlineButton,
-                    {
-                      borderColor: theme.border,
-                      backgroundColor: theme.backgroundElement,
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name="calendar-outline"
-                    size={16}
-                    color={theme.textSecondary}
-                  />
-                  <ThemedText>
-                    {validDeadline
-                      ? validDeadline.toLocaleDateString()
-                      : "Choose date"}
+              <View style={styles.toggleRow}>
+                <View style={styles.flex}>
+                  <ThemedText style={styles.toggleLabel}>
+                    Set a closing time
                   </ThemedText>
-                </Pressable>
-                <Pressable
-                  onPress={() => setPicker("time")}
-                  disabled={controlsDisabled}
-                  accessibilityRole="button"
-                  accessibilityLabel="Choose closing time"
-                  style={[
-                    styles.deadlineButton,
-                    {
-                      borderColor: theme.border,
-                      backgroundColor: theme.backgroundElement,
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name="time-outline"
-                    size={16}
-                    color={theme.textSecondary}
-                  />
-                  <ThemedText>
-                    {validDeadline
-                      ? validDeadline.toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "Choose time"}
-                  </ThemedText>
-                </Pressable>
-              </View>
-            ) : null}
-            {!allowDeadlineClear && value.closesAt ? (
-              <ThemedText style={styles.hint} themeColor="textSecondary">
-                An existing deadline can be changed but not removed.
-              </ThemedText>
-            ) : null}
-
-            <PolicyToggle
-              label="Allow multiple selections"
-              value={value.allowMultiple}
-              disabled={configurationDisabled}
-              onValueChange={(allowMultiple) => update({ allowMultiple })}
-            />
-            <PolicyToggle
-              label="Allow vote changes"
-              value={value.allowVoteChange}
-              disabled={configurationDisabled}
-              onValueChange={(allowVoteChange) => update({ allowVoteChange })}
-            />
-            <PolicyToggle
-              label="Allow vote withdrawal"
-              value={value.allowVoteWithdraw}
-              disabled={configurationDisabled}
-              onValueChange={(allowVoteWithdraw) =>
-                update({ allowVoteWithdraw })
-              }
-            />
-            <PolicyToggle
-              label="Anonymous voting"
-              value={value.anonymousVoting}
-              disabled={configurationDisabled}
-              onValueChange={(anonymousVoting) =>
-                update({ anonymousVoting })
-              }
-            />
-
-            <View style={styles.section}>
-              <ThemedText style={styles.label}>Results visibility</ThemedText>
-              {RESULT_VISIBILITY.map((item) => {
-                const selected = value.resultsVisibility === item.value;
-                return (
-                  <Pressable
-                    key={item.value}
-                    onPress={() =>
-                      update({ resultsVisibility: item.value })
-                    }
-                    disabled={configurationDisabled}
-                    accessibilityRole="radio"
-                    accessibilityLabel={`Results ${item.label.toLowerCase()}`}
-                    accessibilityState={{
-                      checked: selected,
-                      disabled: configurationDisabled,
-                    }}
-                    style={[
-                      styles.radioRow,
-                      { borderColor: selected ? BrandColors.primary : theme.border },
-                    ]}
+                  <ThemedText
+                    style={styles.toggleHint}
+                    themeColor="textSecondary"
                   >
-                    <View
-                      style={[
-                        styles.radioOuter,
-                        {
-                          borderColor: selected
-                            ? BrandColors.primary
-                            : theme.textSecondary,
-                        },
+                    Otherwise the poll stays open until you close it.
+                  </ThemedText>
+                </View>
+                <Switch
+                  value={value.closesAt !== null}
+                  onValueChange={(enabled) =>
+                    update({
+                      closesAt: enabled
+                        ? new Date(
+                            Date.now() + 24 * 60 * 60 * 1000,
+                          ).toISOString()
+                        : null,
+                    })
+                  }
+                  disabled={
+                    controlsDisabled ||
+                    (!allowDeadlineClear && value.closesAt !== null)
+                  }
+                  accessibilityLabel="Set a closing time"
+                />
+              </View>
+              {value.closesAt ? (
+                <>
+                  <View style={styles.deadlineRow}>
+                    <Pressable
+                      onPress={() => setPicker("date")}
+                      disabled={controlsDisabled}
+                      accessibilityRole="button"
+                      accessibilityLabel="Choose closing date"
+                      style={({ pressed }) => [
+                        styles.deadlineChip,
+                        { backgroundColor: theme.background },
+                        pressed && { opacity: 0.7 },
                       ]}
                     >
-                      {selected ? (
-                        <View
+                      <Ionicons
+                        name="calendar-outline"
+                        size={15}
+                        color={theme.primary}
+                      />
+                      <ThemedText style={styles.deadlineText}>
+                        {validDeadline
+                          ? validDeadline.toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })
+                          : "Date"}
+                      </ThemedText>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setPicker("time")}
+                      disabled={controlsDisabled}
+                      accessibilityRole="button"
+                      accessibilityLabel="Choose closing time"
+                      style={({ pressed }) => [
+                        styles.deadlineChip,
+                        { backgroundColor: theme.background },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Ionicons
+                        name="time-outline"
+                        size={15}
+                        color={theme.primary}
+                      />
+                      <ThemedText style={styles.deadlineText}>
+                        {validDeadline
+                          ? validDeadline.toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "Time"}
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                  {closingHint ? (
+                    <ThemedText
+                      style={[
+                        styles.hint,
+                        closingHint.includes("passed")
+                          ? { color: BrandColors.warning }
+                          : null,
+                      ]}
+                      themeColor="textSecondary"
+                    >
+                      {closingHint}
+                    </ThemedText>
+                  ) : null}
+                </>
+              ) : null}
+              {!allowDeadlineClear && value.closesAt ? (
+                <ThemedText style={styles.hint} themeColor="textSecondary">
+                  An existing deadline can be changed but not removed.
+                </ThemedText>
+              ) : null}
+            </View>
+
+            {/* Voting rules */}
+            <View style={styles.subSection}>
+              <ThemedText style={styles.groupLabel} themeColor="textSecondary">
+                VOTING
+              </ThemedText>
+              <PolicyToggle
+                icon="checkmark-done-outline"
+                label="Multiple selections"
+                hint="Voters can choose more than one option."
+                value={value.allowMultiple}
+                disabled={configurationDisabled}
+                onValueChange={(allowMultiple) => update({ allowMultiple })}
+              />
+              <PolicyToggle
+                icon="swap-horizontal-outline"
+                label="Vote changes"
+                hint="Voters can switch their answer while the poll is open."
+                value={value.allowVoteChange}
+                disabled={configurationDisabled}
+                onValueChange={(allowVoteChange) =>
+                  update({ allowVoteChange })
+                }
+              />
+              <PolicyToggle
+                icon="arrow-undo-outline"
+                label="Vote withdrawal"
+                hint="Voters can remove their vote entirely."
+                value={value.allowVoteWithdraw}
+                disabled={configurationDisabled}
+                onValueChange={(allowVoteWithdraw) =>
+                  update({ allowVoteWithdraw })
+                }
+              />
+              <PolicyToggle
+                icon="eye-off-outline"
+                label="Anonymous voting"
+                hint="Voters can't see who voted for what."
+                value={value.anonymousVoting}
+                disabled={configurationDisabled}
+                onValueChange={(anonymousVoting) =>
+                  update({ anonymousVoting })
+                }
+              />
+            </View>
+
+            {/* Results visibility */}
+            <View style={styles.subSection}>
+              <ThemedText style={styles.groupLabel} themeColor="textSecondary">
+                RESULTS VISIBILITY
+              </ThemedText>
+              <View
+                style={[
+                  styles.visGroup,
+                  { backgroundColor: theme.background },
+                ]}
+              >
+                {RESULT_VISIBILITY.map((item, index) => {
+                  const selected = value.resultsVisibility === item.value;
+                  return (
+                    <Pressable
+                      key={item.value}
+                      onPress={() =>
+                        update({ resultsVisibility: item.value })
+                      }
+                      disabled={configurationDisabled}
+                      accessibilityRole="radio"
+                      accessibilityLabel={`Results ${item.label.toLowerCase()}`}
+                      accessibilityState={{
+                        checked: selected,
+                        disabled: configurationDisabled,
+                      }}
+                      style={({ pressed }) => [
+                        styles.visRow,
+                        index > 0 && {
+                          borderTopWidth: StyleSheet.hairlineWidth,
+                          borderTopColor: theme.border,
+                        },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <View style={styles.flex}>
+                        <ThemedText
                           style={[
-                            styles.radioInner,
-                            { backgroundColor: BrandColors.primary },
+                            styles.visLabel,
+                            selected && { color: theme.primary },
                           ]}
-                        />
-                      ) : null}
-                    </View>
-                    <View style={styles.flex}>
-                      <ThemedText style={styles.radioLabel}>
-                        {item.label}
-                      </ThemedText>
-                      <ThemedText
-                        style={styles.hint}
-                        themeColor="textSecondary"
-                      >
-                        {item.description}
-                      </ThemedText>
-                    </View>
-                  </Pressable>
-                );
-              })}
+                        >
+                          {item.label}
+                        </ThemedText>
+                        <ThemedText
+                          style={styles.toggleHint}
+                          themeColor="textSecondary"
+                        >
+                          {item.description}
+                        </ThemedText>
+                      </View>
+                      <Ionicons
+                        name={selected ? "checkmark-circle" : "ellipse-outline"}
+                        size={20}
+                        color={selected ? theme.primary : theme.textMuted}
+                      />
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
           </View>
         ) : null}
@@ -677,10 +758,7 @@ export function PollForm({
         <View
           style={[
             styles.preview,
-            {
-              borderColor: theme.border,
-              backgroundColor: theme.backgroundElement,
-            },
+            { backgroundColor: theme.backgroundElement },
           ]}
           testID="poll-preview"
         >
@@ -692,19 +770,34 @@ export function PollForm({
 }
 
 function PolicyToggle({
+  icon,
   label,
+  hint,
   value,
   disabled,
   onValueChange,
 }: {
+  icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  hint: string;
   value: boolean;
   disabled: boolean;
   onValueChange: (value: boolean) => void;
 }) {
+  const theme = useTheme();
   return (
     <View style={styles.toggleRow}>
-      <ThemedText style={styles.toggleLabel}>{label}</ThemedText>
+      <View
+        style={[styles.toggleIcon, { backgroundColor: theme.background }]}
+      >
+        <Ionicons name={icon} size={15} color={theme.primary} />
+      </View>
+      <View style={styles.flex}>
+        <ThemedText style={styles.toggleLabel}>{label}</ThemedText>
+        <ThemedText style={styles.toggleHint} themeColor="textSecondary">
+          {hint}
+        </ThemedText>
+      </View>
       <Switch
         value={value}
         onValueChange={onValueChange}
@@ -731,7 +824,6 @@ const styles = StyleSheet.create({
   inlineError: { fontSize: 12, color: BrandColors.error },
   counter: { fontSize: 11, textAlign: "right" },
   questionBox: {
-    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.three,
     paddingTop: Spacing.two,
@@ -743,19 +835,10 @@ const styles = StyleSheet.create({
     minHeight: 96,
     textAlignVertical: "top",
   },
-  choiceWrap: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
-  choice: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: BorderRadius.full,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-  },
-  selectedChoiceText: { color: BrandColors.primary, fontWeight: "600" },
   optionRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.two,
-    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.three,
     paddingVertical: 2,
@@ -772,67 +855,71 @@ const styles = StyleSheet.create({
     alignItems: "center",
     alignSelf: "flex-start",
     gap: Spacing.one,
-    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.full,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
   },
   addOptionText: {
-    color: BrandColors.primary,
     fontSize: 13,
     fontWeight: "600",
   },
   settingsBox: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: BorderRadius.md,
+    borderRadius: 14,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    paddingVertical: Spacing.three,
   },
   settingsHeader: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: Spacing.two,
     minHeight: 32,
   },
-  settingsBody: { gap: Spacing.two, paddingTop: Spacing.two },
+  headerIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerSummary: { fontSize: 12, marginTop: 1 },
+  settingsBody: { gap: Spacing.four, paddingTop: Spacing.three },
+  subSection: { gap: Spacing.two },
+  groupLabel: { fontSize: 11, fontWeight: "700", letterSpacing: 0.6 },
   toggleRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: Spacing.three,
-    minHeight: 36,
+    gap: Spacing.two,
+    minHeight: 40,
   },
-  toggleLabel: { flex: 1, fontSize: 14, fontWeight: "500" },
+  toggleIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toggleLabel: { fontSize: 14, fontWeight: "600" },
+  toggleHint: { fontSize: 12, lineHeight: 16, marginTop: 1 },
   deadlineRow: { flexDirection: "row", gap: Spacing.two },
-  deadlineButton: {
+  deadlineChip: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.two,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: BorderRadius.md,
+    borderRadius: 10,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    paddingVertical: 10,
   },
-  radioRow: {
+  deadlineText: { fontSize: 13, fontWeight: "600" },
+  visGroup: { borderRadius: 12, overflow: "hidden" },
+  visRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: Spacing.two,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.three,
-  },
-  radioOuter: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 2,
     alignItems: "center",
-    justifyContent: "center",
-    marginTop: 1,
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 10,
   },
-  radioInner: { width: 8, height: 8, borderRadius: 4 },
-  radioLabel: { fontSize: 14, fontWeight: "600" },
+  visLabel: { fontSize: 14, fontWeight: "600" },
   previewToggle: {
     flexDirection: "row",
     alignItems: "center",
@@ -840,7 +927,6 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
   },
   preview: {
-    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.md,
     padding: Spacing.three,
   },

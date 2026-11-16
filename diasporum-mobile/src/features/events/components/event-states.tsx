@@ -26,8 +26,9 @@ export function EventsSkeleton() {
           <View style={[styles.skCover, bg]} />
           <View style={styles.skBody}>
             <View style={[styles.skLine, bg, { width: "38%" }]} />
-            <View style={[styles.skLine, bg, { width: "90%" }]} />
-            <View style={[styles.skLine, bg, { width: "55%" }]} />
+            <View style={[styles.skLine, bg, { width: "88%" }]} />
+            <View style={[styles.skLine, bg, { width: "52%" }]} />
+            <View style={[styles.skLine, bg, { width: "64%" }]} />
           </View>
         </View>
       ))}
@@ -89,14 +90,16 @@ export function EventsEmpty({
 
 const styles = StyleSheet.create({
   skRow: {
+    flexDirection: "row",
+    gap: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.lg,
     marginHorizontal: Spacing.one,
     marginVertical: Spacing.two,
     padding: Spacing.two,
   },
-  skCover: { width: "100%", aspectRatio: 16 / 9, borderRadius: BorderRadius.md },
-  skBody: { gap: 10, padding: Spacing.two, paddingTop: Spacing.three },
+  skCover: { width: 116, height: 112, borderRadius: BorderRadius.md },
+  skBody: { flex: 1, gap: 10, paddingVertical: Spacing.one },
   skLine: { height: 12, borderRadius: 6 },
   empty: {
     alignItems: "center",

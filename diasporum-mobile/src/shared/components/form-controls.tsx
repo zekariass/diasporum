@@ -18,10 +18,13 @@ import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+export function Field({ label, labelAccessory, hint, children }: { label: string; labelAccessory?: React.ReactNode; hint?: string; children: React.ReactNode }) {
   return (
     <View style={styles.field}>
-      <ThemedText type="smallBold">{label}</ThemedText>
+      <View style={styles.fieldLabelRow}>
+        <ThemedText type="smallBold" style={styles.fieldLabel}>{label}</ThemedText>
+        {labelAccessory}
+      </View>
       {children}
       {hint ? <ThemedText type="small" themeColor="textSecondary">{hint}</ThemedText> : null}
     </View>
@@ -206,6 +209,8 @@ export function DetailRow({ icon, label, value }: { icon: keyof typeof Ionicons.
 
 const styles = StyleSheet.create({
   field: { gap: Spacing.two },
+  fieldLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: Spacing.two },
+  fieldLabel: { flexShrink: 1 },
   input: { minHeight: 52, borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, fontSize: 16 },
   multiline: { minHeight: 112, textAlignVertical: "top" },
   chip: { flexDirection: "row", alignItems: "center", gap: Spacing.one, borderWidth: 1, borderRadius: BorderRadius.full, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },

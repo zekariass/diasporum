@@ -27,9 +27,7 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { useSession } from "@/core/session/session-provider";
 import { createEventApi } from "../services/event-api";
-import { createCommunityApi } from "@/features/communities/services/community-api";
 import { createBusinessApi } from "@/features/business/services/business-api";
-import type { CommunityView } from "@/features/communities/types/community-types";
 import type { BusinessAccount } from "@/features/business/types/business-types";
 import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
@@ -78,10 +76,6 @@ export default function CreateEventScreen() {
   const router = useRouter();
   const { apiClient, session } = useSession();
   const eventApi = React.useMemo(() => createEventApi(apiClient), [apiClient]);
-  const communityApi = React.useMemo(
-    () => createCommunityApi(apiClient),
-    [apiClient],
-  );
   const businessApi = React.useMemo(
     () => createBusinessApi(apiClient),
     [apiClient],
@@ -93,7 +87,9 @@ export default function CreateEventScreen() {
   const [error, setError] = useState<string | null>(null);
 
   // ---- audience step state ----
-  const [communities, setCommunities] = useState<CommunityView[]>([]);
+  const [communities, setCommunities] = useState<
+    { id: string; name: string; destinationCountryId: string | null }[]
+  >([]);
   const [communityId, setCommunityId] = useState<string | null>(
     session?.activeCommunityId ?? null,
   );
@@ -109,23 +105,23 @@ export default function CreateEventScreen() {
   // Resolve membership community names + business accounts + event categories.
   useEffect(() => {
     let cancelled = false;
-    const membershipIds = (session?.memberships ?? [])
+    const contexts = session?.access?.communities ?? [];
+    const communityRows = (session?.memberships ?? [])
       .filter((m) => m.status === "ACTIVE")
-      .map((m) => m.communityId);
+      .map((m) => contexts.find((c) => c.communityId === m.communityId))
+      .filter((c): c is NonNullable<typeof c> => c != null)
+      .map((c) => ({
+        id: c.communityId,
+        name: c.communityName,
+        destinationCountryId: c.destinationCountryId,
+      }));
     Promise.all([
-      Promise.all(
-        membershipIds.map((id) => communityApi.community(id).catch(() => null)),
-      ),
       businessApi.accounts().catch(() => ({ items: [] })),
       eventApi.categories().catch(() => ({ items: [] })),
     ])
-      .then(([communityRows, accountsRes, categoriesRes]) => {
+      .then(([accountsRes, categoriesRes]) => {
         if (cancelled) return;
-        setCommunities(
-          communityRows.filter(
-            (c): c is CommunityView => c !== null && c.active,
-          ),
-        );
+        setCommunities(communityRows);
         setAccounts(accountsRes.items.filter((a) => a.status === "ACTIVE"));
         setCategories(categoriesRes.items);
         setAudienceLoading(false);

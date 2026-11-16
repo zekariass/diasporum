@@ -33,6 +33,7 @@ import {
   updatePollRequest,
   validatePollForm,
 } from '../components/poll-form';
+import { FormattingToolbar, continueList } from '../components/formatting-toolbar';
 
 export default function EditPostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -43,6 +44,7 @@ export default function EditPostScreen() {
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [bodySel, setBodySel] = useState({ start: 0, end: 0 });
   const [linkUrl, setLinkUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -166,9 +168,29 @@ export default function EditPostScreen() {
                   maxLength={200}
                 />
                 <ThemedText style={styles.label}>Body</ThemedText>
+                <FormattingToolbar
+                  text={body}
+                  selection={bodySel}
+                  disabled={saving}
+                  onChange={({ text, selection }) => {
+                    setBody(text.slice(0, 4000));
+                    setBodySel(selection);
+                  }}
+                />
                 <TextInput
                   style={[styles.input, styles.bodyInput, { backgroundColor: theme.backgroundElement, borderColor: theme.border, color: theme.text }]}
-                  value={body} onChangeText={setBody}
+                  value={body}
+                  onChangeText={(t) => {
+                    const cont = continueList(body, bodySel, t);
+                    if (cont) {
+                      setBody(cont.text);
+                      setBodySel(cont.selection);
+                    } else {
+                      setBody(t);
+                    }
+                  }}
+                  selection={bodySel}
+                  onSelectionChange={(e) => setBodySel(e.nativeEvent.selection)}
                   placeholder="What's on your mind?" placeholderTextColor={theme.textSecondary}
                   multiline numberOfLines={6} maxLength={4000}
                 />

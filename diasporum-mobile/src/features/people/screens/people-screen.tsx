@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Pressable,
   RefreshControl,
@@ -53,24 +54,33 @@ const PAGE_SIZE = 30;
 
 function SkeletonRows() {
   const theme = useTheme();
+  const bg = { backgroundColor: theme.backgroundElement };
+  const [pulse] = useState(() => new Animated.Value(1));
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 0.45, duration: 650, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 650, useNativeDriver: true }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [pulse]);
   return (
-    <View style={st.skeletonList}>
+    <Animated.View style={[st.skeletonList, { opacity: pulse }]}>
       {[0, 1, 2, 3, 4, 5].map(i => (
-        <View key={i} style={[st.personCard, st.skeletonCard, { borderColor: theme.border }]}>
-          <View style={[st.avatarSk, { backgroundColor: theme.backgroundElement }]} />
+        <View key={i} style={[st.personRow, { borderBottomColor: theme.border }]}>
+          <View style={[st.avatarSk, bg]} />
           <View style={st.skeletonInfo}>
-            <View style={[st.lineSk, { backgroundColor: theme.backgroundElement, width: '58%' }]} />
-            <View style={[st.lineSk, { backgroundColor: theme.backgroundElement, width: '38%' }]} />
+            <View style={[st.lineSk, bg, { width: '46%' }]} />
+            <View style={[st.lineSk, bg, { width: '30%' }]} />
+            <View style={[st.lineSk, bg, { width: '86%' }]} />
           </View>
-          <View style={[st.btnSk, { backgroundColor: theme.backgroundElement }]} />
+          <View style={[st.btnSk, bg]} />
         </View>
       ))}
-    </View>
+    </Animated.View>
   );
-}
-
-function ListSeparator() {
-  return <View style={st.separator} />;
 }
 
 export default function PeopleScreen() {
@@ -212,7 +222,9 @@ export default function PeopleScreen() {
     const q = search.trim().toLowerCase();
     if (!q) return items;
     return items.filter(p =>
-      p.displayName?.toLowerCase().includes(q) || p.username.toLowerCase().includes(q));
+      p.displayName?.toLowerCase().includes(q) ||
+      p.username.toLowerCase().includes(q) ||
+      p.bio?.toLowerCase().includes(q));
   }, [tabs, tab, search]);
 
   const renderPerson = useCallback(({ item }: { item: ProfileSummary }) => {
@@ -221,33 +233,31 @@ export default function PeopleScreen() {
     const followsYou = rel?.followedBy ?? false;
     const busy = pending.has(item.id);
     const name = item.displayName ?? item.username;
+    const bio = item.bio?.trim();
 
     return (
-      <View style={[st.personCard, { borderColor: theme.border }]}>
-        <View style={[st.avatarRing, { borderColor: isFollowing ? theme.primary : theme.border }]}>
-          <Avatar name={name} mediaId={item.avatarMediaId} userId={item.id} size={50} />
-        </View>
+      <View style={[st.personRow, { borderBottomColor: theme.border }]}>
+        <Avatar name={name} mediaId={item.avatarMediaId} userId={item.id} size={46} />
         <View style={st.info}>
-          <ThemedText style={st.name} numberOfLines={1}>{name}</ThemedText>
+          <View style={st.nameRow}>
+            <ThemedText style={st.name} numberOfLines={1}>{name}</ThemedText>
+            {followsYou && !isFollowing && (
+              <View style={[st.chip, { backgroundColor: theme.backgroundElement }]}>
+                <ThemedText style={[st.chipText, { color: theme.textSecondary }]}>Follows you</ThemedText>
+              </View>
+            )}
+            {rel?.mutual && (
+              <View style={[st.chip, { backgroundColor: theme.primarySurface }]}>
+                <ThemedText style={[st.chipText, { color: theme.primary }]}>Mutual</ThemedText>
+              </View>
+            )}
+          </View>
           <ThemedText style={st.handle} themeColor="textSecondary" numberOfLines={1}>
             @{item.username}
           </ThemedText>
-          {(followsYou || rel?.mutual) && (
-            <View style={st.metaRow}>
-              {followsYou && !isFollowing && (
-                <View style={[st.chip, { backgroundColor: theme.backgroundElement }]}>
-                  <Ionicons name="person-add-outline" size={11} color={theme.textSecondary} />
-                  <ThemedText style={[st.chipText, { color: theme.textSecondary }]}>Follows you</ThemedText>
-                </View>
-              )}
-              {rel?.mutual && (
-                <View style={[st.chip, { backgroundColor: theme.primarySurface }]}>
-                  <Ionicons name="swap-horizontal" size={11} color={theme.primary} />
-                  <ThemedText style={[st.chipText, { color: theme.primary }]}>Mutual</ThemedText>
-                </View>
-              )}
-            </View>
-          )}
+          {bio ? (
+            <ThemedText style={st.bio} numberOfLines={2}>{bio}</ThemedText>
+          ) : null}
         </View>
         <Pressable
           onPress={() => void toggleFollow(item)}
@@ -314,9 +324,6 @@ export default function PeopleScreen() {
               {communityName ? `Connect with people in ${communityName}` : 'Discover, connect and grow together'}
             </ThemedText>
           </View>
-          <View style={[st.headerBadge, { backgroundColor: theme.primarySurface }]}>
-            <Ionicons name="people" size={22} color={theme.primary} />
-          </View>
         </View>
 
         {/* Search */}
@@ -324,7 +331,7 @@ export default function PeopleScreen() {
           <Ionicons name="search-outline" size={20} color={theme.textSecondary} />
           <TextInput
             style={[st.searchInput, { color: theme.text }]}
-            placeholder="Search by name or username"
+            placeholder="Search by name, username or bio"
             placeholderTextColor={theme.textSecondary}
             value={search}
             onChangeText={setSearch}
@@ -415,7 +422,6 @@ export default function PeopleScreen() {
             onEndReached={loadMore}
             onEndReachedThreshold={0.4}
             contentContainerStyle={[st.listContent, filtered.length === 0 && st.emptyListContent]}
-            ItemSeparatorComponent={ListSeparator}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             refreshControl={
@@ -496,13 +502,6 @@ const st = StyleSheet.create({
   headerText: { flex: 1, minWidth: 0 },
   title: { fontSize: 30, lineHeight: 36, fontWeight: '700', letterSpacing: -0.6 },
   subtitle: { fontSize: 13, lineHeight: 18, marginTop: 2 },
-  headerBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -546,38 +545,32 @@ const st = StyleSheet.create({
     justifyContent: 'center',
   },
   segCountText: { fontSize: 10, lineHeight: 13, fontWeight: '800' },
-  listContent: { paddingHorizontal: Spacing.four / 2, paddingTop: 12, paddingBottom: Spacing.five },
+  listContent: { paddingTop: 4, paddingBottom: Spacing.five },
   emptyListContent: { flexGrow: 1 },
   listHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: Spacing.two,
-    marginBottom: 12,
+    paddingHorizontal: Spacing.three,
+    marginBottom: 4,
+    marginTop: 8,
   },
   sectionTitle: { fontSize: 15, lineHeight: 20, fontWeight: '700' },
   sectionMeta: { fontSize: 12, lineHeight: 16 },
-  personCard: {
+  personRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    borderWidth: 1,
-    borderRadius: 18,
+    alignItems: 'flex-start',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 14,
     gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  separator: { height: 10 },
-  avatarRing: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  info: { flex: 1, minWidth: 0, gap: 1 },
-  name: { fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  info: { flex: 1, minWidth: 0, gap: 2 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  name: { fontSize: 15, lineHeight: 20, fontWeight: '700', flexShrink: 1 },
   handle: { fontSize: 13, lineHeight: 18 },
-  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 5 },
+  bio: { fontSize: 14, lineHeight: 20, marginTop: 4 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -643,10 +636,9 @@ const st = StyleSheet.create({
   },
   secondaryBtnText: { fontSize: 13, fontWeight: '700' },
   footerLoader: { padding: Spacing.four },
-  skeletonList: { paddingHorizontal: Spacing.four / 2, paddingTop: 12 },
-  skeletonCard: { marginBottom: 10 },
+  skeletonList: { paddingTop: 4 },
   skeletonInfo: { flex: 1, gap: Spacing.two },
-  avatarSk: { width: 56, height: 56, borderRadius: 28 },
+  avatarSk: { width: 46, height: 46, borderRadius: 23 },
   lineSk: { height: 12, borderRadius: 6 },
   btnSk: { width: 92, height: 38, borderRadius: 19 },
 });

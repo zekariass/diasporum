@@ -17,7 +17,7 @@ export type ConversationStatus = 'REQUESTED' | 'ACCEPTED' | 'DECLINED' | 'CLOSED
 export type ConversationContextType =
   | 'GENERAL' | 'PROPERTY_LISTING' | 'VEHICLE_LISTING' | 'BUSINESS_PROFILE'
   | 'EVENT' | 'JOB_LISTING' | 'SPARE_BAG_CONTACT' | 'SERVICE_REQUEST'
-  | 'COMMUNITY_HELP_POST';
+  | 'COMMUNITY_HELP_POST' | 'SHOP' | 'SHOP_PRODUCT' | 'SHOP_ORDER';
 
 export interface ConversationView {
   id: string;

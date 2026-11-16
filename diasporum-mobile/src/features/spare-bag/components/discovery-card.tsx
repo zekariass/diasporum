@@ -185,179 +185,67 @@ export function DiscoveryListingCard({
         </View>
       </View>
 
-      <View
-        style={[
-          styles.routePanel,
-          { backgroundColor: theme.backgroundElement },
-        ]}
-      >
-        <View style={styles.routeLine}>
-          <View style={styles.airport}>
-            <ThemedText style={styles.airportCode}>
-              {listing.originAirport.iataCode}
-            </ThemedText>
-            <ThemedText
-              themeColor="textSecondary"
-              style={styles.airportCity}
-              numberOfLines={1}
-            >
-              {listing.originAirport.city}
-            </ThemedText>
-          </View>
-          <View style={styles.routeJourney}>
-            <View
-              style={[
-                styles.routeRule,
-                { backgroundColor: theme.primaryLight },
-              ]}
-            />
-            <Ionicons name="airplane" size={17} color={theme.primary} />
-            <View
-              style={[
-                styles.routeRule,
-                { backgroundColor: theme.primaryLight },
-              ]}
-            />
-          </View>
-          <View style={[styles.airport, styles.destination]}>
-            <ThemedText style={styles.airportCode}>
-              {listing.destinationAirport.iataCode}
-            </ThemedText>
-            <ThemedText
-              themeColor="textSecondary"
-              style={styles.airportCity}
-              numberOfLines={1}
-            >
-              {listing.destinationAirport.city}
-            </ThemedText>
-          </View>
-        </View>
-        <View style={[styles.travelRow, { borderTopColor: theme.border }]}>
-          <Ionicons name="calendar-outline" size={15} color={theme.primary} />
-          <ThemedText type="small" themeColor="textSecondary">
-            {formatShortDateRange(listing)}
-          </ThemedText>
-        </View>
+      <View style={styles.metaRow}>
+        <Ionicons name="airplane-outline" size={14} color={theme.primary} />
+        <ThemedText style={styles.metaRoute}>
+          {listing.originAirport.iataCode} → {listing.destinationAirport.iataCode}
+        </ThemedText>
+        <Ionicons
+          name="calendar-outline"
+          size={13}
+          color={theme.textSecondary}
+        />
+        <ThemedText
+          type="small"
+          themeColor="textSecondary"
+          numberOfLines={1}
+          style={styles.metaDates}
+        >
+          {formatShortDateRange(listing)}
+        </ThemedText>
+        <ThemedText
+          style={[styles.priceText, { color: theme.primary }]}
+          numberOfLines={1}
+        >
+          {sender
+            ? budget
+              ? `Up to ${budget}`
+              : "Flexible"
+            : formatCompactPrice(listing)}
+        </ThemedText>
       </View>
-
-      <View style={styles.detailsRow}>
-        <View style={styles.quantity}>
-          <Ionicons
-            name={sender ? "cube-outline" : "briefcase-outline"}
-            size={18}
-            color={theme.primary}
-          />
-          <ThemedText
-            type="small"
-            style={styles.quantityText}
-            numberOfLines={2}
-          >
-            {sender ? senderQuantity(listing) : passengerQuantity(listing)}
-          </ThemedText>
-        </View>
-        <View style={styles.priceBlock}>
-          <ThemedText themeColor="textSecondary" style={styles.priceCaption}>
-            {sender ? "Budget" : "Price"}
-          </ThemedText>
-          <ThemedText
-            style={[styles.priceText, { color: theme.primary }]}
-            numberOfLines={2}
-          >
-            {sender
-              ? budget
-                ? `Up to ${budget}`
-                : "Flexible"
-              : formatCompactPrice(listing)}
-          </ThemedText>
-        </View>
-      </View>
-
-      {sender && listing.categories.length ? (
-        <View style={styles.categoryChips}>
-          {listing.categories.slice(0, 2).map((category) => (
-            <View
-              key={category.key}
-              style={[
-                styles.categoryChip,
-                { backgroundColor: theme.backgroundElement },
-              ]}
-            >
-              <Ionicons
-                name={categoryIcon(category)}
-                size={14}
-                color={theme.primary}
-              />
-              <ThemedText style={styles.categoryText}>
-                {category.displayName}
-              </ThemedText>
-            </View>
-          ))}
-          {listing.categories.length > 2 ? (
-            <ThemedText
-              themeColor="textSecondary"
-              style={styles.moreCategories}
-            >
-              +{listing.categories.length - 2} more
-            </ThemedText>
-          ) : null}
-        </View>
-      ) : null}
 
       <View style={[styles.footer, { borderTopColor: theme.border }]}>
         <Avatar
           name={owner?.displayName ?? owner?.username}
           mediaId={owner?.avatarMediaId}
           userId={owner?.id}
-          size={32}
+          size={26}
         />
-        <View style={styles.ownerCopy}>
-          <ThemedText type="smallBold" numberOfLines={1}>
-            {owner?.displayName ?? owner?.username ?? "Spare Bag member"}
+        <ThemedText
+          type="smallBold"
+          numberOfLines={1}
+          style={styles.ownerName}
+        >
+          {owner?.displayName ?? owner?.username ?? "Spare Bag member"}
+        </ThemedText>
+        {posted ? (
+          <ThemedText
+            themeColor="textSecondary"
+            numberOfLines={1}
+            style={styles.posted}
+          >
+            {posted}
           </ThemedText>
-          {posted ? (
-            <ThemedText themeColor="textSecondary" style={styles.posted}>
-              Posted {posted}
-            </ThemedText>
-          ) : null}
-        </View>
-        <View style={styles.detailsAffordance}>
-          <ThemedText style={[styles.detailsText, { color: theme.primary }]}>
-            Details
-          </ThemedText>
-          <Ionicons name="chevron-forward" size={16} color={theme.primary} />
-        </View>
+        ) : null}
+        <Ionicons
+          name="chevron-forward"
+          size={16}
+          color={theme.textSecondary}
+        />
       </View>
     </Pressable>
   );
-}
-
-function passengerQuantity(listing: Listing): string {
-  const parts: string[] = [];
-  parts.push(
-    listing.availableCapacityKg == null
-      ? "Capacity on request"
-      : `Up to ${listing.availableCapacityKg} kg`,
-  );
-  if (listing.maxSingleParcelKg != null)
-    parts.push(`Max ${listing.maxSingleParcelKg} kg per parcel`);
-  else if (listing.availableParcelCount != null) {
-    parts.push(
-      `${listing.availableParcelCount} parcel${listing.availableParcelCount === 1 ? "" : "s"}`,
-    );
-  }
-  return parts.join("  |  ");
-}
-
-function senderQuantity(listing: Listing): string {
-  const parts: string[] = [];
-  if (listing.requestedWeightKg != null)
-    parts.push(`About ${listing.requestedWeightKg} kg`);
-  if (listing.requestedParcelCount != null) {
-    parts.push(
-      `${listing.requestedParcelCount} parcel${listing.requestedParcelCount === 1 ? "" : "s"}`,
-    );
-  }
-  return parts.length ? parts.join("  |  ") : "Quantity on request";
 }
 
 /** Loading placeholder matching the dashboard card silhouette. */
@@ -387,16 +275,15 @@ export function DiscoveryCardSkeleton() {
           />
         </View>
       </View>
-      <View style={[styles.skeletonRoute, block]} />
-      <View style={styles.detailsRow}>
-        <View style={[block, { height: 16, width: "55%" }]} />
-        <View style={[block, { height: 28, width: 76 }]} />
+      <View style={styles.metaRow}>
+        <View style={[block, { height: 16, flex: 1 }]} />
+        <View style={[block, { height: 18, width: 64 }]} />
       </View>
       <View style={[styles.footer, { borderTopColor: theme.border }]}>
         <View
           style={[
             block,
-            { width: 32, height: 32, borderRadius: BorderRadius.full },
+            { width: 26, height: 26, borderRadius: BorderRadius.full },
           ]}
         />
         <View style={[block, { height: 14, width: 120 }]} />
@@ -455,84 +342,22 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   badgeText: { fontSize: 11, lineHeight: 15, fontWeight: "700" },
-  routePanel: {
-    marginHorizontal: Spacing.three,
-    borderRadius: BorderRadius.lg,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    gap: Spacing.two,
-  },
-  routeLine: { flexDirection: "row", alignItems: "center", gap: Spacing.two },
-  airport: { flex: 1, minWidth: 0 },
-  destination: { alignItems: "flex-end" },
-  airportCode: {
-    fontSize: 18,
-    lineHeight: 22,
-    fontWeight: "800",
-    letterSpacing: 0.3,
-  },
-  airportCity: { fontSize: 11, lineHeight: 15 },
-  routeJourney: {
-    width: 64,
+  metaRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.one,
-  },
-  routeRule: { flex: 1, height: 1 },
-  travelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.two,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: Spacing.two,
-  },
-  detailsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.three,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.three,
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.two,
   },
-  quantity: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.two,
-  },
-  quantityText: { flex: 1, fontSize: 13, lineHeight: 18 },
-  priceBlock: { maxWidth: 126, alignItems: "flex-end" },
-  priceCaption: {
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
+  metaRoute: { fontSize: 14, lineHeight: 20, fontWeight: "700" },
+  metaDates: { flex: 1, minWidth: 0 },
   priceText: {
-    fontSize: 16,
+    fontSize: 15,
     lineHeight: 20,
     fontWeight: "800",
     textAlign: "right",
   },
-  categoryChips: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.three,
-    paddingBottom: Spacing.three,
-  },
-  categoryChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.one,
-    borderRadius: BorderRadius.full,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.one,
-  },
-  categoryText: { fontSize: 11, lineHeight: 16, fontWeight: "600" },
-  moreCategories: { fontSize: 11, lineHeight: 16 },
   footer: {
     flexDirection: "row",
     alignItems: "center",
@@ -541,14 +366,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  ownerCopy: { flex: 1, minWidth: 0, gap: 1 },
-  posted: { fontSize: 12, lineHeight: 16 },
-  detailsAffordance: { flexDirection: "row", alignItems: "center", gap: 1 },
-  detailsText: { fontSize: 12, lineHeight: 16, fontWeight: "700" },
+  ownerName: { flex: 1, minWidth: 0, fontSize: 13, lineHeight: 18 },
+  posted: { fontSize: 12, lineHeight: 16, flexShrink: 0 },
   skeletonLines: { gap: Spacing.two, paddingTop: 2 },
-  skeletonRoute: {
-    height: 82,
-    marginHorizontal: Spacing.three,
-    borderRadius: BorderRadius.lg,
-  },
 });

@@ -52,6 +52,7 @@ export function useFeed() {
     [apiClient],
   );
   const requestRef = useRef(false);
+  const queuedFetch = useRef<(() => void) | null>(null);
   const communityId = session?.activeCommunityId ?? "";
 
   const fetch = useCallback(
@@ -61,13 +62,23 @@ export function useFeed() {
       cursor: string | null,
       append: boolean,
     ) => {
-      if (requestRef.current) return;
+      if (requestRef.current) {
+        // A request is in flight — queue non-append calls so refreshes and
+        // category/mode switches aren't swallowed (which would leave the
+        // refresh spinner running forever or the list stuck empty).
+        if (!append) {
+          queuedFetch.current = () => {
+            setState((s) => ({ ...s, refreshing: true }));
+            void fetch(mode, categoryId, cursor, append);
+          };
+        }
+        return;
+      }
       requestRef.current = true;
       setState((s) => ({
         ...s,
         loading: !append,
         loadingMore: append,
-        refreshing: false,
         error: null,
       }));
       try {
@@ -93,6 +104,7 @@ export function useFeed() {
           hasMore: page.nextCursor !== null,
           loading: false,
           loadingMore: false,
+          refreshing: false,
         }));
       } catch (err) {
         setState((s) => ({
@@ -106,6 +118,9 @@ export function useFeed() {
         }));
       } finally {
         requestRef.current = false;
+        const queued = queuedFetch.current;
+        queuedFetch.current = null;
+        queued?.();
       }
     },
     [communityId, feedApi],

@@ -1,7 +1,7 @@
 /**
  * HomeFeedScreen — the "Posts" destination: the community timeline plus the
  * FeatureNav strip that switches between the four content experiences
- * (Feed, Vids, Help, Polls). Feature navigation lives in the left drawer;
+ * (Feed, Clips, Help, Polls). Feature navigation lives in the left drawer;
  * community switching in the right drawer — both mounted at the (app) layout.
  */
 
@@ -26,7 +26,7 @@ import { FeedHeader } from "../components/feed-header";
 import { FeatureNav } from "../components/feature-nav";
 import { ComposerBar } from "../components/composer-bar";
 import { CategoryFilter } from "../components/feed-controls";
-import { FeedSkeleton, FeedEmpty } from "../components/feed-states";
+import { FeedSkeleton, FeedEmpty, FeedError } from "../components/feed-states";
 import { useFeed } from "../hooks/use-feed";
 import { createFeedApi } from "../services/feed-api";
 import { openPostDetail } from "../utils/post-detail-seed";
@@ -132,9 +132,10 @@ export default function HomeFeedScreen() {
     [feedApi, updatePoll],
   );
 
-  const reportPoll = useCallback(
+  const reportPost = useCallback(
     (item: FeedItem) => {
-      Alert.alert("Report poll", "Why are you reporting this poll?", [
+      const kind = item.contentType === "POLL" ? "poll" : "post";
+      Alert.alert(`Report ${kind}`, `Why are you reporting this ${kind}?`, [
         ...REPORT_REASONS.map((reason) => ({
           text: reason.toLowerCase().replaceAll("_", " "),
           onPress: () => {
@@ -148,7 +149,7 @@ export default function HomeFeedScreen() {
               )
               .catch((cause) =>
                 Alert.alert(
-                  "Could not report poll",
+                  `Could not report ${kind}`,
                   ApiError.isApiError(cause)
                     ? cause.userMessage
                     : "Please try again.",
@@ -221,7 +222,7 @@ export default function HomeFeedScreen() {
           onPollVote={item.contentType === "POLL" ? feedApi.vote : undefined}
           onPollChange={(poll) => updatePoll(item, poll)}
           onClosePoll={() => void closePoll(item)}
-          onReport={() => reportPoll(item)}
+          onReport={() => reportPost(item)}
         />
       );
     },
@@ -230,7 +231,7 @@ export default function HomeFeedScreen() {
       feed,
       feedApi,
       openPost,
-      reportPoll,
+      reportPost,
       router,
       session?.me.id,
       session?.memberships,
@@ -253,7 +254,9 @@ export default function HomeFeedScreen() {
     },
     [feedApi],
   );
-  const viewabilityConfig = { itemVisiblePercentThreshold: 50 };
+  // Stable identity — a new object each render would make FlatList rebuild
+  // its ViewabilityHelper every pass.
+  const [viewabilityConfig] = useState({ itemVisiblePercentThreshold: 50 });
 
   const feedListHeader = (
     <View>
@@ -278,7 +281,7 @@ export default function HomeFeedScreen() {
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <FeedHeader />
 
-        {/* FeatureNav stays fixed — the Posts experiences (Feed/Vids/Help/Polls) */}
+        {/* FeatureNav stays fixed — the Posts experiences (Feed/Clips/Help/Polls) */}
         <FeatureNav activeKey={activeFeature} onSelect={handleFeatureSelect} />
 
         {/* Animated container cross-fades between content experiences */}
@@ -290,7 +293,7 @@ export default function HomeFeedScreen() {
               keyExtractor={keyExtractor}
               style={[
                 styles.feedList,
-                { backgroundColor: theme.backgroundElement },
+                { backgroundColor: theme.background },
               ]}
               contentContainerStyle={styles.feedContent}
               ListHeaderComponent={feedListHeader}
@@ -298,6 +301,11 @@ export default function HomeFeedScreen() {
               onEndReachedThreshold={0.4}
               onViewableItemsChanged={onViewableItemsChanged}
               viewabilityConfig={viewabilityConfig}
+              initialNumToRender={8}
+              maxToRenderPerBatch={8}
+              windowSize={9}
+              updateCellsBatchingPeriod={50}
+              removeClippedSubviews
               refreshControl={
                 <RefreshControl
                   refreshing={feed.refreshing}
@@ -309,6 +317,8 @@ export default function HomeFeedScreen() {
               ListEmptyComponent={
                 feed.loading ? (
                   <FeedSkeleton />
+                ) : feed.error ? (
+                  <FeedError message={feed.error} onRetry={feed.refresh} />
                 ) : (
                   <FeedEmpty
                     filtered={feed.categoryId != null}
@@ -323,11 +333,17 @@ export default function HomeFeedScreen() {
                     style={styles.footer}
                     color={theme.textSecondary}
                   />
-                ) : feed.error ? (
+                ) : feed.error && feed.items.length > 0 ? (
                   <ThemedText
                     style={[styles.footerText, { color: theme.textSecondary }]}
                   >
                     {feed.error} Pull to retry.
+                  </ThemedText>
+                ) : !feed.hasMore && feed.items.length > 0 ? (
+                  <ThemedText
+                    style={[styles.footerText, { color: theme.textSecondary }]}
+                  >
+                    You&apos;re all caught up
                   </ThemedText>
                 ) : (
                   <View style={styles.footer} />

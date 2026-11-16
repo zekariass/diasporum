@@ -71,6 +71,10 @@ jest.mock("expo-image-picker", () => ({
   requestMediaLibraryPermissionsAsync: jest.fn(),
   launchImageLibraryAsync: jest.fn(),
 }));
+jest.mock("@react-native-community/datetimepicker", () => ({
+  __esModule: true,
+  default: () => null,
+}));
 jest.mock("expo-router", () => {
   const actual = jest.requireActual<typeof import("react")>("react");
   return {
@@ -287,14 +291,14 @@ describe("Property discovery UI", () => {
       }),
     );
 
-  it("loads API results, defaults to Buy, and switches the purpose", async () => {
+  it("loads API results, defaults to Rent, and switches the purpose", async () => {
     await renderScreen(<PropertiesScreen />);
     expect(await screen.findByText("Sunny apartment")).toBeTruthy();
-    expect(queries().at(-1)).toContain("listingPurpose=SALE");
+    expect(queries().at(-1)).toContain("listingPurpose=RENT");
     expect(screen.getByText("1 property")).toBeTruthy();
-    await fireEvent.press(screen.getByLabelText("Rent"));
+    await fireEvent.press(screen.getByLabelText("Buy"));
     await waitFor(() =>
-      expect(queries().at(-1)).toContain("listingPurpose=RENT"),
+      expect(queries().at(-1)).toContain("listingPurpose=SALE"),
     );
   });
 

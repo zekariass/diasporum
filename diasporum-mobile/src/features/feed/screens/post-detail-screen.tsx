@@ -547,6 +547,7 @@ export default function PostDetailScreen({
               <CommentItem
                 comment={c}
                 isReply={!!c.parentCommentId}
+                hasReplies={!c.parentCommentId && (childMap[c.id]?.length ?? 0) > 0}
                 author={authorOf(c.authorId)}
                 authorName={nameOf(c.authorId)}
                 isOwn={c.authorId === session?.me.id}
@@ -684,6 +685,7 @@ export default function PostDetailScreen({
 function CommentItem({
   comment,
   isReply,
+  hasReplies,
   author,
   authorName,
   isOwn,
@@ -693,6 +695,7 @@ function CommentItem({
 }: {
   comment: CommentRow;
   isReply: boolean;
+  hasReplies: boolean;
   author: ProfileSummary | null;
   authorName: string;
   isOwn: boolean;
@@ -708,12 +711,25 @@ function CommentItem({
         { borderBottomColor: theme.border },
       ]}
     >
-      <Avatar
-        name={authorName}
-        mediaId={author?.avatarMediaId}
-        userId={comment.authorId}
-        size={34}
-      />
+      {/* Connector lines tie parents to their replies — the thread look. */}
+      {isReply ? (
+        <View
+          style={[styles.replyLine, { backgroundColor: theme.border }]}
+        />
+      ) : null}
+      <View style={styles.commentAvatarCol}>
+        <Avatar
+          name={authorName}
+          mediaId={author?.avatarMediaId}
+          userId={comment.authorId}
+          size={34}
+        />
+        {!isReply && hasReplies ? (
+          <View
+            style={[styles.threadLine, { backgroundColor: theme.border }]}
+          />
+        ) : null}
+      </View>
       <View style={styles.commentBody}>
         <View style={styles.commentMetaRow}>
           <ThemedText style={styles.commentAuthor} numberOfLines={1}>
@@ -825,6 +841,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   replyIndent: { paddingLeft: Spacing.four + 44 },
+  commentAvatarCol: { width: 34, alignItems: "center", alignSelf: "stretch" },
+  threadLine: { width: 2, flexGrow: 1, marginTop: 4, borderRadius: 1 },
+  replyLine: {
+    position: "absolute",
+    left: Spacing.four + 16,
+    top: 0,
+    bottom: 0,
+    width: 2,
+    borderRadius: 1,
+  },
   commentBody: { flex: 1, gap: 3 },
   commentMetaRow: {
     flexDirection: "row",
