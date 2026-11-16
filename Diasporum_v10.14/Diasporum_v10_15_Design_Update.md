@@ -917,6 +917,16 @@ Event ticket payments use external payment providers (Stripe, Chapa, ArifPay) â€
 | No offline scanning support | `is_offline_scan`, `synced_at` on check-ins | Ethiopia and other markets have unreliable venue connectivity |
 | No ticket transfer | `TRANSFERRED` status + `transferred_to_ticket_id` | Attendees need to give tickets to others |
 
+**As implemented (V38 + service layer):** `event_organiser_payout_accounts` holds
+AES-256-GCM ciphertext, not plaintext â€” V38 widens `iban`, `account_number` and
+`mobile_money_phone` to `text` (the varchar sizes cannot hold ciphertext);
+`bank_details`/`other_details` store `{"enc":"v1:..."}` envelopes. Payout-account
+edits reset `verification_status` to PENDING. The service layer lives in
+`events.internal.application.ticketing` (orders, fulfilment, refunds, ledger,
+payouts, check-in, expiry worker, platform-account Stripe adapter); see
+`DIASPORUM_EVENT_TICKETING_IMPLEMENTATION_REPORT.md` at the repo root for the
+full surface and the deferred list.
+
 ---
 
 ## 6. Spare Bag Module Redesign

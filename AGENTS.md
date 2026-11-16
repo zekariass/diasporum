@@ -49,7 +49,7 @@ com.diasporum.backend.{module}/
 ## Database
 
 - PostgreSQL 17 + PostGIS via `compose.yaml` (`docker compose --env-file diasporum-backend/.env up -d`)
-- Flyway owns the schema — migrations in `diasporum-backend/src/main/resources/db/migration/` (V1–V37)
+- Flyway owns the schema — migrations in `diasporum-backend/src/main/resources/db/migration/` (V1–V38)
 - `ddl-auto: validate` — JPA is on the classpath but **no `@Entity` classes exist**; all persistence is `JdbcTemplate`
 - Never create JPA entities or `JpaRepository` interfaces — use `@Repository` + `JdbcTemplate` + row mappers
 - Domain models are Java records in `internal.domain.*Models.java` or inner records on services
