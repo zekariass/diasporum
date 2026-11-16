@@ -90,6 +90,14 @@ public class CommunityController {
             @RequestBody Map<String, Object> body) {
         var raw = body.get("communityId");
         UUID id = raw == null ? null : UUID.fromString(raw.toString());
+        if (id != null) {
+            // Only gate when membership already resolves ACTIVE; otherwise
+            // defer to setActiveCommunity's own NOT_A_MEMBER/origin checks.
+            service.membershipOf(principal.userId(), id)
+                    .filter(m -> "ACTIVE".equals(m.status()))
+                    .ifPresent(m -> accessPolicy.requireActivatable(principal.userId(),
+                            accessPolicy.context(principal.userId(), id)));
+        }
         service.setActiveCommunity(principal.userId(), id);
         return Map.of("communityId", id == null ? "" : id.toString());
     }

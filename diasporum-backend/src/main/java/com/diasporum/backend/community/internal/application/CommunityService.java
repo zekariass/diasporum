@@ -46,11 +46,12 @@ public class CommunityService {
             throws java.sql.SQLException {
         return new MembershipView(rs.getObject("community_id", UUID.class),
                 rs.getObject("user_id", UUID.class), rs.getString("role"),
-                rs.getString("status"), rs.getTimestamp("joined_at").toInstant());
+                rs.getString("status"), rs.getTimestamp("joined_at").toInstant(),
+                rs.getString("membership_type"));
     }
 
     private static final String SELECT = "SELECT community_id,user_id,role::text,"
-            + " status::text,joined_at FROM community_memberships";
+            + " status::text,joined_at,membership_type FROM community_memberships";
 
     private ProfileSummary requireUser(UUID userId) {
         return identity.profileSummary(userId).orElseThrow(
@@ -87,13 +88,25 @@ public class CommunityService {
     }
 
     /** Eligible-to-join communities: active catalogue entries matching the
-     * user's origin country (mirrors the DB trigger's rule). */
+     * user's origin country (mirrors the DB trigger's rule). A candidate is
+     * excluded only when it is BOTH the community matching the user's
+     * origin+current-country pair (i.e. would be PRIMARY) AND the user is
+     * already an active member of it — that is the auto-assigned community,
+     * not something left to "join" from a browse list. Any other candidate
+     * (not yet joined, or already-joined SECONDARY) remains available. */
     public List<CommunityView> availableCommunities(UUID userId) {
         var p = requireUser(userId);
         if (p.originCountryId() == null) {
             return List.of();
         }
-        return taxonomy.communitiesForOriginCountry(p.originCountryId());
+        var all = taxonomy.communitiesForOriginCountry(p.originCountryId());
+        if (p.currentCountryId() == null) {
+            return all;
+        }
+        return all.stream()
+                .filter(c -> !(c.destinationCountryId().equals(p.currentCountryId())
+                        && isActiveMember(userId, c.id())))
+                .toList();
     }
 
     // ---- onboarding: preview + auto-assign ----
@@ -160,11 +173,33 @@ public class CommunityService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "COMMUNITY_ORIGIN_MISMATCH");
         }
+        // PRIMARY = matches the user's origin+current-country pair exactly
+        // (mirrors validate_membership_v10_15()); anything else is SECONDARY.
+        boolean isPrimary = community.originCountryId().equals(p.originCountryId())
+                && community.destinationCountryId().equals(p.currentCountryId());
+        String membershipType = isPrimary ? "PRIMARY" : "SECONDARY";
+        if (isPrimary) {
+            // At most one ACTIVE+PRIMARY row per user (ux_community_membership_primary).
+            // Demote any other community's ACTIVE PRIMARY row before this one is
+            // promoted/inserted, whichever branch below runs next.
+            jdbc.update("UPDATE community_memberships SET membership_type='SECONDARY',"
+                            + " updated_at=now() WHERE user_id=? AND membership_type='PRIMARY'"
+                            + " AND status='ACTIVE' AND community_id<>?",
+                    userId, communityId);
+        }
         var existing = membershipOf(userId, communityId);
         if (existing.isPresent()) {
             var m = existing.get();
             if ("ACTIVE".equals(m.status())) {
-                return m;                       // idempotent — already a member
+                if (!membershipType.equals(m.membershipType())) {
+                    // Self-healing: a country change can flip which community
+                    // is primary for an already-ACTIVE membership.
+                    jdbc.update("UPDATE community_memberships SET membership_type=?,"
+                                    + " updated_at=now() WHERE community_id=? AND user_id=?",
+                            membershipType, communityId, userId);
+                    return membershipOf(userId, communityId).orElseThrow();
+                }
+                return m;                       // idempotent — already a member, already correct
             }
             if ("SUSPENDED".equals(m.status())) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN,
@@ -172,14 +207,15 @@ public class CommunityService {
             }
             // LEFT → reactivate
             jdbc.update("UPDATE community_memberships SET status='ACTIVE',"
-                            + " left_at=null, joined_at=now(), updated_at=now()"
-                            + " WHERE community_id=? AND user_id=?",
-                    communityId, userId);
+                            + " left_at=null, joined_at=now(), updated_at=now(),"
+                            + " membership_type=? WHERE community_id=? AND user_id=?",
+                    membershipType, communityId, userId);
             return membershipOf(userId, communityId).orElseThrow();
         }
         try {
-            jdbc.update("INSERT INTO community_memberships(community_id,user_id)"
-                    + " VALUES(?,?)", communityId, userId);
+            jdbc.update("INSERT INTO community_memberships(community_id,user_id,"
+                            + "membership_type) VALUES(?,?,?)",
+                    communityId, userId, membershipType);
         } catch (DuplicateKeyException e) {
             return membershipOf(userId, communityId).orElseThrow();  // race winner
         }
@@ -188,7 +224,6 @@ public class CommunityService {
 
     @Transactional
     public void leave(UUID userId, UUID communityId) {
-        requireNotDefault(userId, communityId);
         var m = membershipOf(userId, communityId).orElse(null);
         if (m == null || "LEFT".equals(m.status())) {
             return;                                 // idempotent no-op
@@ -200,6 +235,11 @@ public class CommunityService {
         identity.activeCommunityId(userId)
                 .filter(communityId::equals)
                 .ifPresent(c -> identity.setActiveCommunity(userId, null));
+        // Leaving the PRIMARY membership means the user no longer has a
+        // default community (the unique index guarantees this was it).
+        if ("PRIMARY".equals(m.membershipType())) {
+            identity.setDefaultCommunity(userId, null);
+        }
     }
 
     // ---- active community ----

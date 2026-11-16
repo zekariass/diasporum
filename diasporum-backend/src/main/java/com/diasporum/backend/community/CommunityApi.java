@@ -67,7 +67,7 @@ public interface CommunityApi {
 
     record CommunityContext(UUID communityId, String communityName,
             String accessType, UUID originCountryId, UUID destinationCountryId,
-            Map<String, Boolean> modules) {
+            Map<String, Boolean> modules, String membershipType) {
 
         public boolean isDefault() {
             return "DEFAULT".equals(accessType);
@@ -78,8 +78,10 @@ public interface CommunityApi {
         }
     }
 
-    /** Membership record view — no internals. */
+    /** Membership record view — no internals. {@code membershipType} is
+     * 'PRIMARY' (the user's origin+current-country matched community, at
+     * most one ACTIVE such row per user) or 'SECONDARY'. */
     record MembershipView(UUID communityId, UUID userId, String role,
-            String status, java.time.Instant joinedAt) {
+            String status, java.time.Instant joinedAt, String membershipType) {
     }
 }

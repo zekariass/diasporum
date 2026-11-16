@@ -184,7 +184,6 @@ class CommunityModuleIntegrationTest {
         assertTrue(api.activeContext(u1).moduleEnabled("PROPERTY"));
         assertEquals("DEFAULT_COMMUNITY",
                 api.actionEligibility(u1, "EXTENDED_FEED_POST_PUBLISH").source());
-        assertThrows(ResponseStatusException.class, () -> service.leave(u1, community));
 
         jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES('France','FR','FRA')");
         UUID france = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='FR'", UUID.class);
@@ -292,6 +291,8 @@ class CommunityModuleIntegrationTest {
         assertEquals(extended, identity.defaultCommunityId(u1).orElseThrow());
         assertEquals(extended, identity.activeCommunityId(u1).orElseThrow());
         assertEquals("ACTIVE", api.membershipOf(u1, community).orElseThrow().status());
+        assertEquals("SECONDARY", api.membershipOf(u1, community).orElseThrow().membershipType());
+        assertEquals("PRIMARY", api.membershipOf(u1, extended).orElseThrow().membershipType());
 
         jdbc.update("UPDATE profiles SET origin_country_id=?,current_country_id=? WHERE id=?",
                 dest, dest, u1);
@@ -302,11 +303,64 @@ class CommunityModuleIntegrationTest {
         assertEquals("LEFT", api.membershipOf(u1, community).orElseThrow().status());
         assertEquals("LEFT", api.membershipOf(u1, extended).orElseThrow().status());
         assertEquals("ACTIVE", api.membershipOf(u1, newDefault).orElseThrow().status());
+        assertEquals("PRIMARY", api.membershipOf(u1, newDefault).orElseThrow().membershipType());
+    }
+
+    @Test
+    void leavingPrimaryMembershipClearsDefaultAndActiveSelection() {
+        service.completeOnboarding(u1);
+        assertEquals(community, identity.defaultCommunityId(u1).orElseThrow());
+        assertEquals(community, identity.activeCommunityId(u1).orElseThrow());
+        assertEquals("PRIMARY", api.membershipOf(u1, community).orElseThrow().membershipType());
+
+        service.leave(u1, community);
+
+        assertEquals("LEFT", api.membershipOf(u1, community).orElseThrow().status());
+        assertTrue(identity.activeCommunityId(u1).isEmpty());
+        assertTrue(identity.defaultCommunityId(u1).isEmpty());
+    }
+
+    @Test
+    void switchingToSecondaryCommunityIsGatedByViewEntitlement() throws Exception {
+        service.completeOnboarding(u1);
+        jdbc.update("INSERT INTO countries(name,iso2,iso3) VALUES('France','FR','FRA')");
+        UUID france = jdbc.queryForObject("SELECT id FROM countries WHERE iso2='FR'", UUID.class);
+        jdbc.update("INSERT INTO communities(name,slug,origin_country_id,destination_country_id)"
+                + " VALUES('ET in FR','et-in-fr',?,?)", origin, france);
+        UUID extended = jdbc.queryForObject("SELECT id FROM communities WHERE slug='et-in-fr'", UUID.class);
+        service.join(u1, extended);
+        assertEquals("SECONDARY", api.membershipOf(u1, extended).orElseThrow().membershipType());
+
+        var asU1 = authentication(new UsernamePasswordAuthenticationToken(
+                new DiasporumUserPrincipal(u1, UUID.randomUUID(), "c1@test.com", List.of()),
+                null, List.of()));
+
+        // Unconfigured -> free by default (V34 seed row).
+        mvc.perform(put("/api/v1/me/active-community").with(asU1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"communityId\":\"" + extended + "\"}"))
+                .andExpect(status().isOk());
+        assertEquals(extended, api.activeCommunityId(u1).orElseThrow());
+
+        // Admin disables the feature globally -> denied.
+        jdbc.update("UPDATE feature_access_rules SET is_enabled=false"
+                + " WHERE feature_key='VIEW_SAME_ORIGIN_COMMUNITY_CONTENT'"
+                + " AND community_id IS NULL AND country_id IS NULL");
+        service.setActiveCommunity(u1, null);
+
+        mvc.perform(put("/api/v1/me/active-community").with(asU1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"communityId\":\"" + extended + "\"}"))
+                .andExpect(status().isForbidden());
+        assertTrue(api.activeCommunityId(u1).isEmpty());
     }
 
     @Test
     void httpEndpointsWork() throws Exception {
         var asU1 = authentication(new UsernamePasswordAuthenticationToken(new DiasporumUserPrincipal(u1, UUID.randomUUID(), "c1@test.com", List.of()), null, List.of()));
+        mvc.perform(get("/api/v1/me/communities/available").with(asU1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].id").value(community.toString()));
         mvc.perform(post("/api/v1/communities/" + community + "/join").with(asU1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
@@ -332,9 +386,6 @@ class CommunityModuleIntegrationTest {
         mvc.perform(get("/api/v1/communities/" + community + "/members").with(asU1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1));
-        mvc.perform(get("/api/v1/me/communities/available").with(asU1))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.items[0].id").value(community.toString()));
         mvc.perform(delete("/api/v1/communities/" + community + "/membership")
                         .with(asU1)).andExpect(status().isOk());
         mvc.perform(get("/api/v1/me/communities").with(asU1))

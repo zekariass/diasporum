@@ -78,18 +78,20 @@ public class CommunityAccessPolicyService {
         if (!community.active()) {
             throw failure(HttpStatus.FORBIDDEN, "COMMUNITY_INACTIVE");
         }
-        if (!communities.isActiveMember(userId, communityId)) {
-            throw failure(HttpStatus.FORBIDDEN, "NOT_A_MEMBER");
-        }
+        var membership = communities.membershipOf(userId, communityId)
+                .filter(m -> "ACTIVE".equals(m.status()))
+                .orElseThrow(() -> failure(HttpStatus.FORBIDDEN, "NOT_A_MEMBER"));
         if (profile.originCountryId() == null
                 || !profile.originCountryId().equals(community.originCountryId())) {
             throw failure(HttpStatus.FORBIDDEN, "COMMUNITY_ORIGIN_MISMATCH");
         }
-        String accessType = community.destinationCountryId().equals(profile.currentCountryId())
+        // Sourced from the stored membership_type column (authoritative,
+        // trigger-enforced) rather than recomputed from country matching.
+        String accessType = "PRIMARY".equals(membership.membershipType())
                 ? "DEFAULT" : "ORIGIN_EXTENDED";
         return new CommunityContext(community.id(), community.name(), accessType,
                 community.originCountryId(), community.destinationCountryId(),
-                modulesFor(community, accessType));
+                modulesFor(community, accessType), membership.membershipType());
     }
 
     public CommunityContext activeContext(UUID userId) {
@@ -131,13 +133,9 @@ public class CommunityAccessPolicyService {
     }
 
     public Optional<UUID> defaultCommunityId(UUID userId) {
-        return jdbc.query("SELECT c.id FROM communities c "
-                        + "JOIN profiles p ON p.origin_country_id=c.origin_country_id "
-                        + "AND p.current_country_id=c.destination_country_id "
-                        + "JOIN community_memberships m ON m.community_id=c.id "
-                        + "AND m.user_id=p.id AND m.status='ACTIVE' "
-                        + "WHERE p.id=? AND c.is_active=true",
-                (rs, i) -> rs.getObject("id", UUID.class), userId)
+        return jdbc.query("SELECT community_id FROM community_memberships"
+                        + " WHERE user_id=? AND membership_type='PRIMARY' AND status='ACTIVE'",
+                (rs, i) -> rs.getObject("community_id", UUID.class), userId)
                 .stream().findFirst();
     }
 
@@ -156,6 +154,25 @@ public class CommunityAccessPolicyService {
                     null, null, "UNCONFIGURED_FREE", "OK");
         }
         return decision;
+    }
+
+    /** Gate for switching the active community into a SECONDARY membership.
+     * Free for PRIMARY; otherwise requires VIEW_SAME_ORIGIN_COMMUNITY_CONTENT
+     * (or its launch-default unconfigured-free rule) to allow it. */
+    public void requireActivatable(UUID userId, CommunityContext context) {
+        if (context.isDefault()) {
+            return;
+        }
+        var decision = billing.previewPersonalFeature(userId,
+                "VIEW_SAME_ORIGIN_COMMUNITY_CONTENT", "COMMUNITY", context.communityId());
+        if (decision.allowed()) {
+            return;
+        }
+        if ("ENTITLEMENT_NOT_CONFIGURED".equals(decision.reason())
+                && unconfiguredFree("VIEW_SAME_ORIGIN_COMMUNITY_CONTENT", context)) {
+            return;
+        }
+        throw failure(HttpStatus.FORBIDDEN, "COMMUNITY_ACCESS_DENIED");
     }
 
     @Transactional
