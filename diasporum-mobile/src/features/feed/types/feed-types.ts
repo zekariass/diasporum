@@ -14,6 +14,13 @@ export interface ProfileSummary {
   bio?: string | null;
 }
 
+/** feed_posts.target_mode — fixed CHECK constraint, don't invent new values. */
+export type TargetMode =
+  | "SINGLE_COMMUNITY"
+  | "SELECTED_COMMUNITIES"
+  | "ALL_SAME_ORIGIN"
+  | "ALL_SAME_CURRENT_COUNTRY";
+
 // ---- FeedItem (FeedService.FeedItem — JSON field order follows record order) ----
 export interface FeedItem {
   itemId: string; // "FEED_POST:<uuid>"
@@ -35,6 +42,10 @@ export interface FeedItem {
   viewed: boolean;
   saved: boolean;
   payload: FeedPayload;
+  targetMode: TargetMode;
+  targetCommunityIds: string[];
+  ctaLabel: string | null;
+  ctaUrl: string | null;
 }
 
 // ---- CommunitySummary (TaxonomyApi.CommunityView — serialized by /me/communities/*) ----
@@ -123,6 +134,11 @@ export interface PostRow {
   shareCount: number;
   publishedAt: string;
   createdAt: string;
+  targetMode: TargetMode;
+  // Note: PostRow has no targetCommunityIds — that list is only resolved for
+  // feed-listing FeedItems (community/following feed), not GET /posts/{id}.
+  ctaLabel: string | null;
+  ctaUrl: string | null;
 }
 
 export interface CommentRow {
@@ -163,6 +179,10 @@ export interface CreatePostRequest {
   mediaIds?: string[];
   tags?: string[];
   idempotencyKey?: string;
+  targetMode?: TargetMode;
+  targetCommunityIds?: string[];
+  ctaLabel?: string;
+  ctaUrl?: string;
 }
 
 export interface CreateHelpPostRequest {
@@ -175,6 +195,23 @@ export interface CreateHelpPostRequest {
   mediaIds?: string[];
   tags?: string[];
   idempotencyKey?: string;
+  targetMode?: TargetMode;
+  targetCommunityIds?: string[];
+  ctaLabel?: string;
+  ctaUrl?: string;
+}
+
+/** PATCH /feed/posts/{id} partial-update body. */
+export interface UpdatePostRequest {
+  title?: string;
+  body?: string;
+  linkUrl?: string;
+  categoryId?: string;
+  tags?: string[];
+  targetMode?: TargetMode;
+  targetCommunityIds?: string[];
+  ctaLabel?: string;
+  ctaUrl?: string;
 }
 
 export type PollStatus = "ACTIVE" | "EXPIRED" | "CLOSED";

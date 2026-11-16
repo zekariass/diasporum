@@ -7,6 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import {
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -56,6 +57,11 @@ const TYPE_ICON: Record<string, ComponentProps<typeof Ionicons>["name"]> = {
   COMMUNITY_HELP: "hand-left-outline",
   POLL: "stats-chart",
   REEL: "play",
+};
+
+const TARGET_MODE_BADGE: Partial<Record<string, string>> = {
+  ALL_SAME_ORIGIN: "Posted to all origin communities",
+  ALL_SAME_CURRENT_COUNTRY: "Posted to all communities here",
 };
 
 const LIKE_COLOR = "#FF3040";
@@ -302,6 +308,12 @@ export const PostItem = React.memo(function PostItem({
   const isPoll = item.contentType === "POLL";
   const poll = isPoll ? item.payload.poll : undefined;
   const typeIcon = TYPE_ICON[item.contentType];
+  const targetBadge =
+    item.targetMode === "SELECTED_COMMUNITIES"
+      ? `Posted to ${item.targetCommunityIds.length} communities`
+      : item.targetMode !== "SINGLE_COMMUNITY"
+        ? TARGET_MODE_BADGE[item.targetMode]
+        : null;
   const handle = item.author?.username ?? item.author?.displayName ?? "member";
   const reacted = !!item.viewerReaction;
   const authorId = item.author?.id ?? null;
@@ -492,6 +504,25 @@ export const PostItem = React.memo(function PostItem({
           </View>
         ) : null}
 
+        {/* Multi-community targeting badge — distinct from the type badge so both can stack. */}
+        {targetBadge ? (
+          <View
+            style={[
+              styles.typeBadge,
+              { backgroundColor: theme.backgroundElement },
+            ]}
+          >
+            <Ionicons
+              name="globe-outline"
+              size={13}
+              color={theme.textSecondary}
+            />
+            <ThemedText style={[styles.typeLabel, { color: theme.textSecondary }]}>
+              {targetBadge}
+            </ThemedText>
+          </View>
+        ) : null}
+
         {/* Title + body */}
         {item.title ? (
           <ThemedText style={styles.title} numberOfLines={3}>
@@ -541,6 +572,21 @@ export const PostItem = React.memo(function PostItem({
             ))}
           </View>
         )}
+
+        {/* CTA button — optional link under the post body */}
+        {item.ctaUrl && item.ctaLabel ? (
+          <Pressable
+            onPress={() => Linking.openURL(item.ctaUrl!).catch(() => {})}
+            accessibilityRole="button"
+            accessibilityLabel={item.ctaLabel}
+            style={[styles.ctaButton, { borderColor: theme.primary }]}
+          >
+            <ThemedText style={[styles.ctaButtonText, { color: theme.primary }]}>
+              {item.ctaLabel}
+            </ThemedText>
+            <Ionicons name="open-outline" size={14} color={theme.primary} />
+          </Pressable>
+        ) : null}
 
         {/* Overflow menu — anchored to the ⋯ button via a transparent modal */}
         <Modal
@@ -856,6 +902,18 @@ const styles = StyleSheet.create({
     lineHeight: 14,
   },
   title: { fontSize: 17, fontWeight: "700", lineHeight: 24, marginTop: 3 },
+  ctaButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "stretch",
+    gap: 6,
+    marginTop: 8,
+    paddingVertical: 10,
+    borderWidth: 1.5,
+    borderRadius: BorderRadius.full,
+  },
+  ctaButtonText: { fontSize: 14, fontWeight: "700" },
   text: { fontSize: 15, fontWeight: "400", lineHeight: 23 },
   mediaWrap: { marginTop: 10, width: "100%" },
   video: {

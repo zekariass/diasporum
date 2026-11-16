@@ -36,6 +36,7 @@ import { Spacing, BorderRadius } from "@/shared/theme/spacing";
 import { useTheme } from "@/hooks/use-theme";
 import { ApiError } from "@/core/api/api-error";
 import { OptionPicker } from "@/shared/components/option-picker";
+import { MultiSelectField } from "@/shared/components/multi-select-field";
 import { FormattingToolbar, continueList } from "../components/formatting-toolbar";
 import type {
   CategoryView,
@@ -43,7 +44,9 @@ import type {
   CreatePostRequest,
   HelpKind,
   TagView,
+  TargetMode,
 } from "../types/feed-types";
+import { friendlyTargetModeMessage } from "../utils/target-mode-errors";
 import {
   createPollRequest,
   emptyPollFormValue,
@@ -123,6 +126,13 @@ const EXTENSION_MIME_TYPES: Record<string, string> = {
   ogg: "audio/ogg",
 };
 
+const TARGET_MODE_OPTIONS: { value: TargetMode; label: string }[] = [
+  { value: "SINGLE_COMMUNITY", label: "Just this community" },
+  { value: "SELECTED_COMMUNITIES", label: "Selected communities" },
+  { value: "ALL_SAME_ORIGIN", label: "Everyone from my origin" },
+  { value: "ALL_SAME_CURRENT_COUNTRY", label: "Everyone in my country" },
+];
+
 function mimeTypeFor(name: string | null | undefined, fallback: string) {
   const extension = name?.split(".").pop()?.toLowerCase();
   return extension ? (EXTENSION_MIME_TYPES[extension] ?? fallback) : fallback;
@@ -170,6 +180,10 @@ export default function CreatePostScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [targetMode, setTargetMode] = useState<TargetMode>("SINGLE_COMMUNITY");
+  const [targetCommunityIds, setTargetCommunityIds] = useState<string[]>([]);
+  const [ctaLabel, setCtaLabel] = useState("");
+  const [ctaUrl, setCtaUrl] = useState("");
   const pendingPublication = React.useRef<PendingPublication | null>(null);
 
   const communityId = session?.activeCommunityId ?? "";
@@ -179,6 +193,42 @@ export default function CreatePostScreen() {
       m.communityId === communityId &&
       (m.role === "MODERATOR" || m.role === "ADMIN"),
   );
+
+  // Communities the author can target — their own ACTIVE memberships,
+  // enriched with name/country from session.access (zero extra network calls).
+  const memberCommunityIds = React.useMemo(
+    () =>
+      new Set(
+        (session?.memberships ?? [])
+          .filter((m) => m.status === "ACTIVE")
+          .map((m) => m.communityId),
+      ),
+    [session?.memberships],
+  );
+  const targetableCommunities = React.useMemo(
+    () =>
+      (session?.access?.communities ?? []).filter((c) =>
+        memberCommunityIds.has(c.communityId),
+      ),
+    [session?.access, memberCommunityIds],
+  );
+  const activeCommunityContext = session?.access?.communities.find(
+    (c) => c.communityId === communityId,
+  );
+  const broadcastHint =
+    targetMode === "ALL_SAME_ORIGIN"
+      ? `Posts to every community you've joined that shares your origin country${
+          activeCommunityContext
+            ? ` (${targetableCommunities.filter((c) => c.originCountryId === activeCommunityContext.originCountryId).length} of yours)`
+            : ""
+        }.`
+      : targetMode === "ALL_SAME_CURRENT_COUNTRY"
+        ? `Posts to every community you've joined in your current country${
+            activeCommunityContext
+              ? ` (${targetableCommunities.filter((c) => c.destinationCountryId === activeCommunityContext.destinationCountryId).length} of yours)`
+              : ""
+          }.`
+        : null;
 
   // Categories are required for every post — module differs per mode.
   const categoryModule = mode === "help" ? "COMMUNITY_HELP" : "FEED";
@@ -461,6 +511,24 @@ export default function CreatePostScreen() {
     }
   }
 
+  function validateTargetingAndCta(): string | null {
+    if (targetMode === "SELECTED_COMMUNITIES" && targetCommunityIds.length === 0) {
+      return "Choose at least one community to post to.";
+    }
+    const ctaLabelTrim = ctaLabel.trim();
+    const ctaUrlTrim = ctaUrl.trim();
+    if ((ctaLabelTrim && !ctaUrlTrim) || (!ctaLabelTrim && ctaUrlTrim)) {
+      return "Add both a button label and a link, or leave both blank.";
+    }
+    if (ctaLabelTrim.length > 60) {
+      return "Button label must be 60 characters or fewer.";
+    }
+    if (ctaUrlTrim && !/^https?:\/\//i.test(ctaUrlTrim)) {
+      return "Button link must start with http:// or https://.";
+    }
+    return null;
+  }
+
   function validate(): string | null {
     if (!communityId) return "No active community.";
     if (mode === "poll") {
@@ -471,7 +539,7 @@ export default function CreatePostScreen() {
     if (mode !== "help" && !body.trim() && attachments.length === 0)
       return "Write something first.";
     if (mode === "help" && !body.trim()) return "Write something first.";
-    return null;
+    return validateTargetingAndCta();
   }
 
   const canPost =
@@ -491,6 +559,10 @@ export default function CreatePostScreen() {
       helpTitle: helpTitle.trim(),
       helpExpiryDays,
       tags,
+      targetMode,
+      targetCommunityIds: [...targetCommunityIds].sort(),
+      ctaLabel: ctaLabel.trim(),
+      ctaUrl: ctaUrl.trim(),
       attachments: attachments.map((a) => [
         a.id,
         a.uri,
@@ -556,6 +628,17 @@ export default function CreatePostScreen() {
             });
             throw uploadError;
           }
+          const ctaLabelTrim = ctaLabel.trim();
+          const ctaUrlTrim = ctaUrl.trim();
+          const targetingFields = {
+            targetMode,
+            targetCommunityIds:
+              targetMode === "SELECTED_COMMUNITIES"
+                ? targetCommunityIds
+                : undefined,
+            ctaLabel: ctaLabelTrim || undefined,
+            ctaUrl: ctaUrlTrim || undefined,
+          };
           request =
             mode === "help"
               ? {
@@ -573,6 +656,7 @@ export default function CreatePostScreen() {
                   mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
                   tags: tags.length > 0 ? tags : undefined,
                   idempotencyKey: Crypto.randomUUID(),
+                  ...targetingFields,
                 }
               : {
                   communityId,
@@ -583,6 +667,7 @@ export default function CreatePostScreen() {
                   mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
                   tags: tags.length > 0 ? tags : undefined,
                   idempotencyKey: Crypto.randomUUID(),
+                  ...targetingFields,
                 };
           pendingPublication.current = { fingerprint, request };
         }
@@ -616,13 +701,14 @@ export default function CreatePostScreen() {
       safeBack();
     } catch (e) {
       setError(
-        ApiError.isApiError(e)
-          ? e.userMessage
-          : e instanceof Error && e.message.includes("25 MB")
-            ? e.message
-            : attachments.length > 0
-              ? "Failed to upload attachments or publish the post."
-              : "Failed to post.",
+        friendlyTargetModeMessage(e) ??
+          (ApiError.isApiError(e)
+            ? e.userMessage
+            : e instanceof Error && e.message.includes("25 MB")
+              ? e.message
+              : attachments.length > 0
+                ? "Failed to upload attachments or publish the post."
+                : "Failed to post."),
       );
     } finally {
       setSubmitting(false);
@@ -1112,6 +1198,122 @@ export default function CreatePostScreen() {
               />
             )}
 
+            {/* Target audience — who this post goes to */}
+            {mode !== "poll" && (
+              <View style={styles.categoryWrap}>
+                <ThemedText
+                  style={styles.categoryLabel}
+                  themeColor="textSecondary"
+                >
+                  Post to
+                </ThemedText>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.categoryChips}
+                >
+                  {TARGET_MODE_OPTIONS.map((opt) => {
+                    const selected = targetMode === opt.value;
+                    return (
+                      <Pressable
+                        key={opt.value}
+                        onPress={() => setTargetMode(opt.value)}
+                        accessibilityRole="button"
+                        accessibilityLabel={opt.label}
+                        accessibilityState={{ selected }}
+                        style={[
+                          styles.helpKindBtn,
+                          {
+                            borderColor: selected
+                              ? BrandColors.primary
+                              : theme.border,
+                            backgroundColor: selected
+                              ? BrandColors.primarySurface
+                              : "transparent",
+                          },
+                        ]}
+                      >
+                        <ThemedText
+                          style={{
+                            color: selected
+                              ? BrandColors.primary
+                              : theme.textSecondary,
+                            fontSize: 13,
+                            fontWeight: "600",
+                          }}
+                        >
+                          {opt.label}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+                {targetMode === "SELECTED_COMMUNITIES" && (
+                  <MultiSelectField
+                    label="Communities"
+                    values={targetCommunityIds}
+                    options={targetableCommunities.map((c) => ({
+                      id: c.communityId,
+                      label: c.communityName,
+                    }))}
+                    onChange={setTargetCommunityIds}
+                    required
+                    placeholder="Choose communities"
+                    modalTitle="Select communities"
+                    searchPlaceholder="Search communities…"
+                  />
+                )}
+                {broadcastHint && (
+                  <ThemedText
+                    style={styles.targetHint}
+                    themeColor="textSecondary"
+                  >
+                    {broadcastHint}
+                  </ThemedText>
+                )}
+              </View>
+            )}
+
+            {/* Call to action — optional button link under the post */}
+            {mode !== "poll" && (
+              <View style={styles.helpFieldWrap}>
+                <ThemedText
+                  style={styles.categoryLabel}
+                  themeColor="textSecondary"
+                >
+                  Call to action (optional)
+                </ThemedText>
+                <View
+                  style={[styles.helpTitleRow, { borderColor: theme.border }]}
+                >
+                  <TextInput
+                    style={[styles.helpTitleInput, { color: theme.text }]}
+                    placeholder="Button label, e.g. Learn more"
+                    placeholderTextColor={theme.textMuted}
+                    value={ctaLabel}
+                    onChangeText={setCtaLabel}
+                    maxLength={60}
+                    accessibilityLabel="Call-to-action button label"
+                  />
+                </View>
+                <View
+                  style={[styles.helpTitleRow, { borderColor: theme.border }]}
+                >
+                  <TextInput
+                    style={[styles.helpTitleInput, { color: theme.text }]}
+                    placeholder="https://example.com"
+                    placeholderTextColor={theme.textMuted}
+                    value={ctaUrl}
+                    onChangeText={setCtaUrl}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    accessibilityLabel="Call-to-action button link"
+                  />
+                </View>
+              </View>
+            )}
+
             {/* Help expiry — maps to expiresAt; backend lazy-expires past it */}
             {mode === "help" && (
               <View style={styles.helpFieldWrap}>
@@ -1554,6 +1756,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   categoryChips: { flexDirection: "row", gap: Spacing.two },
+  targetHint: { fontSize: 12 },
   tagSection: { gap: Spacing.two },
   tagChips: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
   tagInputRow: {

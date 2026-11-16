@@ -183,6 +183,9 @@ function makePost(overrides: Partial<PostRow> = {}): PostRow {
     shareCount: 0,
     publishedAt: "2026-11-03T10:00:00Z",
     createdAt: "2026-11-03T10:00:00Z",
+    targetMode: "SINGLE_COMMUNITY",
+    ctaLabel: null,
+    ctaUrl: null,
     ...overrides,
   };
 }
@@ -219,6 +222,10 @@ function makeFeedItem(overrides: Partial<FeedItem> = {}): FeedItem {
     },
     media: [],
     tags: [],
+    targetMode: "SINGLE_COMMUNITY",
+    targetCommunityIds: [],
+    ctaLabel: null,
+    ctaUrl: null,
     ...overrides,
   };
 }

@@ -31,6 +31,8 @@ export interface ValidationFieldError {
 export class ApiError extends Error {
   readonly httpStatus?: number;
   readonly code: ApiErrorCode;
+  /** Raw backend `code` (e.g. "ENTITLEMENT_NOT_CONFIGURED") when the response included one. */
+  readonly backendCode?: string;
   /** Safe message for display (never raw backend stack traces). */
   readonly userMessage: string;
   readonly validationErrors?: ValidationFieldError[];
@@ -41,11 +43,13 @@ export class ApiError extends Error {
     message?: string;
     userMessage?: string;
     validationErrors?: ValidationFieldError[];
+    backendCode?: string;
   }) {
     super(params.message ?? params.code);
     this.name = 'ApiError';
     this.code = params.code;
     this.httpStatus = params.httpStatus;
+    this.backendCode = params.backendCode;
     this.userMessage = params.userMessage ?? defaultMessage(params.code);
     this.validationErrors = params.validationErrors;
   }
@@ -76,6 +80,7 @@ export class ApiError extends Error {
       code,
       httpStatus: status,
       message: body.message,
+      backendCode: body.code,
       validationErrors,
     });
   }

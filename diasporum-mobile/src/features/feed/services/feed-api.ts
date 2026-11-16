@@ -20,6 +20,7 @@ import type {
   ReportPostRequest,
   ReportResponse,
   UpdatePollRequest,
+  UpdatePostRequest,
 } from "../types/feed-types";
 
 type CommentWire = Omit<CommentRow, "parentCommentId"> & {
@@ -136,16 +137,7 @@ export function createFeedApi(client: ApiClient) {
         { authenticated: true },
       ),
 
-    updatePost: (
-      postId: string,
-      data: {
-        title?: string;
-        body?: string;
-        linkUrl?: string;
-        categoryId?: string;
-        tags?: string[];
-      },
-    ) =>
+    updatePost: (postId: string, data: UpdatePostRequest) =>
       client.patch<PostRow>(`/api/v1/feed/posts/${postId}`, data, {
         authenticated: true,
       }),

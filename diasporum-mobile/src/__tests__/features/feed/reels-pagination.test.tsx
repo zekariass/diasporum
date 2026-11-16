@@ -48,6 +48,10 @@ function reel(id: string): FeedItem {
     viewed: false,
     saved: false,
     payload: {},
+    targetMode: "SINGLE_COMMUNITY",
+    targetCommunityIds: [],
+    ctaLabel: null,
+    ctaUrl: null,
   };
 }
 function deferred<T>() {

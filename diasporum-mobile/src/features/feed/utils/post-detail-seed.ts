@@ -50,6 +50,9 @@ function toPostRow(item: FeedItem): PostRow {
     shareCount: item.shareCount,
     publishedAt: item.publishedAt,
     createdAt: item.publishedAt,
+    targetMode: item.targetMode,
+    ctaLabel: item.ctaLabel,
+    ctaUrl: item.ctaUrl,
   };
 }
 

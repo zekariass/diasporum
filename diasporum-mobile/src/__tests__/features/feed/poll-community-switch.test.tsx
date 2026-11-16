@@ -44,6 +44,10 @@ function makePollItem(communityId: string): FeedItem {
     payload: {},
     media: [],
     tags: [],
+    targetMode: "SINGLE_COMMUNITY",
+    targetCommunityIds: [],
+    ctaLabel: null,
+    ctaUrl: null,
   };
 }
 

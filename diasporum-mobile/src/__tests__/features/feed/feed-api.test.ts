@@ -66,6 +66,31 @@ describe("feedApi", () => {
     );
   });
 
+  it("createPost passes targetMode/targetCommunityIds/cta fields through verbatim", async () => {
+    await api.createPost({
+      communityId: "c1",
+      postType: "GENERAL",
+      body: "hello",
+      targetMode: "SELECTED_COMMUNITIES",
+      targetCommunityIds: ["c2", "c3"],
+      ctaLabel: "Learn more",
+      ctaUrl: "https://example.com",
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/feed/posts",
+      {
+        communityId: "c1",
+        postType: "GENERAL",
+        body: "hello",
+        targetMode: "SELECTED_COMMUNITIES",
+        targetCommunityIds: ["c2", "c3"],
+        ctaLabel: "Learn more",
+        ctaUrl: "https://example.com",
+      },
+      expect.objectContaining({ authenticated: true }),
+    );
+  });
+
   it("getPost hits correct path", async () => {
     await api.getPost("p1");
     expect(client.get).toHaveBeenCalledWith(
@@ -248,6 +273,31 @@ describe("feedApi", () => {
     );
   });
 
+  it("createHelpPost passes targetMode/targetCommunityIds/cta fields through verbatim", async () => {
+    await api.createHelpPost({
+      communityId: "c1",
+      helpKind: "REQUEST",
+      title: "help",
+      body: "need help",
+      targetMode: "ALL_SAME_ORIGIN",
+      ctaLabel: "Contact us",
+      ctaUrl: "https://example.com/contact",
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/v1/feed/community-help",
+      {
+        communityId: "c1",
+        helpKind: "REQUEST",
+        title: "help",
+        body: "need help",
+        targetMode: "ALL_SAME_ORIGIN",
+        ctaLabel: "Contact us",
+        ctaUrl: "https://example.com/contact",
+      },
+      expect.anything(),
+    );
+  });
+
   it("createPoll posts the complete typed Poll contract", async () => {
     const request = {
       communityId: "c1",
@@ -394,6 +444,21 @@ describe("feedApi", () => {
 
   it("updatePost sends categoryId and tags when provided", async () => {
     const data = { body: "edited", categoryId: "cat1", tags: ["new"] };
+    await api.updatePost("p1", data);
+    expect(client.patch).toHaveBeenCalledWith(
+      "/api/v1/feed/posts/p1",
+      data,
+      expect.anything(),
+    );
+  });
+
+  it("updatePost passes targetMode/targetCommunityIds/cta fields through verbatim", async () => {
+    const data = {
+      targetMode: "SELECTED_COMMUNITIES" as const,
+      targetCommunityIds: ["c2"],
+      ctaLabel: "Learn more",
+      ctaUrl: "https://example.com",
+    };
     await api.updatePost("p1", data);
     expect(client.patch).toHaveBeenCalledWith(
       "/api/v1/feed/posts/p1",
