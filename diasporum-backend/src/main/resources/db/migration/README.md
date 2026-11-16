@@ -4,7 +4,7 @@ Versioned Flyway migrations (`V{n}__{description}.sql`). Flyway owns the schema 
 there is no `ddl-auto` entity management and no JPA entities in the codebase.
 
 **Status:** populated and active. V1 is the v10.12 baseline; subsequent versions
-carry incremental feature/schema work (currently through V36).
+carry incremental feature/schema work (currently through V37).
 
 ## Rules
 

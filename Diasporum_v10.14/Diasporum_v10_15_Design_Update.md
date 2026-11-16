@@ -73,6 +73,8 @@ feed_posts
 
 `ALL_SAME_ORIGIN` requires the `TARGET_ALL_SAME_ORIGIN_COMMUNITIES` entitlement. `ALL_SAME_CURRENT_COUNTRY` is controlled similarly by admin configuration.
 
+**As implemented (V37):** `ALL_SAME_CURRENT_COUNTRY` is gated by a new `TARGET_ALL_SAME_CURRENT_COUNTRY_COMMUNITIES` feature key, seeded fail-closed (no `feature_access_rules` row) until an admin enables it. Broadcast-mode resolution does not join profiles at read time: V37 adds `feed_posts.author_origin_country_id` / `author_current_country_id` snapshot columns (nullable FK → `countries`, partial indexes), captured at post creation so a post's broadcast audience is fixed even if the author later changes countries.
+
 ### 1.5 Feed post impression statistics
 
 ```
