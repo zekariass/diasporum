@@ -20,13 +20,11 @@ import { useTheme } from "@/hooks/use-theme";
 import { BrandColors } from "@/shared/theme/colors";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import { PrimaryButton } from "@/shared/components/primary-button";
-import { createCommunityApi } from "@/features/communities/services/community-api";
 import { JobCard, JobCardSkeleton } from "../components/job-card";
 import {
   countActiveFilters,
   EMPTY_JOB_FILTERS,
   EMPLOYMENT_TYPES,
-  FiltersSheet,
   jobPublishedFrom,
   LocationSheet,
   SortSheet,
@@ -35,11 +33,13 @@ import {
   type JobsFilterState,
   type JobSort,
 } from "../components/job-discovery-sheets";
+import { JobsFilterDrawer, JobsMenuDrawer } from "../components/job-drawers";
 import { createJobApi } from "../services/job-api";
 import type { JobCategory, JobItem } from "../types/job-types";
 import { label } from "../utils/job-format";
 
-type SheetKind = "location" | "filters" | "sort";
+type SheetKind = "location" | "sort";
+type DrawerKind = "filters" | "menu";
 
 export default function JobsScreen() {
   const theme = useTheme();
@@ -47,13 +47,13 @@ export default function JobsScreen() {
   const { apiClient, session } = useSession();
   const api = React.useMemo(() => createJobApi(apiClient), [apiClient]);
   const [categories, setCategories] = useState<JobCategory[]>([]);
-  const [communities, setCommunities] = useState<CommunityOption[]>([]);
   const [items, setItems] = useState<JobItem[]>([]);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filters, setFilters] = useState<JobsFilterState>(EMPTY_JOB_FILTERS);
   const [sort, setSort] = useState<JobSort>("NEWEST");
   const [sheet, setSheet] = useState<SheetKind | null>(null);
+  const [drawer, setDrawer] = useState<DrawerKind | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -68,29 +68,20 @@ export default function JobsScreen() {
       .catch(() => setCategories([]));
   }, [api]);
 
-  useEffect(() => {
-    const memberships = (session?.memberships ?? []).filter(
-      (membership) => membership.status === "ACTIVE",
-    );
-    if (!memberships.length) return;
-    let active = true;
-    const communityApi = createCommunityApi(apiClient);
-    void Promise.all(
-      memberships.map((membership) =>
-        communityApi
-          .community(membership.communityId)
-          .then((community) => ({ id: community.id, name: community.name }))
-          .catch(() => null),
-      ),
-    ).then((list) => {
-      if (active) {
-        setCommunities(list.filter((c): c is CommunityOption => c !== null));
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [apiClient, session]);
+  const communities = React.useMemo<CommunityOption[]>(() => {
+    const contexts = session?.access?.communities ?? [];
+    return (session?.memberships ?? [])
+      .filter((membership) => membership.status === "ACTIVE")
+      .map((membership) => {
+        const context = contexts.find(
+          (candidate) => candidate.communityId === membership.communityId,
+        );
+        return context
+          ? { id: context.communityId, name: context.communityName }
+          : null;
+      })
+      .filter((c): c is CommunityOption => c !== null);
+  }, [session]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 350);
@@ -183,7 +174,9 @@ export default function JobsScreen() {
       } catch {
         setItems((previous) =>
           previous.map((entry) =>
-            entry.job.id === item.job.id ? { ...entry, saved: item.saved } : entry,
+            entry.job.id === item.job.id
+              ? { ...entry, saved: item.saved }
+              : entry,
           ),
         );
       }
@@ -202,55 +195,68 @@ export default function JobsScreen() {
 
   const activeCommunityId = session?.activeCommunityId ?? null;
   const filterCount = countActiveFilters(filters);
-  const filtered = filterCount > 0 || Boolean(debouncedSearch) || sort !== "NEWEST";
-  const locationLabel = filters.city.trim()
-    || communities.find((community) => community.id === filters.communityId)?.name
-    || (filters.communityId ? "Selected community" : "Anywhere");
-  const countLabel = items.length === 1 && !cursor
-    ? "1 job"
-    : `${items.length}${cursor ? "+" : ""} jobs`;
+  const filtered =
+    filterCount > 0 || Boolean(debouncedSearch) || sort !== "NEWEST";
+  const locationLabel =
+    filters.city.trim() ||
+    communities.find((community) => community.id === filters.communityId)
+      ?.name ||
+    (filters.communityId ? "Selected community" : "Anywhere");
+  const countLabel =
+    items.length === 1 && !cursor
+      ? "1 job"
+      : `${items.length}${cursor ? "+" : ""} jobs`;
 
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
         <View style={[styles.header, { borderBottomColor: theme.border }]}>
-          <ThemedText type="title">Jobs</ThemedText>
-          <View style={styles.headerActions}>
-            <HeaderButton
-              icon="document-text-outline"
-              label="My applications"
-              onPress={() => router.push("/(app)/jobs/my-applications" as never)}
+          <Pressable
+            onPress={() => setDrawer("filters")}
+            accessibilityRole="button"
+            accessibilityLabel="Filters"
+            style={[
+              styles.headerIcon,
+              { backgroundColor: theme.backgroundElement },
+            ]}
+          >
+            <Ionicons
+              name="options-outline"
+              size={20}
+              color={theme.text}
             />
-            <HeaderButton
-              icon="bookmark-outline"
-              label="Saved jobs"
-              onPress={() => router.push("/(app)/jobs/saved" as never)}
-            />
-            <HeaderButton
-              icon="person-outline"
-              label="My job listings"
-              onPress={() => router.push("/(app)/jobs/my" as never)}
-            />
-            <HeaderButton
-              icon="add"
-              label="Create job"
-              onPress={() => router.push("/(app)/jobs/create" as never)}
-              filled
-            />
-          </View>
-        </View>
-
-        <View style={styles.intro}>
-          <ThemedText style={styles.introTitle}>Find your next opportunity</ThemedText>
-          <ThemedText style={styles.introText} themeColor="textSecondary">
-            Discover jobs in your community and beyond.
-          </ThemedText>
+            {filterCount > 0 ? (
+              <View style={styles.headerBadge}>
+                <ThemedText style={styles.headerBadgeText}>
+                  {filterCount}
+                </ThemedText>
+              </View>
+            ) : null}
+          </Pressable>
+          <View style={styles.headerCopy} />
+          <PostJobButton
+            onPress={() => router.push("/(app)/jobs/create" as never)}
+          />
+          <Pressable
+            onPress={() => setDrawer("menu")}
+            accessibilityRole="button"
+            accessibilityLabel="Jobs menu"
+            style={[
+              styles.headerIcon,
+              { backgroundColor: theme.backgroundElement },
+            ]}
+          >
+            <Ionicons name="menu" size={22} color={theme.text} />
+          </Pressable>
         </View>
 
         <View
           style={[
             styles.search,
-            { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+            {
+              backgroundColor: theme.backgroundElement,
+              borderColor: theme.border,
+            },
           ]}
         >
           <Ionicons name="search" size={18} color={theme.textSecondary} />
@@ -262,6 +268,9 @@ export default function JobsScreen() {
             accessibilityLabel="Search jobs"
             style={[styles.searchInput, { color: theme.text }]}
             returnKeyType="search"
+            autoCapitalize="none"
+            autoCorrect={false}
+            onSubmitEditing={() => setDebouncedSearch(search.trim())}
           />
           {search ? (
             <Pressable
@@ -270,7 +279,11 @@ export default function JobsScreen() {
               accessibilityRole="button"
               hitSlop={8}
             >
-              <Ionicons name="close-circle" size={18} color={theme.textSecondary} />
+              <Ionicons
+                name="close-circle"
+                size={18}
+                color={theme.textSecondary}
+              />
             </Pressable>
           ) : null}
         </View>
@@ -280,33 +293,34 @@ export default function JobsScreen() {
             onPress={() => setSheet("location")}
             accessibilityRole="button"
             accessibilityLabel={`Location: ${locationLabel}`}
-            style={[styles.control, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}
+            style={[
+              styles.control,
+              {
+                borderColor: theme.border,
+                backgroundColor: theme.backgroundElement,
+              },
+            ]}
           >
-            <Ionicons name="location-outline" size={16} color={BrandColors.primary} />
-            <ThemedText style={styles.controlText} numberOfLines={1}>{locationLabel}</ThemedText>
-            <Ionicons name="chevron-down" size={14} color={theme.textSecondary} />
-          </Pressable>
-          <Pressable
-            onPress={() => setSheet("filters")}
-            accessibilityRole="button"
-            accessibilityLabel="Filters"
-            style={[styles.control, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}
-          >
-            <Ionicons name="options-outline" size={16} color={BrandColors.primary} />
-            <ThemedText style={styles.controlText}>Filters</ThemedText>
-            {filterCount ? (
-              <View style={[styles.badge, { backgroundColor: BrandColors.primary }]}>
-                <ThemedText style={styles.badgeText}>{filterCount}</ThemedText>
-              </View>
-            ) : (
-              <Ionicons name="chevron-down" size={14} color={theme.textSecondary} />
-            )}
+            <Ionicons
+              name="location-outline"
+              size={16}
+              color={BrandColors.primary}
+            />
+            <ThemedText style={styles.controlText} numberOfLines={1}>
+              {locationLabel}
+            </ThemedText>
+            <Ionicons
+              name="chevron-down"
+              size={14}
+              color={theme.textSecondary}
+            />
           </Pressable>
         </View>
 
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={styles.chipsScroll}
           contentContainerStyle={styles.chips}
         >
           <QuickChip
@@ -320,7 +334,10 @@ export default function JobsScreen() {
               text={label(value)}
               active={filters.employmentType === value}
               onPress={() =>
-                patchFilters({ employmentType: filters.employmentType === value ? null : value })
+                patchFilters({
+                  employmentType:
+                    filters.employmentType === value ? null : value,
+                })
               }
             />
           ))}
@@ -328,7 +345,11 @@ export default function JobsScreen() {
 
         <View style={styles.resultsRow}>
           <ThemedText style={styles.resultsCount} themeColor="textSecondary">
-            {loading && items.length === 0 ? "Searching…" : items.length === 0 ? "" : countLabel}
+            {loading && items.length === 0
+              ? "Searching…"
+              : items.length === 0
+                ? ""
+                : countLabel}
           </ThemedText>
           <Pressable
             onPress={() => setSheet("sort")}
@@ -336,10 +357,16 @@ export default function JobsScreen() {
             accessibilityLabel="Sort jobs"
             style={styles.sortButton}
           >
-            <ThemedText style={[styles.sortText, { color: BrandColors.primary }]}>
+            <ThemedText
+              style={[styles.sortText, { color: BrandColors.primary }]}
+            >
               {sortLabel(sort)}
             </ThemedText>
-            <Ionicons name="chevron-down" size={14} color={BrandColors.primary} />
+            <Ionicons
+              name="chevron-down"
+              size={14}
+              color={BrandColors.primary}
+            />
           </Pressable>
         </View>
 
@@ -380,9 +407,17 @@ export default function JobsScreen() {
               </View>
             ) : error ? (
               <View style={styles.state} accessibilityRole="alert">
-                <Ionicons name="cloud-offline-outline" size={40} color={theme.textSecondary} />
+                <Ionicons
+                  name="cloud-offline-outline"
+                  size={40}
+                  color={theme.textSecondary}
+                />
                 <ThemedText style={styles.stateText}>{error}</ThemedText>
-                <PrimaryButton label="Retry" variant="secondary" onPress={() => void loadPage()} />
+                <PrimaryButton
+                  label="Retry"
+                  variant="secondary"
+                  onPress={() => void loadPage()}
+                />
               </View>
             ) : (
               <View style={styles.state}>
@@ -398,17 +433,26 @@ export default function JobsScreen() {
                     : "New opportunities will appear here."}
                 </ThemedText>
                 {filtered ? (
-                  <PrimaryButton label="Clear filters" variant="secondary" onPress={clearAll} />
+                  <PrimaryButton
+                    label="Clear filters"
+                    variant="secondary"
+                    onPress={clearAll}
+                  />
                 ) : null}
               </View>
             )
           }
           ListFooterComponent={
             loadingMore ? (
-              <ActivityIndicator style={styles.footer} color={BrandColors.primary} />
+              <ActivityIndicator
+                style={styles.footer}
+                color={BrandColors.primary}
+              />
             ) : undefined
           }
-          contentContainerStyle={items.length === 0 ? styles.emptyContainer : styles.list}
+          contentContainerStyle={
+            items.length === 0 ? styles.emptyContainer : styles.list
+          }
         />
 
         <LocationSheet
@@ -420,53 +464,48 @@ export default function JobsScreen() {
           onApply={(value) => patchFilters(value)}
           onClose={() => setSheet(null)}
         />
-        <FiltersSheet
-          visible={sheet === "filters"}
-          filters={filters}
-          categories={categories}
-          communities={communities}
-          activeCommunityId={activeCommunityId}
-          onApply={(next) => setFilters(next)}
-          onClose={() => setSheet(null)}
-        />
         <SortSheet
           visible={sheet === "sort"}
           value={sort}
           onApply={setSort}
           onClose={() => setSheet(null)}
         />
+        {drawer === "filters" ? (
+          <JobsFilterDrawer
+            filters={filters}
+            categories={categories}
+            communities={communities}
+            activeCommunityId={activeCommunityId}
+            onApply={(next) => {
+              setFilters(next);
+              setDrawer(null);
+            }}
+            onClose={() => setDrawer(null)}
+          />
+        ) : null}
+        {drawer === "menu" ? (
+          <JobsMenuDrawer onClose={() => setDrawer(null)} />
+        ) : null}
       </SafeAreaView>
     </ThemedView>
   );
 }
 
-function HeaderButton({
-  icon,
-  label: accessibilityLabel,
-  onPress,
-  filled = false,
-}: {
-  icon: React.ComponentProps<typeof Ionicons>["name"];
-  label: string;
-  onPress: () => void;
-  filled?: boolean;
-}) {
+function PostJobButton({ onPress }: { onPress: () => void }) {
   const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      style={[
-        styles.headerButton,
-        filled && { backgroundColor: theme.text },
+      accessibilityLabel="Create job"
+      style={({ pressed }) => [
+        styles.postButton,
+        { backgroundColor: theme.primary },
+        pressed && styles.pressed,
       ]}
     >
-      <Ionicons
-        name={icon}
-        size={19}
-        color={filled ? theme.background : theme.text}
-      />
+      <Ionicons name="add" size={19} color={BrandColors.white} />
+      <ThemedText style={styles.postButtonText}>Post a job</ThemedText>
     </Pressable>
   );
 }
@@ -490,7 +529,9 @@ function QuickChip({
       style={[
         styles.chip,
         {
-          backgroundColor: active ? BrandColors.primary : theme.backgroundElement,
+          backgroundColor: active
+            ? BrandColors.primary
+            : theme.backgroundElement,
           borderColor: active ? BrandColors.primary : theme.border,
         },
       ]}
@@ -508,27 +549,53 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
+    gap: Spacing.three,
+    paddingHorizontal: 12,
+    paddingVertical: Spacing.three,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerActions: { flexDirection: "row", gap: 4 },
-  headerButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
+  headerCopy: { flex: 1, gap: 1 },
+  headerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.full,
     alignItems: "center",
     justifyContent: "center",
   },
-  intro: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, gap: 2 },
-  introTitle: { fontSize: 20, lineHeight: 26, fontWeight: "800" },
-  introText: { fontSize: 13, lineHeight: 18 },
-  search: {
-    marginTop: Spacing.three,
-    marginHorizontal: Spacing.four,
-    borderWidth: 1,
+  headerBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 17,
+    height: 17,
     borderRadius: BorderRadius.full,
-    height: 46,
+    paddingHorizontal: 4,
+    backgroundColor: BrandColors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerBadgeText: {
+    color: BrandColors.white,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  postButton: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.three,
+  },
+  postButtonText: { color: BrandColors.white, fontSize: 13, fontWeight: "700" },
+  pressed: { opacity: 0.72 },
+  search: {
+    marginTop: Spacing.two,
+    marginHorizontal: 12,
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    height: 48,
     paddingHorizontal: Spacing.three,
     flexDirection: "row",
     alignItems: "center",
@@ -538,7 +605,7 @@ const styles = StyleSheet.create({
   controls: {
     flexDirection: "row",
     gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: 12,
     marginTop: Spacing.two,
   },
   control: {
@@ -549,23 +616,16 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.full,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
-    maxWidth: "60%",
+    minHeight: 40,
+    flex: 1,
   },
   controlText: { fontSize: 13, fontWeight: "600", flexShrink: 1 },
-  badge: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: BorderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 5,
-  },
-  badgeText: { color: BrandColors.white, fontSize: 11, fontWeight: "800" },
+  chipsScroll: { flexGrow: 0 },
   chips: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: 12,
     paddingVertical: Spacing.two,
   },
   chip: {
@@ -577,14 +637,20 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 12, fontWeight: "600" },
   activeChip: { color: BrandColors.white },
   resultsRow: {
+    minHeight: 32,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: 12,
     paddingBottom: Spacing.one,
   },
-  resultsCount: { fontSize: 13, fontWeight: "600" },
-  sortButton: { flexDirection: "row", alignItems: "center", gap: 3, padding: Spacing.one },
+  resultsCount: { fontSize: 13, fontWeight: "700" },
+  sortButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    padding: Spacing.one,
+  },
   sortText: { fontSize: 13, fontWeight: "700" },
   list: { paddingVertical: Spacing.two },
   state: { alignItems: "center", padding: Spacing.five, gap: Spacing.three },

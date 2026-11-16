@@ -58,7 +58,8 @@ public class JobController {
             @Size(max = 120) String region, @Size(max = 1000) String formattedAddress,
             @DecimalMin("0.0") BigDecimal salaryMin, @DecimalMin("0.0") BigDecimal salaryMax,
             @Size(min = 3, max = 3) String salaryCurrency, String applicationMethod,
-            @Size(max = 2000) String applicationUrl, Instant closesAt,
+            @Size(max = 2000) String applicationUrl,
+            Boolean applicationsEnabled, Boolean contactEnabled, Instant closesAt,
             UUID businessAccountId, String sourceType, @Size(max = 180) String sourceName,
             @Size(max = 2000) String sourceUrl, @Size(max = 5) List<UUID> mediaIds,
             Boolean draft) {
@@ -73,6 +74,7 @@ public class JobController {
             Boolean clearLocation, @DecimalMin("0.0") BigDecimal salaryMin,
             @DecimalMin("0.0") BigDecimal salaryMax, @Size(min = 3, max = 3) String salaryCurrency,
             Boolean clearSalary, String applicationMethod, @Size(max = 2000) String applicationUrl,
+            Boolean applicationsEnabled, Boolean contactEnabled,
             Instant closesAt, Boolean clearDeadline, String sourceType,
             @Size(max = 180) String sourceName, @Size(max = 2000) String sourceUrl,
             @Size(max = 5) List<UUID> mediaIds) {
@@ -101,7 +103,8 @@ public class JobController {
                 r.employerName(), r.title(), r.description(), r.employmentType(), r.workHoursType(),
                 r.workSchedule(), r.workplaceType(), r.city(), r.region(), r.formattedAddress(),
                 r.salaryMin(), r.salaryMax(), r.salaryCurrency(), r.applicationMethod(),
-                r.applicationUrl(), r.closesAt(), r.businessAccountId(), r.sourceType(),
+                r.applicationUrl(), r.applicationsEnabled(), r.contactEnabled(),
+                r.closesAt(), r.businessAccountId(), r.sourceType(),
                 r.sourceName(), r.sourceUrl(), r.mediaIds(), Boolean.TRUE.equals(r.draft()));
         return ResponseEntity.status(HttpStatus.CREATED).body(jobs.create(principal.userId(), command));
     }
@@ -142,7 +145,8 @@ public class JobController {
                 r.workplaceType(), r.city(), r.region(), r.formattedAddress(),
                 Boolean.TRUE.equals(r.clearLocation()), r.salaryMin(), r.salaryMax(),
                 r.salaryCurrency(), Boolean.TRUE.equals(r.clearSalary()), r.applicationMethod(),
-                r.applicationUrl(), r.closesAt(), Boolean.TRUE.equals(r.clearDeadline()),
+                r.applicationUrl(), r.applicationsEnabled(), r.contactEnabled(),
+                r.closesAt(), Boolean.TRUE.equals(r.clearDeadline()),
                 r.sourceType(), r.sourceName(), r.sourceUrl(), r.mediaIds()));
     }
 

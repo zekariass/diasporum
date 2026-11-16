@@ -143,6 +143,23 @@ class JobsModuleIntegrationTest {
         return jobs.create(owner, command(title, "COMMUNITY", "INTERNAL"));
     }
 
+    private CreateJobCommand withEngagement(CreateJobCommand base,
+            boolean applicationsEnabled, boolean contactEnabled) {
+        return new CreateJobCommand(base.communityId(), base.visibilityScope(), base.categoryIds(),
+                base.employerName(), base.title(), base.description(), base.employmentType(),
+                base.workHoursType(), base.workSchedule(), base.workplaceType(), base.city(),
+                base.region(), base.formattedAddress(), base.salaryMin(), base.salaryMax(),
+                base.salaryCurrency(), base.applicationMethod(), base.applicationUrl(),
+                applicationsEnabled, contactEnabled, base.closesAt(), base.businessAccountId(),
+                base.sourceType(), base.sourceName(), base.sourceUrl(), base.mediaIds(), base.draft());
+    }
+
+    private UpdateJobCommand engagementUpdate(Boolean applicationsEnabled, Boolean contactEnabled) {
+        return new UpdateJobCommand(null, null, null, null, null, null, null, null, false,
+                null, null, null, null, false, null, null, null, false, null, null,
+                applicationsEnabled, contactEnabled, null, false, null, null, null, null);
+    }
+
     private UpdateJobCommand emptyUpdate() {
         return new UpdateJobCommand(null, null, null, null, null, null, null, null, false,
                 null, null, null, null, false, null, null, null, false, null, null,
@@ -162,6 +179,10 @@ class JobsModuleIntegrationTest {
                 Boolean.class));
         assertTrue(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM information_schema.columns"
                 + " WHERE table_name='job_listings' AND column_name='deleted_at')", Boolean.class));
+        assertTrue(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM information_schema.columns"
+                + " WHERE table_name='job_listings' AND column_name='applications_enabled')", Boolean.class));
+        assertTrue(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM information_schema.columns"
+                + " WHERE table_name='job_listings' AND column_name='contact_enabled')", Boolean.class));
         assertTrue(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM pg_indexes"
                 + " WHERE indexname='ux_job_reports_open_reporter_target')", Boolean.class));
         assertTrue(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM pg_indexes"
@@ -169,7 +190,7 @@ class JobsModuleIntegrationTest {
         assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history"
                 + " WHERE version IN ('6','7') AND success", Integer.class));
         String mediaConstraint = jdbc.queryForObject("SELECT pg_get_constraintdef(oid)"
-                + " FROM pg_constraint WHERE conname='media_objects_purpose_check'", String.class);
+                + " FROM pg_constraint WHERE conrelid='media_objects'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%purpose%'", String.class);
         assertTrue(mediaConstraint.contains("MESSAGE_IMAGE"));
         assertTrue(mediaConstraint.contains("MESSAGE_DOCUMENT"));
         assertTrue(mediaConstraint.contains("JOB"));
@@ -197,7 +218,7 @@ class JobsModuleIntegrationTest {
             assertTrue(upgradeJdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM information_schema.columns"
                     + " WHERE table_name='job_listings' AND column_name='deleted_at')", Boolean.class));
             String mediaConstraint = upgradeJdbc.queryForObject("SELECT pg_get_constraintdef(oid)"
-                    + " FROM pg_constraint WHERE conname='media_objects_purpose_check'", String.class);
+                    + " FROM pg_constraint WHERE conrelid='media_objects'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%purpose%'", String.class);
             assertTrue(mediaConstraint.contains("MESSAGE_IMAGE"));
             assertTrue(mediaConstraint.contains("MESSAGE_DOCUMENT"));
             assertTrue(mediaConstraint.contains("JOB"));
@@ -386,6 +407,29 @@ class JobsModuleIntegrationTest {
                 () -> applications.apply(member, external.job().id(), null, null));
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM job_applications WHERE job_id=?",
                 Integer.class, external.job().id()));
+    }
+
+    @Test
+    void postersConfigureApplicationsAndContactIndependently() {
+        var base = command("Contact preferences", "COMMUNITY", "INTERNAL");
+        assertThrows(ResponseStatusException.class,
+                () -> jobs.create(owner, withEngagement(base, false, false)));
+
+        var contactOnly = jobs.create(owner, withEngagement(base, false, true));
+        assertFalse(contactOnly.job().applicationsEnabled());
+        assertTrue(contactOnly.job().contactEnabled());
+        var disabled = assertThrows(ResponseStatusException.class,
+                () -> applications.apply(member, contactOnly.job().id(), null, null));
+        assertEquals(HttpStatus.FORBIDDEN, disabled.getStatusCode());
+        assertEquals("JOB_APPLICATIONS_DISABLED", disabled.getReason());
+
+        var applyOnly = jobs.update(owner, contactOnly.job().id(), engagementUpdate(true, false));
+        assertTrue(applyOnly.job().applicationsEnabled());
+        assertFalse(applyOnly.job().contactEnabled());
+        assertEquals("SUBMITTED", applications.apply(member, applyOnly.job().id(), null, null)
+                .application().status());
+        assertThrows(ResponseStatusException.class,
+                () -> jobs.update(owner, applyOnly.job().id(), engagementUpdate(false, false)));
     }
 
     @Test

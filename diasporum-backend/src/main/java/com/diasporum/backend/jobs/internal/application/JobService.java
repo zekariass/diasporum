@@ -81,7 +81,8 @@ public class JobService {
             String description, String employmentType, String workHoursType,
             String workSchedule, String workplaceType, UUID workplaceAddressId,
             BigDecimal salaryMin, BigDecimal salaryMax, String salaryCurrency,
-            String applicationMethod, String applicationUrl, Instant closesAt,
+            String applicationMethod, String applicationUrl,
+            boolean applicationsEnabled, boolean contactEnabled, Instant closesAt,
             String status, boolean verifiedEmployer, Instant createdAt,
             Instant updatedAt, Instant publishedAt, Instant deletedAt) {
     }
@@ -114,8 +115,23 @@ public class JobService {
             String workSchedule, String workplaceType, String city, String region,
             String formattedAddress, BigDecimal salaryMin, BigDecimal salaryMax,
             String salaryCurrency, String applicationMethod, String applicationUrl,
+            Boolean applicationsEnabled, Boolean contactEnabled,
             Instant closesAt, UUID businessAccountId, String sourceType,
             String sourceName, String sourceUrl, List<UUID> mediaIds, boolean draft) {
+        public CreateJobCommand(UUID communityId, String visibilityScope,
+                List<UUID> categoryIds, String employerName, String title,
+                String description, String employmentType, String workHoursType,
+                String workSchedule, String workplaceType, String city, String region,
+                String formattedAddress, BigDecimal salaryMin, BigDecimal salaryMax,
+                String salaryCurrency, String applicationMethod, String applicationUrl,
+                Instant closesAt, UUID businessAccountId, String sourceType,
+                String sourceName, String sourceUrl, List<UUID> mediaIds, boolean draft) {
+            this(communityId, visibilityScope, categoryIds, employerName, title, description,
+                    employmentType, workHoursType, workSchedule, workplaceType, city, region,
+                    formattedAddress, salaryMin, salaryMax, salaryCurrency, applicationMethod,
+                    applicationUrl, null, null, closesAt, businessAccountId, sourceType,
+                    sourceName, sourceUrl, mediaIds, draft);
+        }
     }
 
     public record UpdateJobCommand(String visibilityScope, List<UUID> categoryIds,
@@ -125,8 +141,24 @@ public class JobService {
             String region, String formattedAddress, boolean clearLocation,
             BigDecimal salaryMin, BigDecimal salaryMax, String salaryCurrency,
             boolean clearSalary, String applicationMethod, String applicationUrl,
+            Boolean applicationsEnabled, Boolean contactEnabled,
             Instant closesAt, boolean clearDeadline, String sourceType,
             String sourceName, String sourceUrl, List<UUID> mediaIds) {
+        public UpdateJobCommand(String visibilityScope, List<UUID> categoryIds,
+                String employerName, String title, String description,
+                String employmentType, String workHoursType, String workSchedule,
+                boolean clearWorkSchedule, String workplaceType, String city,
+                String region, String formattedAddress, boolean clearLocation,
+                BigDecimal salaryMin, BigDecimal salaryMax, String salaryCurrency,
+                boolean clearSalary, String applicationMethod, String applicationUrl,
+                Instant closesAt, boolean clearDeadline, String sourceType,
+                String sourceName, String sourceUrl, List<UUID> mediaIds) {
+            this(visibilityScope, categoryIds, employerName, title, description, employmentType,
+                    workHoursType, workSchedule, clearWorkSchedule, workplaceType, city, region,
+                    formattedAddress, clearLocation, salaryMin, salaryMax, salaryCurrency, clearSalary,
+                    applicationMethod, applicationUrl, null, null, closesAt, clearDeadline,
+                    sourceType, sourceName, sourceUrl, mediaIds);
+        }
     }
 
     public record JobFilters(UUID communityId, String scope, UUID categoryId,
@@ -142,7 +174,8 @@ public class JobService {
             + "j.employment_type::text,j.work_hours_type,j.work_schedule,"
             + "j.workplace_type,j.workplace_address_id,j.salary_min,j.salary_max,"
             + "j.salary_currency,j.application_method::text,j.application_url,"
-            + "j.closes_at,j.status::text,j.is_verified_employer,j.created_at,"
+            + "j.applications_enabled,j.contact_enabled,j.closes_at,j.status::text,"
+            + "j.is_verified_employer,j.created_at,"
             + "j.updated_at,j.published_at,j.deleted_at";
 
     private static JobRow job(java.sql.ResultSet rs, int i) throws java.sql.SQLException {
@@ -162,7 +195,8 @@ public class JobService {
                 rs.getObject("workplace_address_id", UUID.class),
                 rs.getBigDecimal("salary_min"), rs.getBigDecimal("salary_max"),
                 rs.getString("salary_currency"), rs.getString("application_method"),
-                rs.getString("application_url"), ts(rs, "closes_at"),
+                rs.getString("application_url"), rs.getBoolean("applications_enabled"),
+                rs.getBoolean("contact_enabled"), ts(rs, "closes_at"),
                 rs.getString("status"), rs.getBoolean("is_verified_employer"),
                 ts(rs, "created_at"), ts(rs, "updated_at"), ts(rs, "published_at"),
                 ts(rs, "deleted_at"));
@@ -335,8 +369,13 @@ public class JobService {
         validateText(cmd.employerName(), 180, "EMPLOYER_NAME_INVALID");
         validateText(cmd.title(), 220, "JOB_TITLE_INVALID");
         validateText(cmd.description(), 20000, "JOB_DESCRIPTION_INVALID");
+        boolean applicationsEnabled = !Boolean.FALSE.equals(cmd.applicationsEnabled());
+        boolean contactEnabled = !Boolean.FALSE.equals(cmd.contactEnabled());
+        if (!applicationsEnabled && !contactEnabled) throw bad("JOB_ENGAGEMENT_OPTION_REQUIRED");
+        if (!applicationsEnabled) method = "INTERNAL";
+        String applicationUrl = applicationsEnabled ? blankToNull(cmd.applicationUrl()) : null;
         validateCompensation(cmd.salaryMin(), cmd.salaryMax(), cmd.salaryCurrency());
-        validateApplication(method, cmd.applicationUrl());
+        validateApplication(method, applicationUrl);
         if (cmd.sourceUrl() != null && !cmd.sourceUrl().isBlank()) validateUrl(cmd.sourceUrl());
         if (cmd.sourceName() != null && cmd.sourceName().length() > 180) {
             throw bad("SOURCE_NAME_TOO_LONG");
@@ -360,9 +399,10 @@ public class JobService {
                         + "source_name,source_url,employer_name,title,description,employment_type,"
                         + "work_hours_type,work_schedule,workplace_type,workplace_address_id,"
                         + "salary_min,salary_max,salary_currency,application_method,application_url,"
-                        + "closes_at,status,published_at) VALUES(?,?,?,?::visibility_scope,?,?,?,?,"
+                        + "applications_enabled,contact_enabled,closes_at,status,published_at)"
+                        + " VALUES(?,?,?,?::visibility_scope,?,?,?,?,"
                         + "?::job_listing_source_type,?,?,?,?,?,?::job_employment_type,?,?,?,?,"
-                        + "?,?,?,?::application_method,?,?,'DRAFT',NULL)",
+                        + "?,?,?,?::application_method,?,?,?,?,'DRAFT',NULL)",
                 id, c.destinationCountryId(), cmd.communityId(), scope,
                 business == null ? actor : null, business == null ? actor : null, actor,
                 business == null ? null : business.accountId(), source,
@@ -370,7 +410,7 @@ public class JobService {
                 cmd.employerName().trim(), cmd.title().trim(), cmd.description().trim(),
                 employment, hours, schedule, workplace, address, cmd.salaryMin(),
                 cmd.salaryMax(), normalizedCurrency(cmd.salaryCurrency(), cmd.salaryMin(),
-                        cmd.salaryMax()), method, blankToNull(cmd.applicationUrl()),
+                        cmd.salaryMax()), method, applicationUrl, applicationsEnabled, contactEnabled,
                 cmd.closesAt() == null ? null : Timestamp.from(cmd.closesAt()));
         replaceCategories(id, categories);
         replaceMedia(id, mediaIds);
@@ -392,6 +432,11 @@ public class JobService {
                 ? old.workSchedule() : upper(cmd.workSchedule());
         String method = cmd.applicationMethod() == null ? old.applicationMethod() : upper(cmd.applicationMethod());
         String source = cmd.sourceType() == null ? old.sourceType() : upper(cmd.sourceType());
+        boolean applicationsEnabled = cmd.applicationsEnabled() == null
+                ? old.applicationsEnabled() : cmd.applicationsEnabled();
+        boolean contactEnabled = cmd.contactEnabled() == null ? old.contactEnabled() : cmd.contactEnabled();
+        if (!applicationsEnabled && !contactEnabled) throw bad("JOB_ENGAGEMENT_OPTION_REQUIRED");
+        if (!applicationsEnabled) method = "INTERNAL";
         validate(scope, VISIBILITIES, "INVALID_VISIBILITY");
         validate(employment, EMPLOYMENT_TYPES, "INVALID_EMPLOYMENT_TYPE");
         validate(hours, WORK_HOURS, "INVALID_WORK_HOURS");
@@ -411,7 +456,7 @@ public class JobService {
                 ? old.salaryCurrency() : cmd.salaryCurrency();
         validateCompensation(min, max, currency);
         String applicationUrl = cmd.applicationUrl() == null ? old.applicationUrl() : blankToNull(cmd.applicationUrl());
-        if ("INTERNAL".equals(method)) applicationUrl = null;
+        if ("INTERNAL".equals(method) || !applicationsEnabled) applicationUrl = null;
         validateApplication(method, applicationUrl);
         Instant closesAt = cmd.clearDeadline() ? null : cmd.closesAt() == null ? old.closesAt() : cmd.closesAt();
         if ("PUBLISHED".equals(old.status()) && closesAt != null && !closesAt.isAfter(Instant.now())) {
@@ -444,10 +489,12 @@ public class JobService {
                         + "title=?,description=?,employment_type=?::job_employment_type,work_hours_type=?,"
                         + "work_schedule=?,workplace_type=?,workplace_address_id=?,salary_min=?,salary_max=?,"
                         + "salary_currency=?,application_method=?::application_method,application_url=?,"
-                        + "closes_at=?,source_type=?::job_listing_source_type,source_name=?,source_url=?,"
+                        + "applications_enabled=?,contact_enabled=?,closes_at=?,"
+                        + "source_type=?::job_listing_source_type,source_name=?,source_url=?,"
                         + "updated_at=now() WHERE id=?", scope, employer.trim(), title.trim(),
                 description.trim(), employment, hours, schedule, workplace, address, min, max,
                 normalizedCurrency(currency, min, max), method, applicationUrl,
+                applicationsEnabled, contactEnabled,
                 closesAt == null ? null : Timestamp.from(closesAt), source, sourceName, sourceUrl, id);
         if (cmd.categoryIds() != null) replaceCategories(id, requireCategories(cmd.categoryIds(), old.countryId()));
         if (mediaIds != null) replaceMedia(id, mediaIds);

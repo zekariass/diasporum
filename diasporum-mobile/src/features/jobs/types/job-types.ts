@@ -92,6 +92,8 @@ export interface JobRow {
   salaryCurrency: string | null;
   applicationMethod: ApplicationMethod;
   applicationUrl: string | null;
+  applicationsEnabled: boolean;
+  contactEnabled: boolean;
   closesAt: string | null;
   status: JobStatus;
   verifiedEmployer: boolean;
@@ -182,6 +184,8 @@ export interface CreateJobRequest {
   salaryCurrency?: string;
   applicationMethod?: ApplicationMethod;
   applicationUrl?: string;
+  applicationsEnabled?: boolean;
+  contactEnabled?: boolean;
   closesAt?: string;
   businessAccountId?: string;
   sourceType?: JobSourceType;
@@ -212,6 +216,8 @@ export interface UpdateJobRequest {
   clearSalary?: boolean;
   applicationMethod?: ApplicationMethod;
   applicationUrl?: string;
+  applicationsEnabled?: boolean;
+  contactEnabled?: boolean;
   closesAt?: string;
   clearDeadline?: boolean;
   sourceType?: JobSourceType;

@@ -1,6 +1,8 @@
 /**
- * Bottom sheets for the Jobs dashboard — location picker, advanced filters,
- * and sort selection. Every option maps to a real /api/v1/jobs query param.
+ * Bottom sheets for the Jobs dashboard — location picker, sort selection,
+ * and the report-a-job form. The full filter panel lives in the left
+ * JobsFilterDrawer (job-drawers.tsx).
+ * Every option maps to a real /api/v1/jobs query param.
  */
 import React, { useState } from "react";
 import { Pressable, StyleSheet, TextInput, View } from "react-native";
@@ -12,7 +14,6 @@ import { useTheme } from "@/hooks/use-theme";
 import { BorderRadius, Spacing } from "@/shared/theme/spacing";
 import type {
   EmploymentType,
-  JobCategory,
   VisibilityScope,
   WorkplaceType,
 } from "../types/job-types";
@@ -60,12 +61,6 @@ export const EMPLOYMENT_TYPES: EmploymentType[] = [
   "FREELANCE",
 ];
 export const WORKPLACE_TYPES: WorkplaceType[] = ["ONSITE", "HYBRID", "REMOTE"];
-const DATE_POSTED: { value: DatePosted; label: string }[] = [
-  { value: "ANY", label: "Any time" },
-  { value: "24H", label: "Past 24 hours" },
-  { value: "7D", label: "Past week" },
-  { value: "30D", label: "Past month" },
-];
 const SORT_OPTIONS: { value: JobSort; label: string; description: string }[] = [
   { value: "NEWEST", label: "Latest", description: "Most recently published first" },
   { value: "CLOSING", label: "Closing soon", description: "Jobs closing soonest first" },
@@ -200,154 +195,6 @@ function LocationForm({
   );
 }
 
-/** Full filter sheet — every control maps to a supported discovery parameter. */
-export function FiltersSheet({
-  visible,
-  filters,
-  categories,
-  communities,
-  activeCommunityId,
-  onApply,
-  onClose,
-}: {
-  visible: boolean;
-  filters: JobsFilterState;
-  categories: JobCategory[];
-  communities: CommunityOption[];
-  activeCommunityId: string | null;
-  onApply: (filters: JobsFilterState) => void;
-  onClose: () => void;
-}) {
-  return (
-    <Sheet visible={visible} title="Filters" onClose={onClose}>
-      {visible ? (
-        <FiltersForm
-          filters={filters}
-          categories={categories}
-          communities={communities}
-          activeCommunityId={activeCommunityId}
-          onApply={onApply}
-          onClose={onClose}
-        />
-      ) : null}
-    </Sheet>
-  );
-}
-
-function FiltersForm({
-  filters,
-  categories,
-  communities,
-  activeCommunityId,
-  onApply,
-  onClose,
-}: {
-  filters: JobsFilterState;
-  categories: JobCategory[];
-  communities: CommunityOption[];
-  activeCommunityId: string | null;
-  onApply: (filters: JobsFilterState) => void;
-  onClose: () => void;
-}) {
-  const [draft, setDraft] = useState<JobsFilterState>(filters);
-  function patch(value: Partial<JobsFilterState>) {
-    setDraft((current) => ({ ...current, ...value }));
-  }
-  return (
-    <>
-      {communities.length ? (
-        <View style={styles.categoryGroup}>
-          <ThemedText type="smallBold">Community</ThemedText>
-          <View style={styles.categoryWrap}>
-            <FilterChip label="Any" selected={!draft.communityId}
-              onPress={() => patch({ communityId: null })} />
-            {communities.map((community) => (
-              <FilterChip key={community.id}
-                label={community.id === activeCommunityId ? `${community.name} (active)` : community.name}
-                selected={draft.communityId === community.id}
-                onPress={() => patch({ communityId: draft.communityId === community.id ? null : community.id })} />
-            ))}
-          </View>
-        </View>
-      ) : null}
-      <View style={styles.numberField}>
-        <ThemedText type="smallBold">City or region</ThemedText>
-        <SheetInput value={draft.city} onChange={(city) => patch({ city })}
-          placeholder="Any city" accessibilityLabel="Filter city" />
-      </View>
-      <View style={styles.categoryGroup}>
-        <ThemedText type="smallBold">Scope</ThemedText>
-        <View style={styles.categoryWrap}>
-          <FilterChip label="All scopes" selected={!draft.scope} onPress={() => patch({ scope: null })} />
-          <FilterChip label="Community" selected={draft.scope === "COMMUNITY"}
-            onPress={() => patch({ scope: "COMMUNITY" })} />
-          <FilterChip label="Country" selected={draft.scope === "COUNTRY"}
-            onPress={() => patch({ scope: "COUNTRY" })} />
-        </View>
-      </View>
-      {categories.length ? (
-        <View style={styles.categoryGroup}>
-          <ThemedText type="smallBold">Job category</ThemedText>
-          <View style={styles.categoryWrap}>
-            {categories.map((category) => (
-              <FilterChip key={category.id} label={category.displayName}
-                selected={draft.categoryId === category.id}
-                onPress={() => patch({ categoryId: draft.categoryId === category.id ? null : category.id })} />
-            ))}
-          </View>
-        </View>
-      ) : null}
-      <View style={styles.categoryGroup}>
-        <ThemedText type="smallBold">Employment type</ThemedText>
-        <View style={styles.categoryWrap}>
-          {EMPLOYMENT_TYPES.map((type) => (
-            <FilterChip key={type} label={label(type)}
-              selected={draft.employmentType === type}
-              onPress={() => patch({ employmentType: draft.employmentType === type ? null : type })} />
-          ))}
-        </View>
-      </View>
-      <View style={styles.categoryGroup}>
-        <ThemedText type="smallBold">Work arrangement</ThemedText>
-        <View style={styles.categoryWrap}>
-          {WORKPLACE_TYPES.map((type) => (
-            <FilterChip key={type} label={type === "ONSITE" ? "On-site" : label(type)}
-              selected={draft.workplaceType === type}
-              onPress={() => patch({ workplaceType: draft.workplaceType === type ? null : type })} />
-          ))}
-        </View>
-      </View>
-      <View style={styles.categoryGroup}>
-        <ThemedText type="smallBold">Salary</ThemedText>
-        <View style={styles.datePair}>
-          <View style={styles.flex}>
-            <SheetInput value={draft.salaryMin} onChange={(salaryMin) => patch({ salaryMin })}
-              placeholder="Minimum" accessibilityLabel="Minimum salary" numeric />
-          </View>
-          <View style={styles.flex}>
-            <SheetInput value={draft.salaryMax} onChange={(salaryMax) => patch({ salaryMax })}
-              placeholder="Maximum" accessibilityLabel="Maximum salary" numeric />
-          </View>
-        </View>
-      </View>
-      <View style={styles.categoryGroup}>
-        <ThemedText type="smallBold">Date posted</ThemedText>
-        <View style={styles.categoryWrap}>
-          {DATE_POSTED.map((option) => (
-            <FilterChip key={option.value} label={option.label}
-              selected={draft.datePosted === option.value}
-              onPress={() => patch({ datePosted: option.value })} />
-          ))}
-        </View>
-      </View>
-      <View style={styles.sheetActions}>
-        <PrimaryButton label="Clear all" variant="ghost" onPress={() => setDraft(EMPTY_JOB_FILTERS)} />
-        <PrimaryButton label="Show results" onPress={() => { onApply(draft); onClose(); }} />
-      </View>
-    </>
-  );
-}
-
 /** Server-side sort — only the options the API supports. */
 export function SortSheet({
   visible,
@@ -375,6 +222,104 @@ export function SortSheet({
         ))}
       </View>
     </Sheet>
+  );
+}
+
+const REPORT_REASONS: {
+  value: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  { value: "SCAM", icon: "alert-circle-outline" },
+  { value: "SPAM", icon: "megaphone-outline" },
+  { value: "MISINFORMATION", icon: "information-circle-outline" },
+  { value: "IMPERSONATION", icon: "person-outline" },
+  { value: "OTHER", icon: "ellipsis-horizontal-circle-outline" },
+];
+
+/** Report-a-job form — a real modal sheet so every reason renders (native alerts cap at ~3 buttons on Android). */
+export function ReportSheet({
+  visible,
+  busy,
+  error,
+  onSubmit,
+  onClose,
+}: {
+  visible: boolean;
+  busy: boolean;
+  error: string | null;
+  onSubmit: (reason: string, details: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet visible={visible} title="Report job" onClose={onClose}>
+      {visible ? (
+        <ReportForm busy={busy} error={error} onSubmit={onSubmit} />
+      ) : null}
+    </Sheet>
+  );
+}
+
+function ReportForm({
+  busy,
+  error,
+  onSubmit,
+}: {
+  busy: boolean;
+  error: string | null;
+  onSubmit: (reason: string, details: string) => void;
+}) {
+  const theme = useTheme();
+  const [reason, setReason] = useState<string | null>(null);
+  const [details, setDetails] = useState("");
+  return (
+    <>
+      <ThemedText type="small" themeColor="textSecondary">
+        Why are you reporting this opportunity? Our moderators review every
+        report.
+      </ThemedText>
+      <View style={styles.optionList}>
+        {REPORT_REASONS.map((item) => (
+          <OptionRow
+            key={item.value}
+            icon={item.icon}
+            label={label(item.value)}
+            selected={reason === item.value}
+            onPress={() => setReason(item.value)}
+          />
+        ))}
+      </View>
+      <TextInput
+        multiline
+        value={details}
+        onChangeText={setDetails}
+        placeholder="Add details for the moderators (optional)"
+        placeholderTextColor={theme.textSecondary}
+        accessibilityLabel="Report details"
+        maxLength={2000}
+        style={[
+          styles.detailsInput,
+          {
+            borderColor: theme.border,
+            backgroundColor: theme.background,
+            color: theme.text,
+          },
+        ]}
+      />
+      {error ? (
+        <ThemedText
+          style={[styles.errorText, { color: theme.error }]}
+          accessibilityRole="alert"
+        >
+          {error}
+        </ThemedText>
+      ) : null}
+      <PrimaryButton
+        label="Submit report"
+        loading={busy}
+        disabled={!reason || busy}
+        onPress={() => reason && onSubmit(reason, details.trim())}
+      />
+    </>
   );
 }
 
@@ -411,60 +356,23 @@ function OptionRow({
   );
 }
 
-function FilterChip({ label: text, selected, onPress }: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={text}
-      accessibilityState={{ selected }}
-      onPress={onPress}
-      style={[styles.filterChip, { borderColor: selected ? theme.primary : theme.border,
-        backgroundColor: selected ? theme.primarySurface : theme.background }]}
-    >
-      <ThemedText type="small" style={{ color: selected ? theme.primary : theme.text }}>{text}</ThemedText>
-    </Pressable>
-  );
-}
-
-function SheetInput({ value, onChange, placeholder, accessibilityLabel, numeric = false }: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  accessibilityLabel: string;
-  numeric?: boolean;
-}) {
-  const theme = useTheme();
-  return (
-    <TextInput
-      accessibilityLabel={accessibilityLabel}
-      value={value}
-      onChangeText={onChange}
-      placeholder={placeholder}
-      placeholderTextColor={theme.textSecondary}
-      keyboardType={numeric ? "decimal-pad" : "default"}
-      style={[styles.textInput, { borderColor: theme.border, backgroundColor: theme.background, color: theme.text }]}
-    />
-  );
-}
-
 const styles = StyleSheet.create({
   optionList: { gap: Spacing.two },
+  detailsInput: {
+    minHeight: 88,
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.three,
+    fontSize: 15,
+    lineHeight: 21,
+    textAlignVertical: "top",
+  },
+  errorText: { fontSize: 13, textAlign: "center" },
   option: { flexDirection: "row", alignItems: "center", gap: Spacing.three,
     borderWidth: 1, borderRadius: BorderRadius.lg, padding: Spacing.three },
   optionCopy: { flex: 1, gap: 2 },
-  categoryGroup: { gap: Spacing.two },
-  categoryWrap: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.two },
-  filterChip: { borderWidth: 1, borderRadius: BorderRadius.full,
-    paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   numberField: { gap: Spacing.two },
   textInput: { minHeight: 48, borderWidth: 1, borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.three, fontSize: 16 },
-  datePair: { flexDirection: "row", gap: Spacing.two },
-  flex: { flex: 1 },
   sheetActions: { flexDirection: "row", justifyContent: "flex-end", gap: Spacing.two, marginTop: Spacing.two },
 });

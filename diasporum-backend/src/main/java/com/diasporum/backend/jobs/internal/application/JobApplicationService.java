@@ -79,6 +79,7 @@ public class JobApplicationService {
         JobRow job = jobs.requireViewable(applicant, jobId);
         if (jobs.canManage(applicant, job)) throw conflict("CANNOT_APPLY_TO_OWN_JOB");
         if (!"PUBLISHED".equals(job.status())) throw conflict("JOB_NOT_ACCEPTING_APPLICATIONS");
+        if (!job.applicationsEnabled()) throw forbidden("JOB_APPLICATIONS_DISABLED");
         if (!"INTERNAL".equals(job.applicationMethod())) throw bad("JOB_USES_EXTERNAL_APPLICATION");
         if (coverLetter != null && coverLetter.length() > 12000) throw bad("COVER_LETTER_TOO_LONG");
         if (resumeMediaId != null && !media.validateForAttach(resumeMediaId, applicant, "DOCUMENT")) {
