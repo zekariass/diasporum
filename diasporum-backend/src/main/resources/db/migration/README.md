@@ -1,15 +1,27 @@
 # Flyway migrations
 
-This directory holds versioned Flyway migrations (`V{n}__{description}.sql`).
+Versioned Flyway migrations (`V{n}__{description}.sql`). Flyway owns the schema —
+there is no `ddl-auto` entity management and no JPA entities in the codebase.
 
-**Status:** intentionally empty. The v10.11 schema
-(`Diasporum_v10.11/Diasporum_PostgreSQL_Schema_v10_11.sql`) has not yet been
-executed against a live PostgreSQL/PostGIS instance, and the initial baseline
-strategy (e.g. `V1__baseline.sql` vs `flyway.baseline` on a provisioned database)
-has not been agreed.
+**Status:** populated and active. V1 is the v10.12 baseline; subsequent versions
+carry incremental feature/schema work (currently through V36).
 
-Do **not** add migration files here until:
+## Rules
 
-1. The strict clean-install SQL and smoke tests have run successfully on a
-   disposable PostgreSQL/PostGIS database.
-2. The baseline migration strategy has been explicitly approved.
+1. **Never modify an applied migration.** Always create a new `V{n}` file — the
+   next number is the highest existing version + 1.
+2. **One concern per migration** where practical — schema vs. seed data vs.
+   enum-dependent seeds may be split (e.g. V31/V32/V33): a newly added enum
+   value cannot be used inside the same migration's transaction.
+3. **Do not enable `spring.flyway.group`** — grouping pending migrations into one
+   transaction breaks the enum split above.
+4. `flyway.out-of-order: true` is enabled for local dev — feature branches may
+   merge migrations out of order; never reuse a version number.
+5. Keep statements idempotent where the original schema delta uses them
+   (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`), and preserve design comments.
+6. Verify against a disposable `postgis/postgis:17-3.5` container before
+   declaring a migration done — module integration tests replay seeds against
+   fully-migrated databases, so rename nothing that seed scripts reference
+   by name (e.g. `media_objects_purpose_check`).
+
+`db/migration-archive/` holds superseded drafts — do not add files there.

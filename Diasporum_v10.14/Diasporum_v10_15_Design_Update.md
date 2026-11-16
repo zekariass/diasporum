@@ -1694,3 +1694,56 @@ ticketing/
 18. Featured listing statistics aggregation.
 19. Feed post community statistics tracking.
 20. Cross-community messaging without community boundary.
+
+---
+
+## 24. Country-Based Billing and Subscriptions (implemented in V35–V36)
+
+Designed after the v10.15 delta; extends the existing `billing_*` tables — the
+entitlement resolver (`BillingService.consume*`) is unchanged.
+
+**Model:** country policy (`country_billing_settings`) ∩ provider×country
+capability (`payment_provider_country_capabilities`) ∩ priced option
+(`billing_plan_prices` + `country_id`/`interval_count`/`billing_arrangement`)
+→ purchasable offer. Entitlements are identical regardless of purchase channel.
+
+**New tables**
+- `payment_providers` — provider registry (STRIPE, APPLE_IAP, GOOGLE_PLAY,
+  TELEBIRR, CHAPA, ARIFPAY, BANK_TRANSFER); `integration_type` API/SDK_RECEIPT/MANUAL
+- `payment_provider_country_capabilities` — capability matrix per provider×country:
+  one-time/recurring/refund support, manual verification, currencies, methods
+- `country_billing_settings` — per-country billing policy: enablement, currencies,
+  recurring gate, manual-verification acceptance (CASCADE on country delete, like
+  other per-country config tables — test suites rely on `DELETE FROM countries`)
+- `billing_payment_proofs` — manual-verification submissions (bank ref, receipt
+  media, PENDING/VERIFIED/REJECTED + verifier audit)
+
+**Altered tables**
+- `billing_plan_prices`: `+country_id` (NULL = currency-level default),
+  `+interval_count`, `+billing_arrangement` (RECURRING/PREPAID);
+  UNIQUE NULLS NOT DISTINCT over the expanded option key
+- `billing_subscriptions`: `+billing_arrangement`, `+source_type`,
+  `+country_id`/`+currency_code` purchase snapshots, `+source_order_id`,
+  `+provider_billing_id`, `+renewal_reminder_sent_at`
+- `billing_orders`: `+subscription_id`, `+country_id`
+
+**Lifecycle semantics**
+- RECURRING: provider auto-renews; `cancel_at_period_end`; PAST_DUE driven by
+  provider webhooks (dunning config deferred)
+- PREPAID: ACTIVE for the purchased term, then EXPIRED by scheduled job;
+  renewal = a new order extending `current_period_end` on the same subscription
+  row (orders + payments are the term history)
+- Manual verification: order PENDING → proof submitted → admin verifies →
+  payment SUCCEEDED → subscription activates
+- Existing subscriptions are never auto-converted when a country gains
+  recurring capability; switching is a voluntary new purchase — the old
+  prepaid subscription runs to its term
+- Price/config changes never retroactively alter purchased terms
+- Billing country = explicit selection at checkout, defaulting to
+  `profiles.current_country_id`; never IP-derived. Store-purchase countries
+  (Apple/Google storefront) are provider data, not billing country
+
+**Deliberately deferred**: Stripe/Apple/Google/Telebirr/Chapa/ArifPay adapter
+implementations (capability rows exist; `ManualPaymentProvider` for
+BANK_TRANSFER is the only implementation), dunning/retry policies, scheduled
+plan changes, merchant account registry.

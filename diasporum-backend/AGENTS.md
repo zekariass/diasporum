@@ -29,7 +29,7 @@ com.diasporum.backend.{module}/
       config/               ← @Configuration beans scoped to this module
 ```
 
-**25 modules:** administration, appconfiguration, billing, businessaccounts,
+**26 modules:** administration, appconfiguration, billing, businessaccounts,
 businessdirectory, community, communitychat, events, feed, identity, jobs,
 matchmaking, media, messaging, moderation, notifications, platform,
 propertylistings, security, servicemarketplace, shopmarketplace, social,
