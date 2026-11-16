@@ -146,6 +146,26 @@ diasporum:
     # can raise or lower this without a code change or migration; profiles
     # above a lowered limit keep their photos but cannot add more.
     max-profile-photos: ${DIASPORUM_MATCHMAKING_MAX_PROFILE_PHOTOS:6}
+  events:
+    ticketing:
+      # Checkout holds: a reservation keeps inventory for reservation-ttl; once
+      # an order is created the hold is extended to payment-ttl. The expiry
+      # worker (idempotent, guarded updates) releases holds and expires unpaid
+      # orders — it checks the PaymentIntent first so money is never orphaned.
+      reservation-ttl: ${DIASPORUM_TICKET_RESERVATION_TTL:PT15M}
+      payment-ttl: ${DIASPORUM_TICKET_PAYMENT_TTL:PT15M}
+      expiry-interval: ${DIASPORUM_TICKET_EXPIRY_INTERVAL:PT1M}
+      # AES-256-GCM key (base64, 32 bytes) for organiser payout account details.
+      # Blank = payout account writes fail closed (503 PAYOUT_ENCRYPTION_UNAVAILABLE).
+      payout-data-key: ${PAYOUT_DATA_ENCRYPTION_KEY:}
+      # Platform Stripe account (buyers pay Diasporum; organisers are paid out
+      # manually from the ledger — no Connect). Blank secret = paid checkout
+      # fails closed (503 PAYMENT_PROVIDER_UNAVAILABLE); free tickets still work.
+      # The webhook secret belongs to the /api/v1/webhooks/ticket-payments endpoint.
+      stripe:
+        secret-key: ${STRIPE_SECRET_KEY:}
+        webhook-secret: ${STRIPE_TICKETS_WEBHOOK_SECRET:}
+        api-base: ${STRIPE_API_BASE:https://api.stripe.com}
   billing:
     # Prepaid subscription lifecycle workers. Both are idempotent (rows are
     # claimed by conditional UPDATEs), so the intervals only affect latency.

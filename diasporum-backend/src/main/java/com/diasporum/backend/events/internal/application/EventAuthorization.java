@@ -20,6 +20,15 @@ public final class EventAuthorization {
                 || "EDITOR".equals(role);
     }
 
+    /**
+     * Business roles that may handle event money: payout accounts and payout
+     * requests. Narrower than event management — editors run events but do
+     * not move funds.
+     */
+    public static boolean canManageFinances(String role) {
+        return "OWNER".equals(role) || "ADMINISTRATOR".equals(role);
+    }
+
     /** Membership with event-management capability, or null. */
     public static AccountMembershipView asEventManager(
             AccountMembershipView membership) {

@@ -260,6 +260,11 @@ public class EventService {
                         "EVENT_NOT_FOUND"));
     }
 
+    /** Throws EVENT_NOT_FOUND unless the viewer may see the event (ticketing reuse). */
+    public void requireViewer(UUID viewer, UUID eventId) {
+        requireViewable(viewer, eventId);
+    }
+
     private EventRow requireViewable(UUID viewer, UUID id) {
         var e = requireEvent(id);
         if (!canView(viewer, e)) {

@@ -61,6 +61,7 @@ public class SecurityConfig {
                     "/.well-known/jwks.json").permitAll()
                 // Provider webhooks authenticate via signature verification, not JWT.
                 .requestMatchers(HttpMethod.POST, "/api/v1/shop/webhooks/**").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/webhooks/ticket-payments").permitAll()
                 .anyRequest().authenticated())
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(e -> e
