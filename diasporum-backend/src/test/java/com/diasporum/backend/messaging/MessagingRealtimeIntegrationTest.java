@@ -98,16 +98,25 @@ class MessagingRealtimeIntegrationTest {
     }
 
     private UUID matchedPair() {
+        var genders = new java.util.HashMap<UUID, String>();
+        genders.put(u1, "FEMALE");
+        genders.put(u2, "MALE");
         for (UUID user : List.of(u1, u2)) {
             jdbc.update("UPDATE users SET deleted_at=NULL WHERE id=?", user);
             jdbc.update("UPDATE profiles SET date_of_birth='1990-01-01',"
                     + "age_eligibility_confirmed_at=now() WHERE id=?", user);
             jdbc.update("UPDATE user_privacy_settings SET allow_matchmaking_discovery=true"
                     + " WHERE user_id=?", user);
-            jdbc.update("INSERT INTO matchmaking_profiles(user_id,gender_key,status,"
-                    + "name_visibility,photo_visibility) VALUES(?,'WOMAN','DRAFT',"
-                    + "'HIDDEN','HIDDEN')", user);
+            jdbc.update("INSERT INTO matchmaking_profiles(user_id,gender_key,status)"
+                    + " VALUES(?,?,'DRAFT')", user, genders.get(user));
             jdbc.update("INSERT INTO matchmaking_preferences(user_id) VALUES(?)", user);
+            UUID media = UUID.randomUUID();
+            jdbc.update("INSERT INTO media_objects(id,owner_user_id,bucket_name,object_key,"
+                    + "purpose,mime_type,status,uploaded_at) VALUES(?,?,'test',?,"
+                    + "'MATCHMAKING_PROFILE_PHOTO','image/png','READY',now())",
+                    media, user, "rt-photo/" + media);
+            jdbc.update("INSERT INTO matchmaking_profile_photos(user_id,media_id,is_primary)"
+                    + " VALUES(?,?,true)", user, media);
             jdbc.update("UPDATE matchmaking_profiles SET status='ACTIVE' WHERE user_id=?",
                     user);
         }

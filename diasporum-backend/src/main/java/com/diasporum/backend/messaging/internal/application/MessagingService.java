@@ -7,6 +7,7 @@ import com.diasporum.backend.identity.IdentityApi;
 import com.diasporum.backend.media.MediaApi;
 import com.diasporum.backend.servicemarketplace.ServiceMarketplaceApi;
 import com.diasporum.backend.servicemarketplace.ServiceMarketplaceApi.ServiceConversationContext;
+import com.diasporum.backend.shopmarketplace.ShopMarketplaceApi;
 import com.diasporum.backend.social.SocialApi;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -42,7 +43,8 @@ public class MessagingService {
 
     static final Set<String> CONTEXT_TYPES = Set.of("GENERAL", "PROPERTY_LISTING",
             "VEHICLE_LISTING", "BUSINESS_PROFILE", "EVENT", "JOB_LISTING",
-            "SPARE_BAG_CONTACT", "SERVICE_REQUEST", "COMMUNITY_HELP_POST");
+            "SPARE_BAG_CONTACT", "SERVICE_REQUEST", "COMMUNITY_HELP_POST",
+            "SHOP", "SHOP_PRODUCT", "SHOP_ORDER");
 
     /** M4: purposes valid for direct-message attachments. */
     private static final Set<String> ATTACHMENT_PURPOSES =
@@ -60,12 +62,14 @@ public class MessagingService {
     private final FeedApi feed;
     private final MediaApi media;
     private final ServiceMarketplaceApi serviceMarketplace;
+    private final ShopMarketplaceApi shopMarketplace;
     private final MessagingProperties props;
 
     public MessagingService(JdbcTemplate jdbc, IdentityApi identity,
             SocialApi social, CommunityApi community,
             BusinessAccountsApi businesses, FeedApi feed, MediaApi media,
-            ServiceMarketplaceApi serviceMarketplace, MessagingProperties props) {
+            ServiceMarketplaceApi serviceMarketplace, ShopMarketplaceApi shopMarketplace,
+            MessagingProperties props) {
         this.jdbc = jdbc;
         this.identity = identity;
         this.social = social;
@@ -74,6 +78,7 @@ public class MessagingService {
         this.feed = feed;
         this.media = media;
         this.serviceMarketplace = serviceMarketplace;
+        this.shopMarketplace = shopMarketplace;
         this.props = props;
     }
 
@@ -234,6 +239,14 @@ public class MessagingService {
             }
             return new Endpoint(post.authorId(), null);
         }
+        if (isShopContext(contextType)) {
+            // Counterparty is the shop seller (or order customer for seller-side
+            // actors) - derived server-side, never trusted from the client.
+            var cp = shopMarketplace.conversationCounterparty(actor,
+                    actorEndpoint.businessAccountId(), contextType, contextId)
+                    .orElseThrow(() -> notFound("CONTEXT_NOT_FOUND"));
+            return new Endpoint(cp.userId(), cp.businessAccountId());
+        }
         if ((recipientUserId == null) == (recipientBusinessAccountId == null)) {
             throw bad("RECIPIENT_REQUIRED");
         }
@@ -387,7 +400,8 @@ public class MessagingService {
                 && businesses.isActiveMember(actor, c.participantBBizId())) {
             self = c.endpointB();
         }
-        if (self == null || !serviceConversationAccessible(actor, c) || !matchConversationAccessible(c)) {
+        if (self == null || !serviceConversationAccessible(actor, c)
+                || !shopConversationAccessible(actor, c) || !matchConversationAccessible(c)) {
             throw notFound("CONVERSATION_NOT_FOUND");
         }
         return self;
@@ -406,6 +420,16 @@ public class MessagingService {
                                 c.participantABizId(), c.participantBId(), c.participantBBizId()));
     }
 
+    private boolean shopConversationAccessible(UUID actor, ConversationRow c) {
+        return !isShopContext(c.contextType())
+                || shopMarketplace.canAccessShopConversation(actor, c.contextType(), c.contextId());
+    }
+
+    private static boolean isShopContext(String contextType) {
+        return "SHOP".equals(contextType) || "SHOP_PRODUCT".equals(contextType)
+                || "SHOP_ORDER".equals(contextType);
+    }
+
     private void requireServiceContext(UUID actor, String contextType, UUID contextId,
             Endpoint a, Endpoint b) {
         if ("SERVICE_REQUEST".equals(contextType)
@@ -413,6 +437,13 @@ public class MessagingService {
                         new ServiceConversationContext(null, contextId, a.userId(),
                                 a.businessAccountId(), b.userId(), b.businessAccountId()))) {
             throw forbidden("SERVICE_LEAD_ACCESS_REQUIRED");
+        }
+    }
+
+    private void requireShopContext(UUID actor, String contextType, UUID contextId) {
+        if (isShopContext(contextType)
+                && !shopMarketplace.canAccessShopConversation(actor, contextType, contextId)) {
+            throw forbidden("SHOP_CONVERSATION_ACCESS_REQUIRED");
         }
     }
 
@@ -571,6 +602,7 @@ public class MessagingService {
         Endpoint a = swap ? other : self;
         Endpoint b = swap ? self : other;
         requireServiceContext(actor, contextType, cmd.contextId(), a, b);
+        requireShopContext(actor, contextType, cmd.contextId());
 
         var existing = findConversation(a, b, contextType, cmd.contextId());
         if (existing.isPresent()) {
@@ -929,7 +961,8 @@ public class MessagingService {
         }
 
         var items = page.stream()
-                .filter(r -> serviceConversationAccessible(actor, (ConversationRow) r[0]))
+                .filter(r -> serviceConversationAccessible(actor, (ConversationRow) r[0])
+                        && shopConversationAccessible(actor, (ConversationRow) r[0]))
                 .map(r -> toView((ConversationRow) r[0],
                         actor, null, (Long) r[1], (Instant) r[2], (Instant) r[3],
                         (long) r[4], (UUID) r[5],
@@ -1009,9 +1042,12 @@ public class MessagingService {
         var profiles = identity.profileSummaries(ids).stream()
                 .collect(java.util.stream.Collectors.toMap(
                         IdentityApi.ProfileSummary::id, p -> p));
-        var aliases = jdbc.query("SELECT mp.user_id,CASE WHEN mp.name_visibility='VISIBLE'"
+        var aliases = jdbc.query("SELECT mp.user_id,CASE WHEN m.status='MATCHED'"
+                        + " OR mp.hide_name_until_match=false"
                         + " THEN p.display_name ELSE mp.anonymous_alias END AS display_name"
-                        + " FROM direct_conversations dc JOIN matchmaking_profiles mp"
+                        + " FROM direct_conversations dc"
+                        + " JOIN matchmaking_matches m ON m.id=dc.matchmaking_match_id"
+                        + " JOIN matchmaking_profiles mp"
                         + " ON mp.user_id IN (dc.participant_a_id,dc.participant_b_id)"
                         + " JOIN profiles p ON p.id=mp.user_id"
                         + " WHERE dc.id=? AND dc.matchmaking_match_id IS NOT NULL",
@@ -1022,7 +1058,7 @@ public class MessagingService {
             if (original != null) {
                 profiles.put(id, new IdentityApi.ProfileSummary(original.id(), null,
                         (String) alias[1], original.accountStatus(), original.profileCompleted(),
-                        original.originCountryId(), original.currentCountryId(), null));
+                        original.originCountryId(), original.currentCountryId(), null, null));
             }
         }
         return profiles;

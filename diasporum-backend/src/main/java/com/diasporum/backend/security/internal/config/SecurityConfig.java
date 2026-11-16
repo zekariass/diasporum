@@ -59,6 +59,8 @@ public class SecurityConfig {
                     "/api/v1/auth/reset-password").permitAll()
                 .requestMatchers("/actuator/health", "/actuator/health/**", "/error",
                     "/.well-known/jwks.json").permitAll()
+                // Provider webhooks authenticate via signature verification, not JWT.
+                .requestMatchers(HttpMethod.POST, "/api/v1/shop/webhooks/**").permitAll()
                 .anyRequest().authenticated())
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(e -> e

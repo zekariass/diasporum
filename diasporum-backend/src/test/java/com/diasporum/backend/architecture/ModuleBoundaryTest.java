@@ -26,7 +26,7 @@ class ModuleBoundaryTest {
             "communitychat", "messaging", "voice", "businessaccounts",
             "businessdirectory", "events", "jobs", "propertylistings",
             "vehiclelistings", "sparebag", "matchmaking", "servicemarketplace",
-            "billing", "notifications", "moderation", "administration",
+            "shopmarketplace", "billing", "notifications", "moderation", "administration",
             "appconfiguration", "security", "platform");
 
     private static com.tngtech.archunit.core.domain.JavaClasses mainClasses() {

@@ -280,7 +280,16 @@ class MessagingPolicyIntegrationTest {
         assertEquals("CONTEXT_RECIPIENT_MISMATCH", e.getReason());
         assertEquals(HttpStatus.BAD_REQUEST, e.getStatusCode());
 
-        // Correct owner → contextual conversation opens ACCEPTED.
+        // Posters can disable new employer-contact conversations.
+        jdbc.update("UPDATE job_listings SET contact_enabled=false WHERE id=?", job);
+        var contactDisabled = assertThrows(ResponseStatusException.class,
+                () -> service.createConversation(u1, new CreateConversationCommand(
+                        "JOB_LISTING", job, u3, null, null, null, null)));
+        assertEquals("CONTEXT_NOT_AVAILABLE", contactDisabled.getReason());
+        assertEquals(HttpStatus.FORBIDDEN, contactDisabled.getStatusCode());
+
+        // Correct owner with contact enabled → contextual conversation opens ACCEPTED.
+        jdbc.update("UPDATE job_listings SET contact_enabled=true WHERE id=?", job);
         var v = service.createConversation(u1, new CreateConversationCommand(
                 "JOB_LISTING", job, u3, null, null, null, null));
         assertEquals("ACCEPTED", v.status());
