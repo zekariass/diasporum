@@ -46,6 +46,15 @@ public class MessagingService {
             "SPARE_BAG_CONTACT", "SERVICE_REQUEST", "COMMUNITY_HELP_POST",
             "SHOP", "SHOP_PRODUCT", "SHOP_ORDER");
 
+    /**
+     * Context types the schema allows but whose DB trigger performs no
+     * resource/participant validation. They are accepted only through the
+     * module API ({@link #ensureContextConversation}), where the owning module
+     * has already authorised the pair; REST callers get INVALID_CONTEXT_TYPE so
+     * an invented context id can never open an ACCEPTED thread.
+     */
+    static final Set<String> MODULE_CONTEXT_TYPES = Set.of("SPARE_BAG_SENDER_REQUEST");
+
     /** M4: purposes valid for direct-message attachments. */
     private static final Set<String> ATTACHMENT_PURPOSES =
             Set.of("MESSAGE_IMAGE", "MESSAGE_DOCUMENT");
@@ -573,9 +582,15 @@ public class MessagingService {
     @Transactional
     public ConversationView createConversation(UUID actor,
             CreateConversationCommand cmd) {
+        return createConversation(actor, cmd, false);
+    }
+
+    private ConversationView createConversation(UUID actor,
+            CreateConversationCommand cmd, boolean moduleCall) {
         String contextType = cmd.contextType() == null
                 ? "GENERAL" : cmd.contextType().trim().toUpperCase();
-        if (!CONTEXT_TYPES.contains(contextType)) {
+        if (!CONTEXT_TYPES.contains(contextType)
+                && !(moduleCall && MODULE_CONTEXT_TYPES.contains(contextType))) {
             throw bad("INVALID_CONTEXT_TYPE");
         }
         boolean general = "GENERAL".equals(contextType);
@@ -836,7 +851,7 @@ public class MessagingService {
         return createConversation(actor, new CreateConversationCommand(
                 contextType, contextId, recipientUserId,
                 recipientBusinessAccountId, actingBusinessAccountId, null,
-                null)).id();
+                null), true).id();
     }
 
     // =================== listing / detail ===================

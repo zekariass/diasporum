@@ -47,6 +47,10 @@ diasporum:
   cors:
     # Browser origins for local web/dev tooling (Expo web, local admin/web).
     allowed-origins: ${DIASPORUM_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:8081,http://localhost:19006}
+  spare-bag:
+    v2:
+      # Local dev: v10.15 sender requests / journeys publish without review.
+      moderation-mode: ${DIASPORUM_SPARE_BAG_MODERATION_MODE:AUTO_APPROVE}
   shop:
     # Local dev: sellers/shops/products go straight to ACTIVE without the
     # moderation queue, and the demo marketplace fixture (demo seller, shop and

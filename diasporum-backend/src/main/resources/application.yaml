@@ -166,6 +166,17 @@ diasporum:
         secret-key: ${STRIPE_SECRET_KEY:}
         webhook-secret: ${STRIPE_TICKETS_WEBHOOK_SECRET:}
         api-base: ${STRIPE_API_BASE:https://api.stripe.com}
+  spare-bag:
+    # v10.15 model (/api/v1/spare-bag/v2). The legacy listing worker keeps its
+    # own code default (diasporum.spare-bag.expiry-interval, PT15M).
+    v2:
+      # MANUAL: publish -> PENDING_REVIEW until a moderator approves via
+      # /api/v1/admin/spare-bag. AUTO_APPROVE: publish goes straight to PUBLISHED.
+      moderation-mode: ${DIASPORUM_SPARE_BAG_MODERATION_MODE:MANUAL}
+      # closes_at applied to sender requests published without one.
+      request-default-ttl: ${DIASPORUM_SPARE_BAG_REQUEST_TTL:P30D}
+      # Idempotent expiry worker for journeys, requests and match requests.
+      expiry-interval: ${DIASPORUM_SPARE_BAG_V2_EXPIRY_INTERVAL:PT15M}
   billing:
     # Prepaid subscription lifecycle workers. Both are idempotent (rows are
     # claimed by conditional UPDATEs), so the intervals only affect latency.
