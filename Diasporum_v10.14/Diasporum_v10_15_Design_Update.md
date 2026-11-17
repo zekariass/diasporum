@@ -1086,6 +1086,19 @@ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
+**As implemented (V39 + service layer):** the new model lives under
+`/api/v1/spare-bag/v2/` alongside the legacy listings API — old tables and
+rows are untouched and no data was migrated. Contact/matching uses a new
+`spare_bag_match_requests` table (V39; the legacy contact table's triggers
+are coupled to old listings): accepting a match marks the sender request
+MATCHED, opens a context conversation via `MessagingApi`, and expires
+competing matches. Publishing is gated by `spare_bag_country_config` plus a
+`diasporum.spare-bag.v2.moderation-mode` setting (MANUAL review default,
+AUTO_APPROVE in local — the shop pattern); rejected postings return to
+DRAFT and a separate admin REMOVE action takes content down. Traveller
+verification is a badge/search filter, not a publish blocker. Full surface
+and deferrals: `DIASPORUM_SPARE_BAG_REDESIGN_IMPLEMENTATION_REPORT.md`.
+
 ---
 
 ## 7. AI Moderation Module
