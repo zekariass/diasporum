@@ -72,6 +72,7 @@ import { useProfileCollection } from "../hooks/use-profile-collection";
 import { useMyPosts, type MyPosts } from "../hooks/use-my-posts";
 import { ProfileCover } from "../components/profile-cover";
 import { ProfileIdentity } from "../components/profile-identity";
+import { SubscriptionEntryCard } from "@/features/billing/components/subscription-entry-card";
 import { WorkspaceCard } from "../components/workspace-card";
 import { ProfileStats } from "../components/profile-stats";
 import { ProfileFeatureTabs } from "../components/profile-feature-tabs";
@@ -444,6 +445,9 @@ export default function ProfileScreen() {
         verified={profile?.profileCompleted ?? false}
       />
       <WorkspaceCard onPress={() => router.push("/(app)/business" as never)} />
+      <SubscriptionEntryCard
+        onPress={() => router.push("/(app)/billing" as never)}
+      />
       <ProfileStats
         posts={posts.total}
         followers={social.followers}
